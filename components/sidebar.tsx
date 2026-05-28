@@ -18,6 +18,7 @@ import {
   LogOut,
   User as UserIcon,
   LayoutDashboard,
+  ClipboardList,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -44,6 +45,7 @@ const navGroups: NavGroup[] = [
     group: "Administrador",
     items: [
       { id: "admin-dashboard",        label: "Dashboard",          icon: LayoutDashboard, colorClass: "sidebar-item-summary"  },
+      { id: "admin-route-detail",     label: "Detalle Rutas",      icon: ClipboardList,   colorClass: "sidebar-item-clients"  },
       { id: "pending-authorizations", label: "Autor. Admin",       icon: CheckCircle,     colorClass: "sidebar-item-auth"     },
       { id: "admin-route-monitor",    label: "Monitoreo Rutas",    icon: Route,           colorClass: "sidebar-item-route"    },
       { id: "configure-route",        label: "Ordenar Ruta",       icon: MapPin,          colorClass: "sidebar-item-route"    },

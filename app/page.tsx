@@ -27,6 +27,7 @@ import { ConfigureRoute } from "@/components/views/configure-route"
 import { CierreCaja } from "@/components/views/cierre-caja"
 import { AdminRouteMonitor } from "@/components/views/admin-route-monitor"
 import { AdminDashboard } from "@/components/views/admin-dashboard"
+import { AdminRouteDetail } from "@/components/views/admin-route-detail"
 import { RouteSelector, type SelectedRuta } from "@/components/route-selector"
 import { LoginView, type AuthenticatedUser } from "@/components/views/login-view"
 import { LoginSplash } from "@/components/login-splash"
@@ -457,6 +458,8 @@ export default function Page() {
         return <AdminRouteMonitor />
       case "admin-dashboard":
         return <AdminDashboard currentUserId={currentUser?.id} />
+      case "admin-route-detail":
+        return <AdminRouteDetail currentUserId={currentUser?.id} />
       case "payment-control":
         return <PaymentControl currentRutaId={rutaId} rutaPais={rutaPais} />
       default:
