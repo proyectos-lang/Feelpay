@@ -1,0 +1,259 @@
+"use client"
+
+import { Bell, User, Menu, PanelLeftClose, PanelLeft, MapPin, MapPinOff, Loader2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { useState, useEffect } from "react"
+import type { SelectedRuta } from "./route-selector"
+import type { AuthenticatedUser } from "./views/login-view"
+
+type GpsStatus = "checking" | "granted" | "denied" | "unavailable"
+
+interface HeaderProps {
+  title: string
+  onMenuClick?: () => void
+  onSidebarToggle?: () => void
+  isSidebarOpen?: boolean
+  selectedRuta?: SelectedRuta | null
+  onChangeRuta?: () => void
+  currentUser?: AuthenticatedUser | null
+  onLogout?: () => void
+}
+
+export function Header({
+  title,
+  onMenuClick,
+  onSidebarToggle,
+  isSidebarOpen,
+  selectedRuta,
+  onChangeRuta,
+  currentUser,
+  onLogout,
+}: HeaderProps) {
+  const [currentDateTime, setCurrentDateTime] = useState(new Date())
+  const [gpsStatus, setGpsStatus] = useState<GpsStatus>("checking")
+
+  // Try to actually obtain coordinates — works from PC (WiFi/IP) and mobile (GPS).
+  // "granted" means we received a real lat/lng. Anything else is "no coords available".
+  const attemptLocation = () => {
+    if (typeof window === "undefined" || !navigator.geolocation) {
+      setGpsStatus("unavailable")
+      return
+    }
+    setGpsStatus("checking")
+    navigator.geolocation.getCurrentPosition(
+      () => setGpsStatus("granted"),
+      (e) => setGpsStatus(e.code === 1 ? "denied" : "unavailable"),
+      { enableHighAccuracy: false, timeout: 12000, maximumAge: 30000 },
+    )
+  }
+
+  useEffect(() => {
+    attemptLocation()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentDateTime(new Date())
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [])
+
+  // Derived ruta values from props (single source of truth managed in app/page.tsx)
+  const ruta = selectedRuta?.id ?? null
+  const nombreruta = selectedRuta?.nombre ?? ""
+  const ciudad = selectedRuta?.ciudad ?? ""
+  const pais = selectedRuta?.pais ?? ""
+
+  const formatDateTime = (date: Date) => {
+    const options: Intl.DateTimeFormatOptions = {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }
+
+    return date.toLocaleDateString("es-CO", options)
+  }
+
+  const formattedDateTime = formatDateTime(currentDateTime)
+
+  return (
+    <header className="flex h-12 md:h-16 items-center justify-between border-b border-border bg-card/80 backdrop-blur-md px-2 md:px-6">
+      <div className="flex items-center gap-1.5 md:gap-2">
+        <Button variant="ghost" size="icon" className="md:hidden h-8 w-8" onClick={onMenuClick}>
+          <Menu className="h-4 w-4" />
+        </Button>
+
+        <Button variant="ghost" size="icon" className="hidden md:flex h-10 w-10" onClick={onSidebarToggle}>
+          {isSidebarOpen ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeft className="h-5 w-5" />}
+        </Button>
+
+        <h1 className="text-sm md:text-xl font-semibold text-card-foreground truncate">{title}</h1>
+
+        <div className="hidden md:flex ml-4 text-xs text-muted-foreground gap-2 items-center">
+          {nombreruta && (
+            <>
+              <span className="font-semibold text-primary">Ruta: {ruta}</span>
+              <span className="text-muted-foreground/50">•</span>
+              <span className="font-semibold text-primary">{nombreruta}</span>
+              {ciudad && (
+                <>
+                  <span className="text-muted-foreground/50">•</span>
+                  <span className="font-semibold text-primary">{ciudad}</span>
+                </>
+              )}
+              {pais && (
+                <>
+                  <span className="text-muted-foreground/50">•</span>
+                  <span className="font-semibold text-primary">{pais}</span>
+                </>
+              )}
+              {onChangeRuta && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onChangeRuta}
+                  className="ml-1 h-6 gap-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-brand hover:bg-brand/10"
+                  title="Cambiar de ruta"
+                >
+                  <MapPin className="h-3 w-3" />
+                  Cambiar Ruta
+                </Button>
+              )}
+              <span className="text-muted-foreground/50">•</span>
+            </>
+          )}
+          <span className="font-medium whitespace-nowrap">{formattedDateTime}</span>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-1 md:gap-4">
+        <div className="flex md:hidden text-[9px] text-muted-foreground mr-1 flex-col items-end">
+          {nombreruta && (
+            <div className="flex items-center gap-1">
+              <span className="font-semibold text-primary text-[10px]">
+                Ruta: {ruta} - {nombreruta}
+                {ciudad ? ` - ${ciudad}` : ""}
+                {pais ? ` - ${pais}` : ""}
+              </span>
+              {onChangeRuta && (
+                <button
+                  type="button"
+                  onClick={onChangeRuta}
+                  className="rounded-full p-0.5 text-brand hover:bg-brand/10"
+                  title="Cambiar de ruta"
+                  aria-label="Cambiar de ruta"
+                >
+                  <MapPin className="h-2.5 w-2.5" />
+                </button>
+              )}
+            </div>
+          )}
+          <span className="font-medium whitespace-nowrap">{formattedDateTime}</span>
+        </div>
+
+        {/* Location status indicator */}
+        {gpsStatus === "checking" && (
+          <div
+            title="Verificando ubicación..."
+            className="flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground"
+          >
+            <Loader2 className="h-3 w-3 animate-spin" />
+            <span className="hidden sm:inline">Ubicación</span>
+          </div>
+        )}
+        {gpsStatus === "granted" && (
+          <div
+            title="Ubicación detectada correctamente"
+            className="flex items-center gap-1 rounded-full border border-success/40 bg-success/10 px-2 py-0.5 text-[10px] font-semibold text-success"
+          >
+            <MapPin className="h-3 w-3" />
+            <span className="hidden sm:inline">Ubicación</span>
+          </div>
+        )}
+        {(gpsStatus === "denied" || gpsStatus === "unavailable") && (
+          <button
+            type="button"
+            onClick={attemptLocation}
+            title={
+              gpsStatus === "denied"
+                ? "No se pudo obtener la ubicación — clic para solicitarla"
+                : "Ubicación no disponible — clic para reintentar"
+            }
+            className="flex animate-pulse items-center gap-1 rounded-full border border-destructive/50 bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive transition-opacity hover:animate-none hover:opacity-80 cursor-pointer"
+          >
+            <MapPinOff className="h-3 w-3" />
+            <span className="hidden sm:inline">Sin ubicación</span>
+          </button>
+        )}
+
+        <Button variant="ghost" size="icon" className="relative h-8 w-8 md:h-10 md:w-10">
+          <Bell className="h-3.5 w-3.5 md:h-5 md:w-5" />
+          <span className="absolute right-1 top-1 h-1.5 w-1.5 md:h-2 md:w-2 rounded-full bg-accent" />
+        </Button>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className="hidden md:flex gap-1 md:gap-2 px-1.5 md:px-4 h-8 md:h-10">
+              <Avatar className="h-5 w-5 md:h-8 md:w-8">
+                <AvatarFallback className="bg-brand-gradient text-brand-foreground text-[10px] md:text-xs font-bold">
+                  {currentUser?.nombre
+                    ? currentUser.nombre
+                        .split(" ")
+                        .filter(Boolean)
+                        .slice(0, 2)
+                        .map((p) => p.charAt(0))
+                        .join("")
+                        .toUpperCase()
+                    : <User className="h-2.5 w-2.5 md:h-4 md:w-4" />}
+                </AvatarFallback>
+              </Avatar>
+              <span className="text-[11px] md:text-sm font-medium hidden sm:inline truncate max-w-[120px]">
+                {currentUser?.nombre ?? "Usuario"}
+              </span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48 md:w-56">
+            <DropdownMenuLabel className="text-xs md:text-sm">
+              <div className="flex flex-col gap-0.5">
+                <span className="font-semibold leading-tight truncate">
+                  {currentUser?.nombre ?? "Mi Cuenta"}
+                </span>
+                {currentUser?.rol && (
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    {currentUser.rol}
+                  </span>
+                )}
+              </div>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="text-xs md:text-sm">Perfil</DropdownMenuItem>
+            <DropdownMenuItem className="text-xs md:text-sm">Configuracion</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-xs md:text-sm text-destructive focus:bg-destructive/10 focus:text-destructive cursor-pointer"
+              onClick={() => onLogout?.()}
+            >
+              Cerrar Sesion
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </header>
+  )
+}

@@ -1,0 +1,485 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* Hide number input spinners/arrows */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* ── Admin Route Monitor · map amount tooltip ───────────────────────────── */
+.admin-route-amount-tooltip.leaflet-tooltip {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+.admin-route-amount-tooltip.leaflet-tooltip::before {
+  display: none !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   OPAD APP — BRAND LIGHT THEME
+   Paleta extraída del logo OPAD APP:
+     · Navy Profundo  #163970 — texto, identidad principal
+     · Azul Medio     #2870BC — botones, énfasis
+     · Azul Cielo     #5BB5E0 — acentos, claridad
+     · Teal / Menta   #6EC2A7 — éxito, gradiente
+     · Blanco / Gris  #F4F7FA — fondos limpios
+   Estilo: limpio, profesional, sin sombras decorativas en bordes.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --radius: 0.875rem;
+
+  /* ── Backgrounds (Blanco / Gris muy claro) ──────────────────────────────── */
+  --background:         oklch(0.98 0.005 230);   /* gris-azul casi blanco */
+  --foreground:         oklch(0.25 0.10 260);    /* Navy oscuro #163970 */
+  --card:               oklch(1.00 0 0);         /* blanco puro */
+  --card-foreground:    oklch(0.25 0.10 260);
+  --popover:            oklch(1.00 0 0);
+  --popover-foreground: oklch(0.25 0.10 260);
+  --muted:              oklch(0.95 0.012 230);   /* gris-azul claro */
+  --muted-foreground:   oklch(0.50 0.06 245);    /* azul medio suave */
+  --border:             oklch(0.90 0.018 230);   /* borde sutil azulado */
+  --input:              oklch(0.98 0.008 230);   /* blanco azulado */
+  --input-foreground:   oklch(0.25 0.10 260);    /* Navy texto */
+  --input-border:       oklch(0.88 0.02 230);    /* borde input azulado */
+  --ring:               oklch(0.52 0.13 245);    /* Azul Medio #2870BC */
+
+  /* ── Brand (OPAD) ────────────────────────────────────────────────────────── */
+  --brand-primary:       oklch(0.30 0.12 260);   /* Navy #163970 */
+  --brand-primary-light: oklch(0.52 0.13 245);   /* Azul Medio #2870BC */
+  --brand-secondary:     oklch(0.72 0.10 215);   /* Azul Cielo #5BB5E0 */
+  --brand-accent:        oklch(0.75 0.09 175);   /* Teal/Menta #6EC2A7 */
+  --brand-gradient-from: oklch(0.75 0.09 175);   /* Teal/Menta inicio */
+  --brand-gradient-via:  oklch(0.72 0.10 215);   /* Azul Cielo medio */
+  --brand-gradient-to:   oklch(0.30 0.12 260);   /* Navy fin */
+  --brand-foreground:    oklch(0.99 0 0);        /* blanco sobre brand */
+
+  --primary:             oklch(0.30 0.12 260);   /* Navy */
+  --primary-foreground:  oklch(0.99 0 0);
+  --secondary:           oklch(0.95 0.012 230);  /* gris-azul claro */
+  --secondary-foreground:oklch(0.30 0.12 260);
+  --accent:              oklch(0.75 0.09 175);   /* Teal/Menta */
+  --accent-foreground:   oklch(0.20 0.08 175);   /* teal oscuro sobre menta */
+  --destructive:         oklch(0.58 0.20 25);
+  --destructive-foreground: oklch(0.99 0 0);
+
+  /* ── Semantic ────────────────────────────────────────────────────────────── */
+  --success:              oklch(0.62 0.13 165);  /* Verde menta-éxito alineado al brand */
+  --success-light:        oklch(0.94 0.04 165);
+  --success-foreground:   oklch(0.99 0 0);
+  --warning:              oklch(0.72 0.15 70);   /* ámbar */
+  --warning-light:        oklch(0.95 0.04 70);
+  --warning-foreground:   oklch(0.30 0.08 70);
+  --destructive-light:    oklch(0.95 0.04 25);
+  --info:                 oklch(0.72 0.10 215);  /* Azul Cielo */
+  --info-light:           oklch(0.95 0.03 215);
+  --info-foreground:      oklch(0.99 0 0);
+
+  /* ── Portfolio Status ────────────────────────────────────────────────────── */
+  --status-al-dia:  oklch(0.62 0.13 165);
+  --status-mora:    oklch(0.72 0.15 70);
+  --status-vencido: oklch(0.58 0.20 25);
+
+  /* ── Icon Colors ─────────────────────────────────────────────────────────── */
+  --icon-wallet:     oklch(0.72 0.15 70);
+  --icon-cash:       oklch(0.62 0.13 165);
+  --icon-target:     oklch(0.58 0.20 25);
+  --icon-sales:      oklch(0.52 0.13 245);
+  --icon-check:      oklch(0.52 0.13 245);
+  --icon-expense:    oklch(0.58 0.20 25);
+  --icon-withdrawal: oklch(0.55 0.14 280);
+  --icon-income:     oklch(0.62 0.13 165);
+  --icon-payment:    oklch(0.72 0.10 215);
+  --icon-calendar:   oklch(0.30 0.12 260);
+  --icon-clock:      oklch(0.72 0.15 70);
+  --icon-users:      oklch(0.72 0.10 215);
+
+  /* ── Quick Access Cards · degradados azul→teal del logo ──────────────────── */
+  --card-summary-from:   oklch(0.30 0.12 260);   /* Navy */
+  --card-summary-to:     oklch(0.52 0.13 245);   /* Azul Medio */
+  --card-payment-from:   oklch(0.52 0.13 245);   /* Azul Medio */
+  --card-payment-to:     oklch(0.72 0.10 215);   /* Azul Cielo */
+  --card-sale-from:      oklch(0.62 0.13 165);   /* Verde Menta */
+  --card-sale-to:        oklch(0.75 0.09 175);   /* Teal */
+  --card-clients-from:   oklch(0.72 0.10 215);   /* Azul Cielo */
+  --card-clients-to:     oklch(0.75 0.09 175);   /* Teal */
+  --card-expense-from:   oklch(0.52 0.13 245);
+  --card-expense-to:     oklch(0.30 0.12 260);
+  --card-auth-from:      oklch(0.72 0.10 215);
+  --card-auth-to:        oklch(0.52 0.13 245);
+  --card-secretary-from: oklch(0.52 0.13 245);
+  --card-secretary-to:   oklch(0.30 0.12 260);
+  --card-view-from:      oklch(0.72 0.15 70);    /* Amber */
+  --card-view-to:        oklch(0.60 0.14 70);
+  --card-route-from:     oklch(0.75 0.09 175);   /* Teal */
+  --card-route-to:       oklch(0.72 0.10 215);   /* Azul Cielo */
+
+  /* ── Charts ──────────────────────────────────────────────────────────────── */
+  --chart-1: oklch(0.30 0.12 260);   /* Navy */
+  --chart-2: oklch(0.62 0.13 165);   /* Verde Menta */
+  --chart-3: oklch(0.52 0.13 245);   /* Azul Medio */
+  --chart-4: oklch(0.72 0.15 70);    /* Ámbar */
+  --chart-5: oklch(0.72 0.10 215);   /* Azul Cielo */
+
+  /* ── Sidebar ─────────────────────────────────────────────────────────────── */
+  --sidebar:                     oklch(0.30 0.12 260);   /* Navy profundo */
+  --sidebar-foreground:          oklch(0.99 0 0);
+  --sidebar-primary:             oklch(0.75 0.09 175);   /* Teal/Menta */
+  --sidebar-primary-foreground:  oklch(0.20 0.08 175);
+  --sidebar-accent:              oklch(0.36 0.11 260);
+  --sidebar-accent-foreground:   oklch(0.99 0 0);
+  --sidebar-border:              oklch(0.36 0.11 260);
+  --sidebar-ring:                oklch(0.75 0.09 175);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   @theme inline — CSS variables → Tailwind utility classes
+   ═══════════════════════════════════════════════════════════════════════════ */
+@theme inline {
+  --font-sans: 'Geist', 'Geist Fallback', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono', 'Geist Mono Fallback', ui-monospace, monospace;
+
+  /* shadcn/ui base */
+  --color-background:          var(--background);
+  --color-foreground:          var(--foreground);
+  --color-card:                var(--card);
+  --color-card-foreground:     var(--card-foreground);
+  --color-popover:             var(--popover);
+  --color-popover-foreground:  var(--popover-foreground);
+  --color-primary:             var(--primary);
+  --color-primary-foreground:  var(--primary-foreground);
+  --color-secondary:           var(--secondary);
+  --color-secondary-foreground:var(--secondary-foreground);
+  --color-muted:               var(--muted);
+  --color-muted-foreground:    var(--muted-foreground);
+  --color-accent:              var(--accent);
+  --color-accent-foreground:   var(--accent-foreground);
+  --color-destructive:         var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border:              var(--border);
+  --color-input:               var(--input);
+  --color-input-foreground:    var(--input-foreground);
+  --color-input-border:        var(--input-border);
+  --color-ring:                var(--ring);
+  --color-chart-1:             var(--chart-1);
+  --color-chart-2:             var(--chart-2);
+  --color-chart-3:             var(--chart-3);
+  --color-chart-4:             var(--chart-4);
+  --color-chart-5:             var(--chart-5);
+  --color-sidebar:             var(--sidebar);
+  --color-sidebar-foreground:  var(--sidebar-foreground);
+  --color-sidebar-primary:     var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent:      var(--sidebar-accent);
+  --color-sidebar-accent-foreground:  var(--sidebar-accent-foreground);
+  --color-sidebar-border:      var(--sidebar-border);
+  --color-sidebar-ring:        var(--sidebar-ring);
+
+  /* Brand */
+  --color-brand:            var(--brand-primary);
+  --color-brand-light:      var(--brand-primary-light);
+  --color-brand-secondary:  var(--brand-secondary);
+  --color-brand-accent:     var(--brand-accent);
+  --color-brand-foreground: var(--brand-foreground);
+
+  /* Semantic */
+  --color-success:             var(--success);
+  --color-success-light:       var(--success-light);
+  --color-success-foreground:  var(--success-foreground);
+  --color-warning:             var(--warning);
+  --color-warning-light:       var(--warning-light);
+  --color-warning-foreground:  var(--warning-foreground);
+  --color-destructive-light:   var(--destructive-light);
+  --color-info:                var(--info);
+  --color-info-light:          var(--info-light);
+  --color-info-foreground:     var(--info-foreground);
+
+  /* Status */
+  --color-status-al-dia:  var(--status-al-dia);
+  --color-status-mora:    var(--status-mora);
+  --color-status-vencido: var(--status-vencido);
+
+  /* Icons */
+  --color-icon-wallet:     var(--icon-wallet);
+  --color-icon-cash:       var(--icon-cash);
+  --color-icon-target:     var(--icon-target);
+  --color-icon-sales:      var(--icon-sales);
+  --color-icon-check:      var(--icon-check);
+  --color-icon-expense:    var(--icon-expense);
+  --color-icon-withdrawal: var(--icon-withdrawal);
+  --color-icon-income:     var(--icon-income);
+  --color-icon-payment:    var(--icon-payment);
+  --color-icon-calendar:   var(--icon-calendar);
+  --color-icon-clock:      var(--icon-clock);
+  --color-icon-users:      var(--icon-users);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BASE LAYER
+   ═══════════════════════════════════════════════════════════════════════════ */
+@layer base {
+  *, *::before, *::after {
+    border-color: var(--border);
+    box-sizing: border-box;
+  }
+  html {
+    color-scheme: light;
+    background-color: var(--background);
+  }
+  /*
+    Body background: degradado claro inspirado en el logo OPAD.
+    Capas:
+      1) Mancha radial teal/menta en la esquina superior izquierda
+      2) Mancha radial azul cielo en la esquina superior derecha
+      3) Tinte azul muy claro en la parte inferior
+      4) Base blanco-azulado del token --background
+    El gradient es fixed para que persista al hacer scroll y aporte profundidad.
+  */
+  body {
+    background-color: var(--background);
+    background-image:
+      radial-gradient(
+        ellipse 70% 60% at 0% 0%,
+        color-mix(in oklch, var(--brand-accent) 22%, transparent) 0%,
+        transparent 60%
+      ),
+      radial-gradient(
+        ellipse 80% 60% at 100% 0%,
+        color-mix(in oklch, var(--brand-secondary) 22%, transparent) 0%,
+        transparent 65%
+      ),
+      radial-gradient(
+        ellipse 100% 50% at 50% 100%,
+        color-mix(in oklch, var(--brand-primary-light) 12%, transparent) 0%,
+        transparent 70%
+      ),
+      linear-gradient(
+        180deg,
+        color-mix(in oklch, var(--brand-accent) 6%, var(--background)) 0%,
+        var(--background) 40%,
+        color-mix(in oklch, var(--brand-secondary) 5%, var(--background)) 100%
+      );
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+    background-size: 100% 100%;
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   GLOBAL FORM FIELDS — Fondo claro + borde sutil · SIN sombras
+   ═══════════════════════════════════════════════════════════════════════════ */
+@layer base {
+  /* Inputs, textareas, selects · borde fino sin sombra */
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select,
+  [role="combobox"],
+  [data-slot="input"],
+  [data-slot="control"],
+  [data-slot="select-trigger"],
+  button[role="combobox"] {
+    background-color: var(--input) !important;
+    color: var(--input-foreground) !important;
+    border: 1px solid var(--input-border) !important;
+    box-shadow: none !important;
+  }
+
+  /* Input focus · ring sutil del brand */
+  input:not([type="checkbox"]):not([type="radio"]):focus,
+  input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+  textarea:focus,
+  textarea:focus-visible,
+  select:focus,
+  [role="combobox"]:focus,
+  [data-slot="input"]:focus,
+  [data-slot="select-trigger"]:focus,
+  button[role="combobox"]:focus {
+    border-color: var(--brand-primary-light) !important;
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand-primary-light) 18%, transparent) !important;
+    outline: none !important;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: oklch(0.65 0.04 245);
+  }
+
+  /* SelectContent, DropdownContent, PopoverContent · sin sombra */
+  [data-radix-popper-content-wrapper],
+  [data-radix-select-viewport],
+  [data-radix-popper-content-wrapper] > div,
+  [role="listbox"],
+  [role="menu"],
+  [data-slot="select-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="popover-content"] {
+    background-color: var(--popover) !important;
+    color: var(--popover-foreground) !important;
+    border: 1px solid var(--border) !important;
+    box-shadow: none !important;
+  }
+
+  /* Select items · texto navy */
+  [role="option"],
+  [role="menuitem"],
+  [data-slot="select-item"],
+  [data-slot="dropdown-menu-item"] {
+    color: var(--popover-foreground) !important;
+    background-color: transparent;
+  }
+
+  /* Hover y highlighted · fondo gris azulado suave */
+  [role="option"]:hover,
+  [role="option"][data-highlighted],
+  [role="option"][data-state="checked"],
+  [role="menuitem"]:hover,
+  [role="menuitem"][data-highlighted],
+  [data-slot="select-item"]:hover,
+  [data-slot="select-item"][data-highlighted] {
+    background-color: var(--muted) !important;
+    color: var(--popover-foreground) !important;
+  }
+
+  [data-slot="select-trigger"],
+  [data-slot="select-value"] {
+    color: var(--input-foreground) !important;
+  }
+
+  /* Campos deshabilitados · sin sombra */
+  input:disabled,
+  input[readonly],
+  textarea:disabled,
+  textarea[readonly],
+  select:disabled,
+  [data-disabled],
+  [aria-disabled="true"] {
+    background-color: var(--muted) !important;
+    color: var(--muted-foreground) !important;
+    border: 1px solid var(--border) !important;
+    box-shadow: none !important;
+    cursor: not-allowed;
+    opacity: 1;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CUSTOM UTILITY CLASSES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Brand gradient (teal → azul cielo → navy) — el degradado del logo OPAD */
+.bg-brand-gradient {
+  background: linear-gradient(
+    135deg,
+    var(--brand-gradient-from) 0%,
+    var(--brand-gradient-via) 50%,
+    var(--brand-gradient-to) 100%
+  );
+}
+
+/*
+  Sidebar gradient — vertical de navy en la parte superior a teal/menta
+  en la parte inferior, pasando por azul medio y azul cielo. Refleja el
+  degradado del logo OPAD aplicado de arriba hacia abajo.
+*/
+.bg-sidebar-gradient {
+  background:
+    linear-gradient(
+      180deg,
+      var(--brand-primary) 0%,
+      color-mix(in oklch, var(--brand-primary) 70%, var(--brand-primary-light)) 28%,
+      var(--brand-primary-light) 55%,
+      var(--brand-secondary) 80%,
+      var(--brand-accent) 100%
+    );
+}
+
+/* Brand gradient diagonal compacto (para botones, badges) */
+.bg-brand-gradient-soft {
+  background: linear-gradient(
+    135deg,
+    color-mix(in oklch, var(--brand-accent) 90%, white) 0%,
+    color-mix(in oklch, var(--brand-secondary) 90%, white) 100%
+  );
+}
+
+/* Compatibilidad: shadow-steel* ahora son no-ops para mantener limpio */
+.shadow-steel,
+.shadow-steel-sm,
+.shadow-steel-lg { box-shadow: none; }
+
+/* Cards · SIN sombras, sólo borde sutil */
+[data-slot="card"],
+.card {
+  box-shadow: none;
+  border: 1px solid var(--border);
+}
+
+/* Dialogs · sin sombras, borde definido por el componente */
+[data-slot="dialog-content"],
+[data-slot="sheet-content"],
+[role="dialog"] {
+  box-shadow: none;
+}
+
+/* Portfolio status */
+.bg-status-al-dia    { background-color: var(--status-al-dia); }
+.bg-status-mora      { background-color: var(--status-mora); }
+.bg-status-vencido   { background-color: var(--status-vencido); }
+.text-status-al-dia  { color: var(--status-al-dia); }
+.text-status-mora    { color: var(--status-mora); }
+.text-status-vencido { color: var(--status-vencido); }
+
+/* Icon utilities */
+.text-icon-wallet     { color: var(--icon-wallet); }
+.text-icon-cash       { color: var(--icon-cash); }
+.text-icon-target     { color: var(--icon-target); }
+.text-icon-sales      { color: var(--icon-sales); }
+.text-icon-check      { color: var(--icon-check); }
+.text-icon-expense    { color: var(--icon-expense); }
+.text-icon-withdrawal { color: var(--icon-withdrawal); }
+.text-icon-income     { color: var(--icon-income); }
+.text-icon-payment    { color: var(--icon-payment); }
+.text-icon-calendar   { color: var(--icon-calendar); }
+.text-icon-clock      { color: var(--icon-clock); }
+.text-icon-users      { color: var(--icon-users); }
+
+/* Sidebar nav item pills · usan los gradientes del quick-access */
+.sidebar-item-summary   { background: linear-gradient(135deg, var(--card-summary-from), var(--card-summary-to));     color: oklch(0.99 0 0); }
+.sidebar-item-payment   { background: linear-gradient(135deg, var(--card-payment-from), var(--card-payment-to));     color: oklch(0.99 0 0); }
+.sidebar-item-sale      { background: linear-gradient(135deg, var(--card-sale-from), var(--card-sale-to));           color: oklch(0.99 0 0); }
+.sidebar-item-clients   { background: linear-gradient(135deg, var(--card-clients-from), var(--card-clients-to));     color: oklch(0.99 0 0); }
+.sidebar-item-expense   { background: linear-gradient(135deg, var(--card-expense-from), var(--card-expense-to));     color: oklch(0.99 0 0); }
+.sidebar-item-auth      { background: linear-gradient(135deg, var(--card-auth-from), var(--card-auth-to));           color: oklch(0.99 0 0); }
+.sidebar-item-secretary { background: linear-gradient(135deg, var(--card-secretary-from), var(--card-secretary-to)); color: oklch(0.99 0 0); }
+.sidebar-item-view      { background: linear-gradient(135deg, var(--card-view-from), var(--card-view-to));           color: oklch(0.99 0 0); }
+.sidebar-item-route     { background: linear-gradient(135deg, var(--card-route-from), var(--card-route-to));         color: oklch(0.99 0 0); }
+
+/* Mobile bottom nav */
+.nav-item-home    { color: var(--muted-foreground); }
+.nav-item-payment { color: var(--success); }
+.nav-item-sale    { color: var(--info); }
+.nav-item-expense { color: var(--warning); }
+.nav-item-summary { color: var(--brand-primary); }
+
+.nav-item-active          { opacity: 1; background-color: var(--muted); }
+.nav-item-inactive        { opacity: 0.65; }
+.nav-item-inactive:hover  { opacity: 1; background-color: var(--muted); }
