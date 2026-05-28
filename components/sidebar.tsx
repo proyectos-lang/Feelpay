@@ -1,5 +1,6 @@
 "use client"
 
+import React from "react"
 import {
   DollarSign,
   ChevronLeft,
@@ -16,26 +17,45 @@ import {
   ListChecks,
   LogOut,
   User as UserIcon,
+  LayoutDashboard,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import type { AuthenticatedUser } from "./views/login-view"
 
-// Using CSS variable-based styling for sidebar items
-const quickAccessItems = [
-  { id: "daily-summary",            label: "Resumen del Día",           icon: BarChart3,   colorClass: "sidebar-item-summary" },
-  { id: "register-payment",         label: "Registrar Pago",            icon: DollarSign,  colorClass: "sidebar-item-payment" },
-  { id: "new-loan",                 label: "Nueva Venta",               icon: Plus,        colorClass: "sidebar-item-sale" },
-  { id: "view-clients",             label: "Clientes",                  icon: Users,       colorClass: "sidebar-item-clients" },
-  { id: "register-transaction",     label: "Gasto e Ingreso",           icon: TrendingUp,  colorClass: "sidebar-item-expense" },
-  { id: "pending-authorizations",   label: "Autor. Admin",              icon: CheckCircle, colorClass: "sidebar-item-auth" },
-  { id: "secretary-authorizations", label: "Autor. Secretaria",         icon: CheckCircle, colorClass: "sidebar-item-secretary" },
-  { id: "view-expenses-income",     label: "Gastos e Ingresos",         icon: Eye,         colorClass: "sidebar-item-view" },
-  { id: "view-loans",               label: "Ver Ventas",                icon: ShoppingBag, colorClass: "sidebar-item-clients" },
-  { id: "payment-control",          label: "Control de Pagos",          icon: ListChecks,  colorClass: "sidebar-item-payment" },
-  { id: "configure-route",          label: "Ordenar Ruta",              icon: MapPin,      colorClass: "sidebar-item-route" },
-  { id: "admin-route-monitor",      label: "Monitoreo de Rutas",        icon: Route,       colorClass: "sidebar-item-route" },
+type NavItem = { id: string; label: string; icon: React.ElementType; colorClass: string }
+type NavGroup = { group: string; items: NavItem[] }
+
+const navGroups: NavGroup[] = [
+  {
+    group: "Asesor",
+    items: [
+      { id: "daily-summary",        label: "Resumen del Día",   icon: BarChart3,   colorClass: "sidebar-item-summary"   },
+      { id: "register-payment",     label: "Registrar Pago",    icon: DollarSign,  colorClass: "sidebar-item-payment"   },
+      { id: "new-loan",             label: "Nueva Venta",        icon: Plus,        colorClass: "sidebar-item-sale"      },
+      { id: "view-clients",         label: "Clientes",           icon: Users,       colorClass: "sidebar-item-clients"   },
+      { id: "register-transaction", label: "Gasto e Ingreso",   icon: TrendingUp,  colorClass: "sidebar-item-expense"   },
+      { id: "view-expenses-income", label: "Ver Gastos",         icon: Eye,         colorClass: "sidebar-item-view"      },
+      { id: "view-loans",           label: "Ver Ventas",         icon: ShoppingBag, colorClass: "sidebar-item-clients"   },
+    ],
+  },
+  {
+    group: "Administrador",
+    items: [
+      { id: "admin-dashboard",        label: "Dashboard",          icon: LayoutDashboard, colorClass: "sidebar-item-summary"  },
+      { id: "pending-authorizations", label: "Autor. Admin",       icon: CheckCircle,     colorClass: "sidebar-item-auth"     },
+      { id: "admin-route-monitor",    label: "Monitoreo Rutas",    icon: Route,           colorClass: "sidebar-item-route"    },
+      { id: "configure-route",        label: "Ordenar Ruta",       icon: MapPin,          colorClass: "sidebar-item-route"    },
+    ],
+  },
+  {
+    group: "Secretaria",
+    items: [
+      { id: "secretary-authorizations", label: "Autor. Secret.",  icon: CheckCircle, colorClass: "sidebar-item-secretary" },
+      { id: "payment-control",          label: "Control Pagos",   icon: ListChecks,  colorClass: "sidebar-item-payment"   },
+    ],
+  },
 ]
 
 interface SidebarProps {
@@ -115,42 +135,49 @@ export function Sidebar({
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto">
 
-        {/* Quick Access Section */}
-        <div className="p-1.5 md:p-3 border-b border-sidebar-border">
-          {!isCollapsed && (
-            <p className="text-[9px] md:text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-1 mb-1.5">
-              Accesos Rápidos
-            </p>
-          )}
-          <div className={cn("grid gap-1", isCollapsed ? "grid-cols-1" : "grid-cols-3")}>
-            {quickAccessItems.map((item) => {
-              const Icon = item.icon
-              const isActive = currentView === item.id
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => onViewChange(item.id)}
-                  title={item.label}
-                  className={cn(
-                    "flex flex-col items-center justify-center rounded-md transition-all active:scale-95",
-                    isCollapsed ? "p-2 h-10" : "p-1.5 h-14 gap-1",
-                    item.colorClass,
-                    isActive
-                      ? "ring-2 ring-offset-1 ring-current shadow-sm opacity-100"
-                      : "opacity-60 hover:opacity-100",
-                  )}
-                >
-                  <Icon className={cn(isCollapsed ? "h-4 w-4" : "h-4 w-4 md:h-5 md:w-5")} />
-                  {!isCollapsed && (
-                    <span className="text-[8px] md:text-[9px] font-medium text-center leading-tight line-clamp-2">
-                      {item.label}
-                    </span>
-                  )}
-                </button>
-              )
-            })}
-          </div>
+        {/* Grouped Quick Access */}
+        <div className="flex flex-col divide-y divide-sidebar-border">
+          {navGroups.map(({ group, items }, gi) => (
+            <div key={group} className="p-1.5 md:p-3">
+              {!isCollapsed && (
+                <p className="text-[9px] md:text-[10px] font-bold uppercase tracking-wider text-white/80 px-1 mb-1.5">
+                  {group}
+                </p>
+              )}
+              {isCollapsed && gi > 0 && (
+                <div className="border-t border-sidebar-border mb-1" />
+              )}
+              <div className={cn("grid gap-1", isCollapsed ? "grid-cols-1" : "grid-cols-3")}>
+                {items.map((item) => {
+                  const Icon = item.icon
+                  const isActive = currentView === item.id
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onViewChange(item.id)}
+                      title={item.label}
+                      className={cn(
+                        "flex flex-col items-center justify-center rounded-md transition-all active:scale-95",
+                        isCollapsed ? "p-2 h-10" : "p-1.5 h-14 gap-1",
+                        item.colorClass,
+                        isActive
+                          ? "ring-2 ring-offset-1 ring-current shadow-sm opacity-100"
+                          : "opacity-60 hover:opacity-100",
+                      )}
+                    >
+                      <Icon className={cn(isCollapsed ? "h-4 w-4" : "h-4 w-4 md:h-5 md:w-5")} />
+                      {!isCollapsed && (
+                        <span className="text-[8px] md:text-[9px] font-medium text-center leading-tight line-clamp-2">
+                          {item.label}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </div>
 
 

@@ -52,6 +52,7 @@ export function DashboardLayout({
       "auth-codes": "Generar Códigos de Autorización",
       "general-config": "Configuración General",
       "admin-route-monitor": "Monitoreo de Rutas",
+      "admin-dashboard": "Dashboard Administrador",
     }
     return titleMap[view] || "Panel Principal"
   }

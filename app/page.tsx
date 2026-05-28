@@ -26,6 +26,7 @@ import { GeneralConfig } from "@/components/views/general-config"
 import { ConfigureRoute } from "@/components/views/configure-route"
 import { CierreCaja } from "@/components/views/cierre-caja"
 import { AdminRouteMonitor } from "@/components/views/admin-route-monitor"
+import { AdminDashboard } from "@/components/views/admin-dashboard"
 import { RouteSelector, type SelectedRuta } from "@/components/route-selector"
 import { LoginView, type AuthenticatedUser } from "@/components/views/login-view"
 import { LoginSplash } from "@/components/login-splash"
@@ -83,6 +84,10 @@ export default function Page() {
           if (parsedRuta && typeof parsedRuta.id === "number") {
             setSelectedRuta(parsedRuta)
             hydratedRutaId = parsedRuta.id
+            // Admin recargando página con ruta virtual → ir directo al dashboard
+            if (parsedRuta.id === 0 && parsed && ["admin", "administrador"].includes((parsed.rol ?? "").toLowerCase())) {
+              setCurrentView("admin-dashboard")
+            }
           }
         }
         // Hidratacion OPTIMISTA del estado de ruta del dia. Si el cache
@@ -274,6 +279,9 @@ export default function Page() {
     }
   }, [selectedRuta, sesionFixed])
 
+  const ADMIN_VIRTUAL_RUTA: SelectedRuta = { id: 0, nombre: "Todas las rutas", ciudad: null, pais: null }
+  const ADMIN_ROLES = new Set(["admin", "administrador"])
+
   const handleLoginSuccess = useCallback((user: AuthenticatedUser) => {
     try {
       localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user))
@@ -281,13 +289,24 @@ export default function Page() {
       console.error("[v0] Error writing currentUser to localStorage:", err)
     }
     setCurrentUser(user)
-    // Reset ruta selection on fresh login
-    try {
-      localStorage.removeItem(RUTA_STORAGE_KEY)
-    } catch {}
-    setSelectedRuta(null)
-    // Mostrar la pantalla de transicion tras un login fresco
+
+    const isAdmin = ADMIN_ROLES.has((user.rol ?? "").toLowerCase())
+    if (isAdmin) {
+      // Admins saltan el RouteSelector: se les asigna la ruta virtual "todas"
+      // y van directo al dashboard de administrador.
+      try {
+        localStorage.setItem(RUTA_STORAGE_KEY, JSON.stringify(ADMIN_VIRTUAL_RUTA))
+      } catch {}
+      setSelectedRuta(ADMIN_VIRTUAL_RUTA)
+      setCurrentView("admin-dashboard")
+    } else {
+      try {
+        localStorage.removeItem(RUTA_STORAGE_KEY)
+      } catch {}
+      setSelectedRuta(null)
+    }
     setShowSplash(true)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleLogout = useCallback(() => {
@@ -436,6 +455,8 @@ export default function Page() {
         return <GeneralConfig />
       case "admin-route-monitor":
         return <AdminRouteMonitor />
+      case "admin-dashboard":
+        return <AdminDashboard currentUserId={currentUser?.id} />
       case "payment-control":
         return <PaymentControl currentRutaId={rutaId} rutaPais={rutaPais} />
       default:
