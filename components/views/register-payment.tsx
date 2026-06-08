@@ -2301,7 +2301,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                           <TableHead className="w-[52px] md:w-[110px] text-right text-[11px] md:text-base py-1 md:py-3 px-1 md:px-2">Valor</TableHead>
                           <TableHead className="w-[52px] md:w-[110px] text-right text-[11px] md:text-base py-1 md:py-3 px-1 md:px-2">Saldo</TableHead>
                           <TableHead className="w-[80px] md:w-[100px] text-center text-[11px] md:text-base py-1 md:py-3 px-1 md:px-2">Estado</TableHead>
-                          <TableHead className="hidden md:table-cell md:w-[80px] text-center text-[11px] md:text-base py-1 md:py-3 px-1 md:px-2">Hora</TableHead>
+                          <TableHead className="w-[44px] md:w-[80px] text-center text-[11px] md:text-base py-1 md:py-3 px-1 md:px-2">Hora</TableHead>
                           <TableHead className="w-[56px] md:w-[90px] text-center text-[11px] md:text-base py-1 md:py-3 px-1 md:px-2">Acc.</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -2338,9 +2338,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 </span>
                               )}
                             </TableCell>
-                            {/* Hora oculta en móvil para liberar ancho.
-                                Sigue accesible en desktop (md+). */}
-                            <TableCell className="hidden md:table-cell py-1.5 md:py-3 px-1 md:px-2 text-center text-[11px] md:text-base text-muted-foreground">
+                            <TableCell className="py-1.5 md:py-3 px-1 md:px-2 text-center text-[11px] md:text-base text-muted-foreground">
                               {m.gestionHora}
                             </TableCell>
                             <TableCell className="py-1.5 md:py-3 px-1 md:px-2 text-right">
