@@ -602,6 +602,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       
       // Process each loan with its payment plan
       for (const loan of activeLoans) {
+        // Ocultar préstamos creados hoy — no se cobran el mismo día de la venta.
+        if (loan.fecha_creacion) {
+          const fechaCreacionColombia = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "America/Bogota",
+            year: "numeric", month: "2-digit", day: "2-digit",
+          }).format(new Date(loan.fecha_creacion))
+          if (fechaCreacionColombia === todayColombia) continue
+        }
+
         const paymentPlan = paymentPlansByLoan.get(loan.id) || []
         const cuotasPagadas = paymentPlan.filter((p) => p.estado === "pagado").length
         const cuotasTotales = paymentPlan.length
