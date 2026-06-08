@@ -2331,6 +2331,43 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                             >
                               <Trash2 className="h-3 w-3" />
                             </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button size="icon" variant="ghost" className="h-6 w-6">
+                                  <MoreVertical className="h-3 w-3" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-48">
+                                <DropdownMenuItem
+                                  className="text-xs md:text-base cursor-pointer"
+                                  onClick={() => { setPaymentHistoryClient(m); setPaymentHistoryOpen(true) }}
+                                >
+                                  <History className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                  Historial de pagos
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-xs md:text-base cursor-pointer"
+                                  onClick={() => { setLoanHistoryClient(m); setLoanHistoryOpen(true) }}
+                                >
+                                  <FileText className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                  Historial de prestamos
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-xs md:text-base cursor-pointer"
+                                  onClick={() => { setSelectedClientInfo(m); setClientInfoDialogOpen(true) }}
+                                >
+                                  <User className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                  Info del cliente
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-xs md:text-base cursor-pointer"
+                                  onClick={() => handleGenerarRecibo(m)}
+                                >
+                                  <Receipt className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                  Generar recibo
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </div>
                         {/* Línea 2: cuota · préstamo · abonado · saldo */}
