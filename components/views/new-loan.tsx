@@ -413,6 +413,10 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       alert("Por favor complete todos los campos requeridos")
       return
     }
+    if (frecuenciaPago === "weekly" && !diaSemana) {
+      alert("Para frecuencia Semanal debe seleccionar el día de cobro")
+      return
+    }
 
     // `numeroCuotas` ya es el numero total de pagos. Solo necesitamos calcular
     // la distancia (en dias) entre pagos segun la frecuencia.
@@ -548,6 +552,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         amount: "Valor del préstamo",
         dias: "Número de cuotas",
         frequency: "Frecuencia de pago",
+        diaSemana: "Día de cobro (obligatorio para frecuencia Semanal)",
         tasaInteres: "Tasa de interés",
         tipoAmortizacion: "Método de interés",
       }
@@ -566,6 +571,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       if (!valor || Number.parseFloat(valor) <= 0) errors.add("amount")
       if (!dias || Number.parseInt(dias) <= 0) errors.add("dias")
       if (!frecuenciaPago) errors.add("frequency")
+      if (frecuenciaPago === "weekly" && !diaSemana) errors.add("diaSemana")
       if (!prestamoEmpleado) {
         if (!tasaInteres) errors.add("tasaInteres")
         if (!tipoAmortizacion) errors.add("tipoAmortizacion")
@@ -1672,10 +1678,10 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
           {frecuenciaPago && frecuenciaPago !== "daily" && (
             <div className="space-y-1 md:space-y-2">
               <Label htmlFor="dayOfWeek" className="text-[11px] md:text-sm">
-                Día de Cobro
+                Día de Cobro{frecuenciaPago === "weekly" && <span className="text-red-500 ml-0.5">*</span>}
               </Label>
-              <Select value={diaSemana} onValueChange={setDiaSemana}>
-                <SelectTrigger id="dayOfWeek" className="h-8 md:h-10 text-[11px] md:text-sm">
+              <Select value={diaSemana} onValueChange={(v) => { setDiaSemana(v); clearFieldError("diaSemana") }}>
+                <SelectTrigger id="dayOfWeek" className={`h-8 md:h-10 text-[11px] md:text-sm ${errCls("diaSemana")}`}>
                   <SelectValue placeholder="Seleccione día" />
                 </SelectTrigger>
                 <SelectContent>
