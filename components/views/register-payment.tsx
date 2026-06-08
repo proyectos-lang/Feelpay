@@ -411,13 +411,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
   const managedIds = new Set(managedToday.map((m) => m.loanId))
 
-  // Build a position map from the full clients array (already sorted by ordenvisita)
-  const clientPositionMap = new Map(clients.map((c, idx) => [c.loanId, idx]))
-
   const sortedManaged = [...managedToday].sort((a, b) => {
-    const posA = clientPositionMap.has(a.loanId) ? clientPositionMap.get(a.loanId)! : 99999
-    const posB = clientPositionMap.has(b.loanId) ? clientPositionMap.get(b.loanId)! : 99999
-    return posA - posB
+    const ordA = a.ordenvisita > 0 ? a.ordenvisita : 99999
+    const ordB = b.ordenvisita > 0 ? b.ordenvisita : 99999
+    return ordA - ordB
   })
 
   // Base filtered clients: all filters except mora — used for the circle counts
