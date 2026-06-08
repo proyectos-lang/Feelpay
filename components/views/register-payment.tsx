@@ -215,26 +215,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // Gestionados que usan `displayClients.length` / `gestionados.length`).
   const [salesTodayCount, setSalesTodayCount] = useState(0)
 
-  // ── Swipe horizontal para cambiar de pestaña en móvil ──────────────────
-  const swipeTouchStartX = useRef<number | null>(null)
-  const SWIPE_THRESHOLD = 50 // px mínimo para considerar un swipe
-
-  const handleSwipeTouchStart = useCallback((e: React.TouchEvent) => {
-    swipeTouchStartX.current = e.touches[0].clientX
-  }, [])
-
-  const handleSwipeTouchEnd = useCallback((e: React.TouchEvent) => {
-    if (swipeTouchStartX.current === null) return
-    const delta = e.changedTouches[0].clientX - swipeTouchStartX.current
-    swipeTouchStartX.current = null
-    if (Math.abs(delta) < SWIPE_THRESHOLD) return
-    setActiveTab((prev) => {
-      const idx = TAB_ORDER.indexOf(prev)
-      if (delta < 0 && idx < TAB_ORDER.length - 1) return TAB_ORDER[idx + 1] // swipe izq → sig
-      if (delta > 0 && idx > 0) return TAB_ORDER[idx - 1]                    // swipe der → ant
-      return prev
-    })
-  }, [])
   const [editingManaged, setEditingManaged] = useState<ManagedClient | null>(null)
   const [editMonto, setEditMonto] = useState("")
   const [savingManaged, setSavingManaged] = useState(false)
@@ -1991,8 +1971,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           <div
             className="flex transition-transform duration-300 ease-in-out will-change-transform"
             style={{ transform: `translateX(${-TAB_ORDER.indexOf(activeTab) * 100}%)` }}
-            onTouchStart={handleSwipeTouchStart}
-            onTouchEnd={handleSwipeTouchEnd}
           >
 
           {/* ── Panel 0: Pendientes ────────────────────────────────────── */}
