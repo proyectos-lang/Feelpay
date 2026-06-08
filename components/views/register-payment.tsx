@@ -716,7 +716,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           clientId: loan.client_id,
           nombre: loan.clients?.apodo || loan.clients?.nombre_completo || "Sin nombre",
           documento: loan.clients?.documento || "",
-          valorVenta: loan.valor_a_pagar || loan.valor,
+          valorVenta: loan.tipo_amortizacion?.toLowerCase().trim() === "americano"
+            ? loan.valor
+            : (loan.valor_a_pagar || loan.valor),
           valorPrestamo: loan.valor,
           valorCuota: loan.valor_cuota,
           saldo: saldoReal,
