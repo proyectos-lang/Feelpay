@@ -86,7 +86,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         // RLS eliminado: filtramos explicitamente con `.eq('ruta', rutaId)`.
         const { data, error } = await supabase
           .from("resumen_pagos_diarios")
-          .select("valor_pago, meta_pagos, valor_ingresos, valor_gastos, valor_retiros, valor_canceladas, valor_ventas, efectivo")
+          .select("valor_pago, meta_pagos, valor_ingresos, valor_gastos, valor_retiros, valor_canceladas, valor_ventas, efectivo, pago_capital, pago_intereses")
           .eq("fecha_pago", fechaHoy)
           .eq("ruta", rutaId)
           .maybeSingle()
@@ -95,18 +95,22 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
           console.error("[v0] legacy resumen_pagos_diarios error:", error.message)
         }
         if (data) {
-          setCollectedAmount(data.valor_pago ?? 0)
-          setMetaAmount(data.meta_pagos ?? 0)
-          setValorIngresos(data.valor_ingresos ?? 0)
-          setValorGastos(data.valor_gastos ?? 0)
-          setValorRetiros(data.valor_retiros ?? 0)
-          setValorCanceladas(data.valor_canceladas ?? 0)
-          setValorVentas((data as { valor_ventas?: number | null }).valor_ventas ?? 0)
-          setEfectivo((data as { efectivo?: number | null }).efectivo ?? 0)
+          const d = data as Record<string, number | null>
+          setCollectedAmount(d.valor_pago ?? 0)
+          setMetaAmount(d.meta_pagos ?? 0)
+          setValorIngresos(d.valor_ingresos ?? 0)
+          setValorGastos(d.valor_gastos ?? 0)
+          setValorRetiros(d.valor_retiros ?? 0)
+          setValorCanceladas(d.valor_canceladas ?? 0)
+          setValorVentas(d.valor_ventas ?? 0)
+          setEfectivo(d.efectivo ?? 0)
+          setPagoCapital(d.pago_capital ?? 0)
+          setPagoIntereses(d.pago_intereses ?? 0)
         } else {
-          // No hay resumen para hoy: dejamos efectivo en 0 explicitamente
-          // por si se esta refrescando despues de cambiar de ruta.
+          // No hay resumen para hoy: dejamos todos los valores en 0.
           setEfectivo(0)
+          setPagoCapital(0)
+          setPagoIntereses(0)
         }
 
         // ── Caja Anterior: efectivo del resumen mas reciente con
@@ -146,29 +150,6 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         if (noPagosError) console.error("[v0] legacy no_pagos count error:", noPagosError.message)
         else setCantidadNoPagos(noPagosCount ?? 0)
 
-        // ── Sumar capital e interes del recaudo del dia ────────────────
-        // Mismos filtros que el conteo de pagos (cuotas pagadas/parciales/
-        // canceladas con monto > 0). Los campos en `payment_plan` son
-        // `capital` e `interes` (no `pago_capital` / `pago_intereses`).
-        const { data: capIntData, error: capIntError } = await supabase
-          .from("payment_plan")
-          .select("capital, interes")
-          .eq("fecha_pago", fechaHoy)
-          .eq("ruta", rutaId)
-          .in("estado", ["pagado", "parcial", "cancelada"])
-          .gt("monto_pagado", 0)
-        if (capIntError) {
-          console.error("[v0] capital/interes sum error:", capIntError.message)
-        } else if (capIntData) {
-          let cap = 0
-          let intr = 0
-          for (const row of capIntData) {
-            cap += Number((row as { capital?: number | null }).capital ?? 0)
-            intr += Number((row as { interes?: number | null }).interes ?? 0)
-          }
-          setPagoCapital(cap)
-          setPagoIntereses(intr)
-        }
       } catch (err) {
         console.error("[v0] Unexpected error fetching resumen:", err)
       } finally {
