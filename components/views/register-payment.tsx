@@ -2430,6 +2430,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             <CardTitle className="text-sm md:text-lg">Informacion del Pago</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 md:space-y-3 p-3 md:p-6">
+            {/* Alerta: última cuota programada de préstamo americano */}
+            {selectedClient.tipoAmortizacion?.toLowerCase().trim() === "americano" &&
+              selectedClient.nextPaymentNumero === selectedClient.cuotasTotales && (
+                <div className="flex items-start gap-2 rounded-lg border border-warning bg-warning/10 px-3 py-2">
+                  <AlertCircle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
+                  <p className="text-sm font-semibold text-warning">
+                    Última cuota programada — ¿extender cuotas?
+                  </p>
+                </div>
+              )}
             {/* Primera fila: Apodo, Saldo y Ultima Pago */}
             <div className="grid gap-2 md:gap-3 grid-cols-3">
               <div className="space-y-1 md:space-y-1.5">
