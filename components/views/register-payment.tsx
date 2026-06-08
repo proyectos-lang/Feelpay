@@ -114,6 +114,7 @@ type DisplayClient = {
   nextPaymentFecha: string
   ordenvisita: number
   diaSemana: string | null
+  valorPrestamo: number
 }
 
 type RegisterPaymentProps = {
@@ -716,6 +717,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           nombre: loan.clients?.apodo || loan.clients?.nombre_completo || "Sin nombre",
           documento: loan.clients?.documento || "",
           valorVenta: loan.valor_a_pagar || loan.valor,
+          valorPrestamo: loan.valor,
           valorCuota: loan.valor_cuota,
           saldo: saldoReal,
           cuotasPagadas: cuotasPagadas,
@@ -2289,99 +2291,57 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                   </div>
                 ) : (
                   <>
-                  <div className="rounded-md border overflow-hidden">
-                    <Table className="w-full table-fixed">
-                      <TableHeader>
-                        <TableRow className="bg-muted/50">
-                          {/* Cliente toma el espacio restante (sin width fijo)
-                              para que su nombre pueda partirse en 2 líneas.
-                              Las demás columnas tienen anchos fijos para que
-                              la tabla nunca se desborde del viewport. */}
-                          <TableHead className="text-[11px] md:text-base py-1 md:py-3 px-1 md:px-2">Cliente</TableHead>
-                          <TableHead className="w-[52px] md:w-[110px] text-right text-[11px] md:text-base py-1 md:py-3 px-1 md:px-2">Valor</TableHead>
-                          <TableHead className="w-[52px] md:w-[110px] text-right text-[11px] md:text-base py-1 md:py-3 px-1 md:px-2">Saldo</TableHead>
-                          <TableHead className="w-[80px] md:w-[100px] text-center text-[11px] md:text-base py-1 md:py-3 px-1 md:px-2">Estado</TableHead>
-                          <TableHead className="w-[44px] md:w-[80px] text-center text-[11px] md:text-base py-1 md:py-3 px-1 md:px-2">Hora</TableHead>
-                          <TableHead className="hidden md:table-cell md:w-[110px] text-right text-base py-3 px-2">Cuota</TableHead>
-                          <TableHead className="hidden md:table-cell md:w-[110px] text-right text-base py-3 px-2">Préstamo</TableHead>
-                          <TableHead className="w-[56px] md:w-[90px] text-center text-[11px] md:text-base py-1 md:py-3 px-1 md:px-2">Acc.</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {sortedManaged.map((m, index) => (
-                          <TableRow key={m.loanId} className={index % 2 === 0 ? "bg-card" : "bg-muted/40"}>
-                            <TableCell className="py-1.5 md:py-3 px-1 md:px-2">
-                              <span className="font-medium text-[11px] md:text-base leading-tight break-words line-clamp-2">{m.nombre}</span>
-                              {/* Cuota y Préstamo como sub-línea en móvil */}
-                              <div className="flex gap-2 mt-0.5 md:hidden">
-                                <span className="text-[10px] text-muted-foreground">C: <span className="font-semibold text-foreground">${m.valorCuota.toLocaleString()}</span></span>
-                                <span className="text-[10px] text-muted-foreground">P: <span className="font-semibold text-foreground">${m.valorVenta.toLocaleString()}</span></span>
-                              </div>
-                            </TableCell>
-                            <TableCell className="py-1.5 md:py-3 px-1 md:px-2 text-right">
-                              {m.gestionTipo === "pago" ? (
-                                <span className="text-[11px] md:text-base font-semibold text-success">
-                                  ${(m.valorAbonado ?? 0).toLocaleString()}
-                                </span>
-                              ) : (
-                                <span className="text-[11px] md:text-base text-muted-foreground">—</span>
-                              )}
-                            </TableCell>
-                            <TableCell className="py-1.5 md:py-3 px-1 md:px-2 text-right">
-                              <span className="text-[11px] md:text-base font-semibold text-warning">
-                                ${Math.round(m.saldo).toLocaleString()}
-                              </span>
-                            </TableCell>
-                            <TableCell className="py-1.5 md:py-3 px-1 md:px-2 text-center">
-                              {m.gestionTipo === "pago" ? (
-                                <span className="inline-flex items-center gap-1 text-[10px] md:text-sm font-semibold text-green-600 bg-white px-1.5 py-0.5 rounded-full">
-                                  <CheckCircle2 className="h-2.5 w-2.5 md:h-3 md:w-3" />
-                                  Pago
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 text-[10px] md:text-sm font-semibold text-red-600 bg-white px-1.5 py-0.5 rounded-full">
-                                  <XCircle className="h-2.5 w-2.5 md:h-3 md:w-3" />
-                                  No pago
-                                </span>
-                              )}
-                            </TableCell>
-                            <TableCell className="py-1.5 md:py-3 px-1 md:px-2 text-center text-[11px] md:text-base text-muted-foreground">
-                              {m.gestionHora}
-                            </TableCell>
-                            <TableCell className="hidden md:table-cell py-3 px-2 text-right text-base font-semibold text-foreground">
-                              ${m.valorCuota.toLocaleString()}
-                            </TableCell>
-                            <TableCell className="hidden md:table-cell py-3 px-2 text-right text-base font-semibold text-info">
-                              ${m.valorVenta.toLocaleString()}
-                            </TableCell>
-                            <TableCell className="py-1.5 md:py-3 px-1 md:px-2 text-right">
-                              <div className="flex items-center justify-end gap-1">
-                                {m.gestionTipo === "pago" && (
-                                  <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-6 w-6 md:h-7 md:w-7 text-info hover:text-info/80 hover:bg-info-light"
-                                    onClick={() => { setEditingManaged(m); setEditMonto((m.valorAbonado ?? 0).toString()) }}
-                                    disabled={savingManaged}
-                                  >
-                                    <Pencil className="h-3 w-3" />
-                                  </Button>
-                                )}
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-6 w-6 md:h-7 md:w-7 text-destructive hover:text-destructive/80 hover:bg-destructive-light"
-                                  onClick={() => handleDeleteManagedPayment(m)}
-                                  disabled={savingManaged}
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                  <div className="space-y-1.5">
+                    {sortedManaged.map((m, index) => (
+                      <div
+                        key={m.loanId}
+                        className={`rounded-lg border px-3 py-2 ${index % 2 === 0 ? "bg-card" : "bg-muted/40"}`}
+                      >
+                        {/* Línea 1: nombre · estado · hora · acciones */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="flex-1 font-medium text-sm leading-tight truncate">{m.nombre}</span>
+                          {m.gestionTipo === "pago" ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-green-600 bg-green-50 px-1.5 py-0.5 rounded-full shrink-0">
+                              <CheckCircle2 className="h-2.5 w-2.5" />Pago
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-600 bg-red-50 px-1.5 py-0.5 rounded-full shrink-0">
+                              <XCircle className="h-2.5 w-2.5" />No pago
+                            </span>
+                          )}
+                          <span className="text-[10px] text-muted-foreground shrink-0">{m.gestionHora}</span>
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            {m.gestionTipo === "pago" && (
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-6 w-6 text-info hover:text-info/80 hover:bg-info-light"
+                                onClick={() => { setEditingManaged(m); setEditMonto((m.valorAbonado ?? 0).toString()) }}
+                                disabled={savingManaged}
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </Button>
+                            )}
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-6 text-destructive hover:text-destructive/80 hover:bg-destructive-light"
+                              onClick={() => handleDeleteManagedPayment(m)}
+                              disabled={savingManaged}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                        {/* Línea 2: cuota · préstamo · abonado · saldo */}
+                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
+                          <span className="text-[11px] text-muted-foreground">Cuota: <span className="font-semibold text-foreground">${m.valorCuota.toLocaleString()}</span></span>
+                          <span className="text-[11px] text-muted-foreground">Préstamo: <span className="font-semibold text-info">${m.valorPrestamo.toLocaleString()}</span></span>
+                          <span className="text-[11px] text-muted-foreground">Abonado: <span className="font-semibold text-success">${(m.valorAbonado ?? 0).toLocaleString()}</span></span>
+                          <span className="text-[11px] text-muted-foreground">Saldo: <span className="font-semibold text-warning">${Math.round(m.saldo).toLocaleString()}</span></span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
 
                   {/* Edit payment dialog */}
