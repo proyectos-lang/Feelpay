@@ -1817,7 +1817,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
       {!selectedClient ? (
         <Card>
-          <CardHeader className="p-3 md:p-6">
+          <CardHeader className="p-3 md:p-6 sticky top-0 z-10 bg-card border-b border-border">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
               <div className="flex items-center gap-2">
                 <CardTitle className="text-base md:text-2xl">Clientes Activos</CardTitle>
