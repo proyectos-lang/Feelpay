@@ -96,7 +96,7 @@ export async function loadDashboardPagos(
 
   const loans = (loansData ?? []) as unknown as LoanWithClient[]
   const activeLoans = loans.filter(
-    (l) => l.estado === "activo" || l.estado === "cancelado" || !l.estado,
+    (l) => l.estado === "activo" || !l.estado,
   )
   const loanIds = activeLoans.map((l) => l.id)
 

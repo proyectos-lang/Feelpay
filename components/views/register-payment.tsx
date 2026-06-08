@@ -774,31 +774,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             paymentPlanId: targetEntry.id,
           })
         } else {
-          // targetEntry esta en estado "pendiente" (ya filtramos isManaged arriba).
-          //
-          // CAMBIO IMPORTANTE: agregar a pendientes sin importar `loan.estado`.
-          //
-          // Antes la guarda era `else if (loan.estado !== "cancelado")`, lo que
-          // dejaba clientes "atascados" cuando habia inconsistencia entre el
-          // flag derivado `loans.estado` y la realidad operativa de
-          // `payment_plan`. Esto sucede cuando:
-          //   - Se borran/revierten cuotas manualmente desde el SQL editor
-          //     (no via handleDeleteManagedPayment, que SI reactiva el loan).
-          //   - Un pago atomico cancela el loan y mas tarde aparecen cuotas
-          //     pendientes (p.ej. por una reversion parcial).
-          //   - Cualquier escenario donde payment_plan tiene cuotas pendientes
-          //     pero loans.estado quedo desincronizado.
-          //
-          // Fuente de verdad operativa: payment_plan. Si la cuota objetivo
-          // esta pendiente, el cliente debe verse como pendiente en la lista.
-          // Cuando se registre el proximo pago, el RPC atomico sincronizara
-          // loans.estado y clients.tiene_prestamo_activo correctamente.
+          // Loans con estado "cancelado" no se muestran en el listado de pendientes.
           if (loan.estado === "cancelado") {
-            console.warn(
-              `[v0] Inconsistencia detectada: loan ${loan.id} (cliente ${clientData.nombre}) ` +
-                `marcado como "cancelado" pero tiene cuota pendiente ${targetEntry.id} ` +
-                `(fecha_pago=${targetEntry.fecha_pago}). Mostrando como pendiente.`,
-            )
+            continue
           }
           pendingClients.push(clientData)
         }
