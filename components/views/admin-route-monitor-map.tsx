@@ -162,6 +162,24 @@ export default function AdminRouteMonitorMap({ points }: AdminRouteMonitorMapPro
                     {p.estado}
                   </span>
                 </p>
+                <a
+                  href={`https://www.google.com/maps?q=${p.lat},${p.lng}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: "inline-block",
+                    marginTop: "6px",
+                    padding: "4px 10px",
+                    borderRadius: "6px",
+                    background: "#1a73e8",
+                    color: "white",
+                    fontWeight: 600,
+                    fontSize: "12px",
+                    textDecoration: "none",
+                  }}
+                >
+                  📍 Ubicar en Google Maps
+                </a>
               </div>
             </Popup>
           </Marker>

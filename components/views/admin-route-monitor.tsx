@@ -802,7 +802,14 @@ export function AdminRouteMonitor() {
                         <TableCell>{formatHora(r.fecha_pago_real) || "—"}</TableCell>
                         <TableCell className="text-center">
                           {hasGps ? (
-                            <MapPin className="mx-auto h-4 w-4 text-success" />
+                            <a
+                              href={`https://www.google.com/maps?q=${r.latitud},${r.longitud}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Ubicar en Google Maps"
+                            >
+                              <MapPin className="mx-auto h-4 w-4 text-success hover:text-success/70" />
+                            </a>
                           ) : (
                             <MapPinOff className="mx-auto h-4 w-4 text-muted-foreground" />
                           )}
