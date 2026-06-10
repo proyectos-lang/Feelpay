@@ -2419,31 +2419,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                     ))}
                   </div>
 
-                  {/* Edit payment dialog */}
-                  {editingManaged && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setEditingManaged(null)}>
-                      <div className="bg-card border border-border rounded-lg shadow-xl p-4 md:p-6 w-80 space-y-4" onClick={(e) => e.stopPropagation()}>
-                        <h3 className="font-semibold text-sm md:text-base">Editar pago — {editingManaged.nombre}</h3>
-                        <div className="space-y-1.5">
-                          <label className="text-xs md:text-sm text-muted-foreground">Nuevo monto abonado</label>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            value={editMonto}
-                            onChange={(e) => setEditMonto(e.target.value)}
-                            className="h-9 text-sm"
-                            autoFocus
-                          />
-                        </div>
-                        <div className="flex gap-2 justify-end">
-                          <Button variant="outline" size="sm" onClick={() => setEditingManaged(null)}>Cancelar</Button>
-                          <Button size="sm" onClick={handleEditManagedSave} disabled={savingManaged}>
-                            {savingManaged ? <Loader2 className="h-3 w-3 animate-spin" /> : "Guardar"}
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                   </>
                 )}
               </div>
@@ -2597,8 +2572,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             <div className="grid gap-2 md:gap-3 grid-cols-2">
               <div className="flex gap-2 flex-wrap">
                 <div className="flex items-center space-x-1.5">
-                  <Checkbox id="partialPayment" checked={isPartialPayment} onCheckedChange={(c) => handlePartialPaymentChange(c as boolean)} className="h-4 w-4" />
-                  <Label htmlFor="partialPayment" className="text-[11px] md:text-sm font-normal cursor-pointer whitespace-nowrap">Pago Parcial</Label>
+                  <Checkbox id="partialPayment" checked={isPartialPayment} onCheckedChange={(c) => handlePartialPaymentChange(c as boolean)} className="h-4 w-4 border-2 border-gray-400 dark:border-gray-500" />
+                  <Label htmlFor="partialPayment" className="text-[11px] md:text-sm font-normal cursor-pointer whitespace-nowrap">Pago manual</Label>
                 </div>
                 <div className="flex items-center space-x-1.5">
                   <Checkbox
@@ -2613,7 +2588,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                         setPaymentAmount(saldo.toString())
                       }
                     }}
-                    className="h-4 w-4"
+                    className="h-4 w-4 border-2 border-gray-400 dark:border-gray-500"
                   />
                   <Label htmlFor="cancelada" className="text-[11px] md:text-sm font-normal cursor-pointer whitespace-nowrap">Cancelada</Label>
                 </div>
@@ -2882,6 +2857,32 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               </Table>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Managed Payment Dialog */}
+      <Dialog open={!!editingManaged} onOpenChange={(open) => { if (!open) setEditingManaged(null) }}>
+        <DialogContent className="p-4 md:p-6 max-w-[90vw] md:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm md:text-lg">Editar pago — {editingManaged?.nombre}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <label className="text-xs md:text-sm text-muted-foreground">Nuevo monto abonado</label>
+            <Input
+              type="number"
+              step="0.01"
+              value={editMonto}
+              onChange={(e) => setEditMonto(e.target.value)}
+              className="h-9 text-sm"
+              autoFocus
+            />
+          </div>
+          <div className="flex gap-2 justify-end pt-2">
+            <Button variant="outline" size="sm" onClick={() => setEditingManaged(null)}>Cancelar</Button>
+            <Button size="sm" onClick={handleEditManagedSave} disabled={savingManaged}>
+              {savingManaged ? <Loader2 className="h-3 w-3 animate-spin" /> : "Guardar"}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 
