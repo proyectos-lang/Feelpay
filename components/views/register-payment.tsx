@@ -276,6 +276,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   }, [extenderCuotas, selectedClient])
   const [showRenovationDialog, setShowRenovationDialog] = useState(false)
   const [clientForRenovation, setClientForRenovation] = useState<DisplayClient | null>(null)
+  const [showShareDialog, setShowShareDialog] = useState(false)
+  const [clientForShare, setClientForShare] = useState<DisplayClient | null>(null)
+  const [sharingPdf, setSharingPdf] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [paymentPhoto, setPaymentPhoto] = useState<string | null>(null)
   const [isDiario, setIsDiario] = useState(true)
@@ -1137,12 +1140,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         })
       }
 
-      handleBack()
-
       // Refetch SILENCIOSO en background para sincronizar mora/saldos calculados.
-      // No toca el flag `loading` para que la lista permanezca visible con los
-      // valores del optimistic UI mientras llega la confirmacion del servidor.
       void fetchData({ silent: true })
+
+      // Preguntar si desea compartir el comprobante antes de volver al listado.
+      setClientForShare(clientSnapshot)
+      setShowShareDialog(true)
     } catch (error) {
       console.error("[v0] Error registering payment:", error)
       toast({ title: "Error", description: "No se pudo registrar el pago", variant: "destructive" })
@@ -1351,97 +1354,132 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   }, [clientInfoDialogOpen, selectedClientInfo])
 
   // ── Generar recibo PDF con jspdf ──────────────────────────────────────
+  const buildReciboPdf = async (client: DisplayClient) => {
+    const supabase = await getSupabaseSafe()
+    const [saldoRes, clientRes] = await Promise.all([
+      supabase
+        .from("saldo_prestamos_clientes")
+        .select("monto_original, total_con_intereses, total_recaudado, saldo_pendiente")
+        .eq("loan_id", client.loanId)
+        .single(),
+      supabase
+        .from("clients")
+        .select("nombre_completo")
+        .eq("id", client.clientId)
+        .single(),
+    ])
+
+    const saldo = saldoRes.data
+    const nombreCompleto = clientRes.data?.nombre_completo ?? client.nombre
+
+    const { jsPDF } = await import("jspdf")
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: [80, 140] })
+
+    const now = new Date()
+    const fechaStr = now.toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric" })
+    const horaStr = now.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })
+
+    const pageW = 80
+    let y = 8
+
+    doc.setFontSize(10)
+    doc.setFont("helvetica", "bold")
+    doc.text("RECIBO DE PAGO", pageW / 2, y, { align: "center" })
+    y += 6
+
+    doc.setFontSize(7)
+    doc.setFont("helvetica", "normal")
+    doc.text(`Fecha: ${fechaStr}  Hora: ${horaStr}`, pageW / 2, y, { align: "center" })
+    y += 5
+
+    doc.setLineWidth(0.3)
+    doc.line(5, y, pageW - 5, y)
+    y += 4
+
+    doc.setFontSize(8)
+    doc.setFont("helvetica", "bold")
+    doc.text("Cliente:", 5, y)
+    doc.setFont("helvetica", "normal")
+    doc.text(nombreCompleto, 25, y)
+    y += 5
+
+    doc.setFont("helvetica", "bold")
+    doc.text("Documento:", 5, y)
+    doc.setFont("helvetica", "normal")
+    doc.text(client.documento || "-", 25, y)
+    y += 5
+
+    doc.line(5, y, pageW - 5, y)
+    y += 4
+
+    const fmt = (n: number | null | undefined) =>
+      n != null ? `$${Math.round(n).toLocaleString("es-CO")}` : "-"
+
+    const rows: [string, string][] = [
+      ["Monto original:", fmt(saldo?.monto_original)],
+      ["Total c/intereses:", fmt(saldo?.total_con_intereses)],
+      ["Total recaudado:", fmt(saldo?.total_recaudado)],
+      ["Saldo pendiente:", fmt(saldo?.saldo_pendiente ?? client.saldo)],
+      ["Cuotas:", `${client.cuotasPagadas} / ${client.cuotasTotales}`],
+      ["Frecuencia:", frecuenciaLabel(client.frecuenciaPago)],
+    ]
+
+    doc.setFontSize(8)
+    for (const [label, val] of rows) {
+      doc.setFont("helvetica", "bold")
+      doc.text(label, 5, y)
+      doc.setFont("helvetica", "normal")
+      doc.text(val, pageW - 5, y, { align: "right" })
+      y += 5
+    }
+
+    doc.line(5, y, pageW - 5, y)
+    y += 4
+
+    doc.setFontSize(6.5)
+    doc.setFont("helvetica", "italic")
+    doc.text("Este documento es un comprobante informativo.", pageW / 2, y, { align: "center" })
+
+    const filename = `recibo_${client.nombre.replace(/\s+/g, "_")}_${fechaStr.replace(/\//g, "-")}.pdf`
+    return { doc, filename }
+  }
+
   const handleGenerarRecibo = async (client: DisplayClient) => {
     try {
-      const supabase = await getSupabaseSafe()
-      const [saldoRes, clientRes] = await Promise.all([
-        supabase
-          .from("saldo_prestamos_clientes")
-          .select("monto_original, total_con_intereses, total_recaudado, saldo_pendiente")
-          .eq("loan_id", client.loanId)
-          .single(),
-        supabase
-          .from("clients")
-          .select("nombre_completo")
-          .eq("id", client.clientId)
-          .single(),
-      ])
-
-      const saldo = saldoRes.data
-      const nombreCompleto = clientRes.data?.nombre_completo ?? client.nombre
-
-      const { jsPDF } = await import("jspdf")
-      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: [80, 140] })
-
-      const now = new Date()
-      const fechaStr = now.toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric" })
-      const horaStr = now.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })
-
-      const pageW = 80
-      let y = 8
-
-      doc.setFontSize(10)
-      doc.setFont("helvetica", "bold")
-      doc.text("RECIBO DE PAGO", pageW / 2, y, { align: "center" })
-      y += 6
-
-      doc.setFontSize(7)
-      doc.setFont("helvetica", "normal")
-      doc.text(`Fecha: ${fechaStr}  Hora: ${horaStr}`, pageW / 2, y, { align: "center" })
-      y += 5
-
-      doc.setLineWidth(0.3)
-      doc.line(5, y, pageW - 5, y)
-      y += 4
-
-      doc.setFontSize(8)
-      doc.setFont("helvetica", "bold")
-      doc.text("Cliente:", 5, y)
-      doc.setFont("helvetica", "normal")
-      doc.text(nombreCompleto, 25, y)
-      y += 5
-
-      doc.setFont("helvetica", "bold")
-      doc.text("Documento:", 5, y)
-      doc.setFont("helvetica", "normal")
-      doc.text(client.documento || "-", 25, y)
-      y += 5
-
-      doc.line(5, y, pageW - 5, y)
-      y += 4
-
-      const fmt = (n: number | null | undefined) =>
-        n != null ? `$${Math.round(n).toLocaleString("es-CO")}` : "-"
-
-      const rows: [string, string][] = [
-        ["Monto original:", fmt(saldo?.monto_original)],
-        ["Total c/intereses:", fmt(saldo?.total_con_intereses)],
-        ["Total recaudado:", fmt(saldo?.total_recaudado)],
-        ["Saldo pendiente:", fmt(saldo?.saldo_pendiente ?? client.saldo)],
-        ["Cuotas:", `${client.cuotasPagadas} / ${client.cuotasTotales}`],
-        ["Frecuencia:", frecuenciaLabel(client.frecuenciaPago)],
-      ]
-
-      doc.setFontSize(8)
-      for (const [label, val] of rows) {
-        doc.setFont("helvetica", "bold")
-        doc.text(label, 5, y)
-        doc.setFont("helvetica", "normal")
-        doc.text(val, pageW - 5, y, { align: "right" })
-        y += 5
-      }
-
-      doc.line(5, y, pageW - 5, y)
-      y += 4
-
-      doc.setFontSize(6.5)
-      doc.setFont("helvetica", "italic")
-      doc.text("Este documento es un comprobante informativo.", pageW / 2, y, { align: "center" })
-
-      doc.save(`recibo_${client.nombre.replace(/\s+/g, "_")}_${fechaStr.replace(/\//g, "-")}.pdf`)
+      const { doc, filename } = await buildReciboPdf(client)
+      doc.save(filename)
     } catch (e) {
       console.error("[v0] handleGenerarRecibo error:", e)
       toast({ title: "Error", description: "No se pudo generar el recibo.", variant: "destructive" })
+    }
+  }
+
+  const handleShareComprobante = async (client: DisplayClient) => {
+    setSharingPdf(true)
+    try {
+      const { doc, filename } = await buildReciboPdf(client)
+      const pdfBlob = doc.output("blob")
+      const file = new File([pdfBlob], filename, { type: "application/pdf" })
+
+      if (
+        typeof navigator !== "undefined" &&
+        navigator.share &&
+        navigator.canShare &&
+        navigator.canShare({ files: [file] })
+      ) {
+        await navigator.share({ files: [file], title: "Recibo de pago" })
+      } else {
+        // Fallback: descarga directa si Web Share API no soporta archivos
+        doc.save(filename)
+      }
+    } catch (e: unknown) {
+      // El usuario canceló el share — no es un error real
+      if (e instanceof Error && e.name !== "AbortError") {
+        console.error("[v0] handleShareComprobante error:", e)
+        toast({ title: "Error", description: "No se pudo compartir el comprobante.", variant: "destructive" })
+      }
+    } finally {
+      setSharingPdf(false)
     }
   }
 
@@ -1938,18 +1976,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               </button>
               <button
                 onClick={() => setActiveTab("ventas")}
-                className={`flex items-center justify-center gap-1 px-1 py-1.5 text-[11px] md:text-sm font-medium border-b-2 transition-colors ${
+                className={`flex items-center justify-center gap-1 px-1 py-1.5 text-[11px] md:text-sm font-medium border-b-2 transition-colors rounded-t-md bg-green-100 dark:bg-green-900/30 ${
                   activeTab === "ventas"
-                    ? "border-primary text-primary"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
+                    ? "border-green-600 text-green-700 dark:text-green-400"
+                    : "border-transparent text-green-700 dark:text-green-500 hover:border-green-400"
                 }`}
               >
                 <ShoppingCart className="h-3.5 w-3.5 shrink-0" />
-                {/* Etiqueta corta en móvil, completa en md+ */}
-                <span className="truncate md:hidden">Reg. Ventas</span>
-                <span className="truncate hidden md:inline">Ventas del día</span>
+                <span className="truncate">Ventas del día</span>
                 <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                  activeTab === "ventas" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                  activeTab === "ventas" ? "bg-green-600 text-white" : "bg-muted text-muted-foreground"
                 }`}>
                   {salesTodayCount}
                 </span>
@@ -2462,31 +2498,41 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               </div>
             </div>
 
-            {/* Segunda fila: Monto del Pago */}
-            <div className="space-y-1 md:space-y-1.5">
-              <Label htmlFor="paymentAmount" className="text-xs md:text-sm">Monto del Pago</Label>
-              <Input
-                id="paymentAmount"
-                type="number"
-                value={paymentAmount}
-                onChange={(e) => {
-                    const value = e.target.value
-                    const saldoDisponible = selectedClient.saldo
-                  const numValue = Number.parseFloat(value)
-                  if (!isNaN(numValue) && numValue > saldoDisponible) {
-                    toast({
-                      title: "Monto excede el saldo",
-                      description: `El monto del pago no puede ser mayor al saldo a pagar ($${saldoDisponible.toLocaleString()})`,
-                      variant: "destructive",
-                    })
-                    setPaymentAmount(saldoDisponible.toString())
-                    return
-                  }
-                  setPaymentAmount(value)
-                }}
-                readOnly={!isPartialPayment}
-                className={`h-7 md:h-10 text-xs md:text-sm ${!isPartialPayment ? "bg-muted" : ""}`}
-              />
+            {/* Segunda fila: Monto del Pago + Nuevo Saldo */}
+            <div className="grid grid-cols-2 gap-2 md:gap-3">
+              <div className="space-y-1 md:space-y-1.5">
+                <Label htmlFor="paymentAmount" className="text-xs md:text-sm">Monto del Pago</Label>
+                <Input
+                  id="paymentAmount"
+                  type="number"
+                  value={paymentAmount}
+                  onChange={(e) => {
+                      const value = e.target.value
+                      const saldoDisponible = selectedClient.saldo
+                    const numValue = Number.parseFloat(value)
+                    if (!isNaN(numValue) && numValue > saldoDisponible) {
+                      toast({
+                        title: "Monto excede el saldo",
+                        description: `El monto del pago no puede ser mayor al saldo a pagar ($${saldoDisponible.toLocaleString()})`,
+                        variant: "destructive",
+                      })
+                      setPaymentAmount(saldoDisponible.toString())
+                      return
+                    }
+                    setPaymentAmount(value)
+                  }}
+                  readOnly={!isPartialPayment}
+                  className={`h-7 md:h-10 text-xs md:text-sm ${!isPartialPayment ? "bg-muted" : ""}`}
+                />
+              </div>
+              <div className="space-y-1 md:space-y-1.5">
+                <Label className="text-xs md:text-sm">Nuevo Saldo</Label>
+                <div className="h-7 md:h-10 flex items-center px-3 rounded-md border bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-800">
+                  <span className="text-xs md:text-sm font-semibold text-green-700 dark:text-green-400">
+                    ${Math.max(0, selectedClient.saldo - (Number.parseFloat(paymentAmount) || 0)).toLocaleString("es-CO")}
+                  </span>
+                </div>
+              </div>
             </div>
 
             {/* Tercera fila: Numero de Cuotas y Metodo de Pago */}
@@ -2836,6 +2882,41 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               </Table>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Share Comprobante Dialog */}
+      <Dialog open={showShareDialog} onOpenChange={(open) => { if (!open) { setShowShareDialog(false); setClientForShare(null); handleBack() } }}>
+        <DialogContent className="p-4 md:p-6 max-w-[90vw] md:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm md:text-lg">¿Compartir comprobante?</DialogTitle>
+            <DialogDescription className="text-xs md:text-sm">
+              El pago de <span className="font-semibold">{clientForShare?.nombre}</span> fue registrado. ¿Deseas compartir el comprobante?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-2 md:gap-3 pt-2 md:pt-4">
+            <Button
+              variant="outline"
+              className="flex-1 h-8 md:h-10 text-xs md:text-base bg-transparent"
+              disabled={sharingPdf}
+              onClick={() => { setShowShareDialog(false); setClientForShare(null); handleBack() }}
+            >
+              No
+            </Button>
+            <Button
+              className="flex-1 h-8 md:h-10 text-xs md:text-base"
+              disabled={sharingPdf}
+              onClick={async () => {
+                if (!clientForShare) return
+                await handleShareComprobante(clientForShare)
+                setShowShareDialog(false)
+                setClientForShare(null)
+                handleBack()
+              }}
+            >
+              {sharingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sí, compartir"}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 

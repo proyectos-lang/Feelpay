@@ -1297,7 +1297,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                   <div className="grid gap-2 md:gap-4 grid-cols-1 md:grid-cols-2">
                     <div className="space-y-1 md:space-y-2">
                       <Label htmlFor="ref1Nombre" className="text-[10px] md:text-sm">
-                        Nombre completo <span className="text-red-500">*</span>
+                        Nombre completo de la referencia <span className="text-red-500">*</span>
                       </Label>
                       <Input
                         id="ref1Nombre"
@@ -1312,7 +1312,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                     </div>
                     <div className="space-y-1 md:space-y-2">
                       <Label htmlFor="ref1Telefono" className="text-[10px] md:text-sm">
-                        Teléfono <span className="text-red-500">*</span>
+                        Teléfono de la referencia <span className="text-red-500">*</span>
                       </Label>
                       <Input
                         id="ref1Telefono"
@@ -1329,7 +1329,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                   </div>
                   <div className="space-y-1 md:space-y-2">
                     <Label htmlFor="ref1Direccion" className="text-[10px] md:text-sm">
-                      Dirección <span className="text-red-500">*</span>
+                      Dirección de la referencia <span className="text-red-500">*</span>
                     </Label>
                     <Input
                       id="ref1Direccion"
@@ -1806,7 +1806,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
               disabled={isCreating}
               className="h-8 md:h-10 text-[11px] md:text-sm"
             >
-              {isCreating ? "Creando..." : isNewClient ? "Crear Cliente y Venta" : "Crear Venta"}
+              {isCreating ? "Creando..." : "Crear Venta"}
             </Button>
           </div>
         </CardContent>
