@@ -70,6 +70,7 @@ export default function Page() {
   const [hydrated, setHydrated] = useState(false)
   // Splash de transicion tras un login fresco (no se muestra al recargar la pagina)
   const [showSplash, setShowSplash] = useState(false)
+  const [showRutaSelector, setShowRutaSelector] = useState(false)
 
   // Hydrate user + ruta from localStorage on mount
   useEffect(() => {
@@ -149,7 +150,7 @@ export default function Page() {
   const [sessionRetryCounter, setSessionRetryCounter] = useState(0)
 
   useEffect(() => {
-    if (!currentUser || !selectedRuta) {
+    if (!currentUser) {
       setSessionPhase("idle")
       setSessionError(null)
       return
@@ -160,10 +161,6 @@ export default function Page() {
     setSessionError(null)
 
     const applySession = async () => {
-      // RLS eliminado: no hay que fijar session vars en la base. Pasamos
-      // directamente a "ready" para no bloquear el render del resto de la
-      // app. Mantenemos las fases por compatibilidad con efectos que las
-      // observan (p.ej. el fetch de rutas_diarias depende de `sesionFixed`).
       if (cancelled) return
       setSessionPhase("ready")
     }
@@ -172,7 +169,7 @@ export default function Page() {
     return () => {
       cancelled = true
     }
-  }, [currentUser, selectedRuta, sessionRetryCounter])
+  }, [currentUser, sessionRetryCounter])
 
   // Backward-compatible flag for existing dependent useEffects/components.
   const sesionFixed = sessionPhase === "ready"
@@ -369,17 +366,11 @@ export default function Page() {
       console.error("[v0] Error writing selectedRuta to localStorage:", err)
     }
     setSelectedRuta(ruta)
+    setShowRutaSelector(false)
   }, [])
 
   const handleChangeRuta = useCallback(() => {
-    try {
-      localStorage.removeItem(RUTA_STORAGE_KEY)
-    } catch (err) {
-      console.error("[v0] Error clearing selectedRuta:", err)
-    }
-    // Reset ruta state (no reload — RouteSelector reappears and session re-fixes)
-    setSelectedRuta(null)
-    setSessionPhase("idle")
+    setShowRutaSelector(true)
   }, [])
 
   // Listener global del evento "app:session-lost" disparado por `safeQuery` en
@@ -422,7 +413,7 @@ export default function Page() {
     setViewData(data)
   }
 
-  const rutaId = selectedRuta?.id ?? 1
+  const rutaId = selectedRuta?.id ?? 0
   const rutaPais = selectedRuta?.pais ?? ""
 
   const renderView = () => {
@@ -518,20 +509,10 @@ export default function Page() {
     return <LoginView onLoginSuccess={handleLoginSuccess} />
   }
 
-  // Render principal: route selector / loading / error / dashboard,
-  // segun el estado de la sesion. El splash se monta encima como overlay.
+  // Render principal: loading / error / dashboard
   let mainContent: React.ReactNode
 
-  if (!selectedRuta) {
-    mainContent = (
-      <RouteSelector
-        open
-        onSelect={handleSelectRuta}
-        userId={currentUser.id}
-        userRol={currentUser.rol}
-      />
-    )
-  } else if (sessionPhase === "applying" || sessionPhase === "idle") {
+  if (sessionPhase === "applying" || sessionPhase === "idle") {
     // Pantalla de carga mientras se fija la sesion contra Supabase. NO se
     // renderiza ninguna vista todavia para evitar fetches que choquen con RLS.
     mainContent = (
@@ -603,6 +584,13 @@ export default function Page() {
           onComplete={() => setShowSplash(false)}
         />
       )}
+      <RouteSelector
+        open={showRutaSelector}
+        onSelect={handleSelectRuta}
+        userId={currentUser.id}
+        userRol={currentUser.rol}
+        onClose={() => setShowRutaSelector(false)}
+      />
     </>
   )
 }

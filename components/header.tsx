@@ -107,7 +107,7 @@ export function Header({
         <h1 className="text-sm md:text-xl font-semibold text-card-foreground truncate">{title}</h1>
 
         <div className="hidden md:flex ml-4 text-xs text-muted-foreground gap-2 items-center">
-          {nombreruta && (
+          {nombreruta ? (
             <>
               <span className="font-semibold text-primary">Ruta: {ruta}</span>
               <span className="text-muted-foreground/50">•</span>
@@ -138,14 +138,25 @@ export function Header({
               )}
               <span className="text-muted-foreground/50">•</span>
             </>
-          )}
+          ) : !isGerencia && onChangeRuta ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onChangeRuta}
+              className="h-6 gap-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-brand border-brand/40 hover:bg-brand/10"
+              title="Seleccionar ruta de trabajo"
+            >
+              <MapPin className="h-3 w-3" />
+              Seleccionar Ruta
+            </Button>
+          ) : null}
           <span className="font-medium whitespace-nowrap">{formattedDateTime}</span>
         </div>
       </div>
 
       <div className="flex items-center gap-1 md:gap-4">
         <div className="flex md:hidden text-[9px] text-muted-foreground mr-1 flex-col items-end">
-          {nombreruta && (
+          {nombreruta ? (
             <div className="flex items-center gap-1">
               <span className="font-semibold text-primary text-[10px]">
                 Ruta: {ruta} - {nombreruta}
@@ -164,7 +175,17 @@ export function Header({
                 </button>
               )}
             </div>
-          )}
+          ) : !isGerencia && onChangeRuta ? (
+            <button
+              type="button"
+              onClick={onChangeRuta}
+              className="flex items-center gap-1 rounded-full border border-brand/40 px-2 py-0.5 text-[10px] font-semibold text-brand hover:bg-brand/10"
+              title="Seleccionar ruta de trabajo"
+            >
+              <MapPin className="h-2.5 w-2.5" />
+              Seleccionar Ruta
+            </button>
+          ) : null}
           <span className="font-medium whitespace-nowrap">{formattedDateTime}</span>
         </div>
 

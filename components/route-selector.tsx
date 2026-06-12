@@ -18,12 +18,13 @@ interface RouteSelectorProps {
   onSelect: (ruta: SelectedRuta) => void
   userId?: number | string | null
   userRol?: string | null
+  onClose?: () => void
 }
 
 // Roles that have access to multiple routes (filtered via usuario_rutas table)
 const MULTI_ROUTE_ROLES = new Set(["admin", "administrador", "secretaria", "secretario"])
 
-export function RouteSelector({ open, onSelect, userId, userRol }: RouteSelectorProps) {
+export function RouteSelector({ open, onSelect, userId, userRol, onClose }: RouteSelectorProps) {
   const [rutas, setRutas] = useState<SelectedRuta[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -125,11 +126,11 @@ export function RouteSelector({ open, onSelect, userId, userRol }: RouteSelector
   }
 
   return (
-    <Dialog open={open}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o && onClose) onClose() }}>
       <DialogContent
-        showCloseButton={false}
-        onInteractOutside={(e) => e.preventDefault()}
-        onEscapeKeyDown={(e) => e.preventDefault()}
+        showCloseButton={!!onClose}
+        onInteractOutside={(e) => { if (!onClose) e.preventDefault() }}
+        onEscapeKeyDown={(e) => { if (!onClose) e.preventDefault() }}
         className="sm:max-w-2xl"
       >
         <DialogHeader>

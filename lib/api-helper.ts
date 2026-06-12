@@ -74,20 +74,14 @@ export async function safeQuery<T>(
     throw new SessionLostError("safeQuery solo puede usarse en el cliente")
   }
   let hasUser = false
-  let hasRuta = false
   try {
     hasUser = !!localStorage.getItem("currentUser")
-    hasRuta = !!localStorage.getItem("selectedRuta")
   } catch {
     // localStorage bloqueado (Safari privado, etc.)
   }
-  if (!hasUser || !hasRuta) {
-    notifySessionLost(
-      !hasUser ? "missing-user-in-localStorage" : "missing-ruta-in-localStorage",
-    )
-    throw new SessionLostError(
-      "No hay sesion activa. Inicia sesion y selecciona una ruta.",
-    )
+  if (!hasUser) {
+    notifySessionLost("missing-user-in-localStorage")
+    throw new SessionLostError("No hay sesion activa. Inicia sesion para continuar.")
   }
   const supabase = createClient()
   return operation(supabase)
