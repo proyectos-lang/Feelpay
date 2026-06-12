@@ -330,13 +330,15 @@ export default function Page() {
         const ruta = rutasData[0]
         try { localStorage.setItem(RUTA_STORAGE_KEY, JSON.stringify(ruta)) } catch {}
         setSelectedRuta(ruta)
+        setShowRutaSelector(false)
         if ((user.rol ?? "").toLowerCase() === "gerencia") {
           setCurrentView("secretary-reports")
         }
       } else {
-        // Sin rutas asignadas: caer al selector como antes
+        // Sin rutas asignadas: entrar al dashboard sin ruta
         try { localStorage.removeItem(RUTA_STORAGE_KEY) } catch {}
         setSelectedRuta(null)
+        setShowRutaSelector(false)
       }
     } catch (err) {
       console.error("[v0] Error auto-selecting ruta:", err)
@@ -385,24 +387,22 @@ export default function Page() {
         "[v0] app:session-lost recibido en page.tsx:",
         detail?.reason ?? "unknown",
       )
-      // Si no hay user en localStorage → login completo. Si solo falta
-      // ruta → volver al RouteSelector. handleChangeRuta cubre el caso ruta;
-      // handleLogout cubre el caso user.
+      // Si no hay user en localStorage → logout completo.
+      // Si solo falta ruta: no abrir el selector automáticamente — el
+      // header ya muestra "Seleccionar Ruta" cuando es necesario.
       let hasUser = false
       try {
         hasUser = !!localStorage.getItem(USER_STORAGE_KEY)
       } catch {}
       if (!hasUser) {
         handleLogout()
-      } else {
-        handleChangeRuta()
       }
     }
     window.addEventListener(SESSION_LOST_EVENT, onSessionLost)
     return () => {
       window.removeEventListener(SESSION_LOST_EVENT, onSessionLost)
     }
-  }, [handleLogout, handleChangeRuta])
+  }, [handleLogout])
 
   // Only admins and secretaries can change ruta from the header
   const userRol = (currentUser?.rol ?? "").toLowerCase()
@@ -441,7 +441,7 @@ export default function Page() {
       case "new-loan":
         return (
           <NewLoan
-            preSelectedClient={viewData}
+            preSelectedClientId={viewData?.clientId ?? null}
             currentRutaId={rutaId}
             rutaPais={rutaPais}
             onCancel={() => handleViewChange("register-payment")}

@@ -70,7 +70,9 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   const [clientOptions, setClientOptions] = useState<{ id: string; apodo: string; nombre_completo: string; tiene_prestamo_activo?: boolean }[]>([])
   const [loadingClients, setLoadingClients] = useState(false)
   const [clientDropdownOpen, setClientDropdownOpen] = useState(false)
-  const [soloSinPrestamo, setSoloSinPrestamo] = useState(true) // Default: only show clients without active loan
+  // Cuando viene de una renovación ya hay cliente preseleccionado; desactivar
+  // el filtro para garantizar que aparezca sin importar tiene_prestamo_activo.
+  const [soloSinPrestamo, setSoloSinPrestamo] = useState(!preSelectedClientId)
 
   // Fetch clients by apodo filtered by ruta and optionally by tiene_prestamo_activo.
   // Usa Supabase directamente (no /api/clients). RLS eliminado: el filtrado
@@ -111,6 +113,30 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     }, 300)
     return () => clearTimeout(timeout)
   }, [clientSearch, rutaId, isNewClient, soloSinPrestamo])
+
+  // Cuando el componente se abre desde el flujo de renovación, pre-carga el
+  // cliente para que el Select muestre su nombre sin que el usuario tenga que buscarlo.
+  useEffect(() => {
+    if (!preSelectedClientId) return
+    const fetchPreSelected = async () => {
+      try {
+        const supabase = createClient()
+        const { data } = await supabase
+          .from("clients")
+          .select("id, nombre_completo, apodo, tiene_prestamo_activo")
+          .eq("id", preSelectedClientId)
+          .maybeSingle()
+        if (data) {
+          setClientOptions([data])
+          setClientSearch((data.apodo || data.nombre_completo).toUpperCase())
+        }
+      } catch (err) {
+        console.error("[v0] Error pre-cargando cliente para renovacion:", err)
+      }
+    }
+    fetchPreSelected()
+  }, [preSelectedClientId])
+
   const [isCreating, setIsCreating] = useState(false)
   const [cedulaImage, setCedulaImage] = useState<string | null>(null)
   const [documento, setDocumento] = useState("")
