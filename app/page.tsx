@@ -33,6 +33,7 @@ import { RouteSelector, type SelectedRuta } from "@/components/route-selector"
 import { LoginView, type AuthenticatedUser } from "@/components/views/login-view"
 import { LoginSplash } from "@/components/login-splash"
 import { SESSION_LOST_EVENT, getSupabaseSafe } from "@/lib/api-helper"
+import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Loader2, ShieldAlert, RefreshCw } from "lucide-react"
 
@@ -284,30 +285,58 @@ export default function Page() {
   const ADMIN_VIRTUAL_RUTA: SelectedRuta = { id: 0, nombre: "Todas las rutas", ciudad: null, pais: null }
   const ADMIN_ROLES = new Set(["admin", "administrador"])
 
-  const handleLoginSuccess = useCallback((user: AuthenticatedUser) => {
+  const handleLoginSuccess = useCallback(async (user: AuthenticatedUser) => {
     try {
       localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user))
     } catch (err) {
       console.error("[v0] Error writing currentUser to localStorage:", err)
     }
     setCurrentUser(user)
+    setShowSplash(true)
 
     const isAdmin = ADMIN_ROLES.has((user.rol ?? "").toLowerCase())
     if (isAdmin) {
-      // Admins saltan el RouteSelector: se les asigna la ruta virtual "todas"
-      // y van directo al dashboard de administrador.
+      // Admins: ruta virtual "todas" → dashboard de administrador
       try {
         localStorage.setItem(RUTA_STORAGE_KEY, JSON.stringify(ADMIN_VIRTUAL_RUTA))
       } catch {}
       setSelectedRuta(ADMIN_VIRTUAL_RUTA)
       setCurrentView("admin-dashboard")
-    } else {
-      try {
-        localStorage.removeItem(RUTA_STORAGE_KEY)
-      } catch {}
+      return
+    }
+
+    // Resto de roles: auto-seleccionar la primera ruta asignada al usuario
+    // para evitar mostrar el RouteSelector en cada login.
+    try {
+      const supabase = createClient()
+      let rutasData: SelectedRuta[] = []
+
+      const { data, error } = await supabase
+        .from("usuario_rutas")
+        .select("rutas:ruta_id(id, nombre, ciudad, pais)")
+        .eq("usuario_id", user.id)
+
+      if (!error && data) {
+        rutasData = (data as any[])
+          .map((row) => row.rutas)
+          .filter(Boolean)
+          .sort((a: SelectedRuta, b: SelectedRuta) => a.id - b.id)
+      }
+
+      if (rutasData.length > 0) {
+        const ruta = rutasData[0]
+        try { localStorage.setItem(RUTA_STORAGE_KEY, JSON.stringify(ruta)) } catch {}
+        setSelectedRuta(ruta)
+      } else {
+        // Sin rutas asignadas: caer al selector como antes
+        try { localStorage.removeItem(RUTA_STORAGE_KEY) } catch {}
+        setSelectedRuta(null)
+      }
+    } catch (err) {
+      console.error("[v0] Error auto-selecting ruta:", err)
+      try { localStorage.removeItem(RUTA_STORAGE_KEY) } catch {}
       setSelectedRuta(null)
     }
-    setShowSplash(true)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

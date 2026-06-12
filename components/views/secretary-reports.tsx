@@ -146,19 +146,22 @@ function SecretariaView({
   currentRutaId: number
 }) {
   const hoy = fechaColombiaHoy()
+  const [viewDate, setViewDate] = useState(hoy)
   const [informes, setInformes] = useState<Informe[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [formNombre, setFormNombre] = useState("")
   const [formNotas, setFormNotas] = useState("")
+  const [formFecha, setFormFecha] = useState(hoy)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [previews, setPreviews] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const fetchInformes = async () => {
+  const fetchInformes = async (fecha: string) => {
     setLoading(true)
     try {
       const supabase = createClient()
@@ -166,7 +169,7 @@ function SecretariaView({
         .from("informes")
         .select("*, informe_imagenes(*)")
         .eq("secretaria_id", Number(currentUser.id))
-        .eq("fecha", hoy)
+        .eq("fecha", fecha)
         .order("created_at", { ascending: false })
       setInformes((data as Informe[]) ?? [])
     } catch (e) {
@@ -176,7 +179,7 @@ function SecretariaView({
     }
   }
 
-  useEffect(() => { void fetchInformes() }, [])
+  useEffect(() => { void fetchInformes(viewDate) }, [viewDate])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? [])
@@ -195,6 +198,7 @@ function SecretariaView({
   const resetForm = () => {
     setFormNombre("")
     setFormNotas("")
+    setFormFecha(hoy)
     previews.forEach((p) => URL.revokeObjectURL(p))
     setSelectedFiles([])
     setPreviews([])
@@ -224,7 +228,7 @@ function SecretariaView({
           secretaria_id: Number(currentUser.id),
           secretaria_nombre: currentUser.nombre,
           ruta_id: currentRutaId,
-          fecha: hoy,
+          fecha: formFecha,
           nombre_reporte: formNombre.trim(),
           notas: formNotas.trim() || null,
         })
@@ -244,8 +248,10 @@ function SecretariaView({
         )
       }
 
+      // Sincronizar la vista al día del reporte recién creado
+      setViewDate(formFecha)
       resetForm()
-      void fetchInformes()
+      void fetchInformes(formFecha)
     } catch (e) {
       console.error("[v0] handleCrearReporte error:", e)
     } finally {
@@ -253,12 +259,13 @@ function SecretariaView({
     }
   }
 
-  const handleEliminar = async (id: string) => {
-    if (!confirm("¿Eliminar este reporte y sus imágenes?")) return
+  const handleEliminarConfirm = async () => {
+    if (!confirmDeleteId) return
+    const id = confirmDeleteId
+    setConfirmDeleteId(null)
     setDeleting(id)
     try {
       const supabase = createClient()
-      // Las imágenes se eliminan en cascada por FK ON DELETE CASCADE
       await supabase.from("informes").delete().eq("id", id)
       setInformes((prev) => prev.filter((i) => i.id !== id))
     } catch (e) {
@@ -271,19 +278,28 @@ function SecretariaView({
   return (
     <div className="p-3 md:p-6 space-y-4 max-w-2xl mx-auto">
       {/* Encabezado */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-base md:text-xl font-bold flex items-center gap-2">
-            <FileText className="h-5 w-5 text-primary" />
-            Reportes del día
-          </h2>
-          <p className="text-xs md:text-sm text-muted-foreground">{formatFecha(hoy)}</p>
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex items-center gap-2 flex-1">
+          <FileText className="h-5 w-5 text-primary shrink-0" />
+          <h2 className="text-base md:text-xl font-bold">Mis reportes</h2>
         </div>
-        {!showForm && (
-          <Button size="sm" onClick={() => setShowForm(true)} className="gap-1 text-xs md:text-sm">
-            <Plus className="h-4 w-4" /> Nuevo Reporte
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="h-4 w-4 text-muted-foreground shrink-0" />
+            <Input
+              type="date"
+              value={viewDate}
+              max={hoy}
+              onChange={(e) => { setViewDate(e.target.value); setShowForm(false) }}
+              className="h-8 md:h-9 text-xs md:text-sm w-36"
+            />
+          </div>
+          {!showForm && (
+            <Button size="sm" onClick={() => { setShowForm(true); setFormFecha(viewDate) }} className="gap-1 text-xs md:text-sm whitespace-nowrap">
+              <Plus className="h-4 w-4" /> Nuevo
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Formulario nuevo reporte */}
@@ -293,15 +309,26 @@ function SecretariaView({
             <CardTitle className="text-sm md:text-base">Nuevo reporte</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 px-4 pb-4">
-            <div className="space-y-1">
-              <Label className="text-xs md:text-sm">Nombre del reporte <span className="text-red-500">*</span></Label>
-              <Input
-                value={formNombre}
-                onChange={(e) => setFormNombre(e.target.value)}
-                placeholder="Ej: Informe de apertura, Reporte de visita..."
-                className="h-8 md:h-10 text-xs md:text-sm"
-                autoFocus
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1 col-span-2 sm:col-span-1">
+                <Label className="text-xs md:text-sm">Nombre del reporte <span className="text-red-500">*</span></Label>
+                <Input
+                  value={formNombre}
+                  onChange={(e) => setFormNombre(e.target.value)}
+                  placeholder="Ej: Informe de apertura..."
+                  className="h-8 md:h-10 text-xs md:text-sm"
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-1 col-span-2 sm:col-span-1">
+                <Label className="text-xs md:text-sm">Fecha del reporte</Label>
+                <Input
+                  type="date"
+                  value={formFecha}
+                  onChange={(e) => setFormFecha(e.target.value)}
+                  className="h-8 md:h-10 text-xs md:text-sm"
+                />
+              </div>
             </div>
             <div className="space-y-1">
               <Label className="text-xs md:text-sm">Notas / Comentarios</Label>
@@ -377,7 +404,7 @@ function SecretariaView({
         </div>
       ) : informes.length === 0 ? (
         <div className="text-center text-muted-foreground text-sm py-10">
-          No hay reportes para hoy. Crea el primero.
+          No hay reportes para el {formatFecha(viewDate)}.
         </div>
       ) : (
         <div className="space-y-3">
@@ -400,7 +427,7 @@ function SecretariaView({
                     size="icon"
                     variant="ghost"
                     className="h-7 w-7 text-destructive hover:bg-destructive/10 shrink-0"
-                    onClick={() => handleEliminar(inf.id)}
+                    onClick={() => setConfirmDeleteId(inf.id)}
                     disabled={deleting === inf.id}
                   >
                     {deleting === inf.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
@@ -429,6 +456,31 @@ function SecretariaView({
           ))}
         </div>
       )}
+
+      {/* Confirmar eliminación */}
+      <Dialog open={!!confirmDeleteId} onOpenChange={(open) => { if (!open) setConfirmDeleteId(null) }}>
+        <DialogContent className="p-4 md:p-6 max-w-[90vw] md:max-w-sm">
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-destructive/10">
+                <Trash2 className="h-5 w-5 text-destructive" />
+              </div>
+              <div>
+                <p className="font-semibold text-sm md:text-base">¿Eliminar reporte?</p>
+                <p className="text-xs md:text-sm text-muted-foreground">Se eliminarán también todas las imágenes adjuntas. Esta acción no se puede deshacer.</p>
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1 h-8 md:h-10 text-xs md:text-sm" onClick={() => setConfirmDeleteId(null)}>
+                Cancelar
+              </Button>
+              <Button variant="destructive" className="flex-1 h-8 md:h-10 text-xs md:text-sm" onClick={handleEliminarConfirm}>
+                Sí, eliminar
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Lightbox */}
       <Dialog open={!!lightbox} onOpenChange={(open) => { if (!open) setLightbox(null) }}>
