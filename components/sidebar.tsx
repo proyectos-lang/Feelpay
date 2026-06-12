@@ -79,6 +79,13 @@ export function Sidebar({
   currentUser,
   onLogout,
 }: SidebarProps) {
+  const isGerencia = (currentUser?.rol ?? "").toLowerCase() === "gerencia"
+
+  // Para gerencia: solo mostrar el item de Reportes
+  const visibleGroups = isGerencia
+    ? [{ group: "Gerencia", items: navGroups.flatMap((g) => g.items).filter((i) => i.id === "secretary-reports") }]
+    : navGroups
+
   const initials = currentUser?.nombre
     ? currentUser.nombre
         .split(" ")
@@ -141,7 +148,7 @@ export function Sidebar({
 
         {/* Grouped Quick Access */}
         <div className="flex flex-col divide-y divide-sidebar-border">
-          {navGroups.map(({ group, items }, gi) => (
+          {visibleGroups.map(({ group, items }, gi) => (
             <div key={group} className="p-1.5 md:p-3">
               {!isCollapsed && (
                 <p className="text-[9px] md:text-[10px] font-bold uppercase tracking-wider text-white/80 px-1 mb-1.5">

@@ -70,10 +70,11 @@ export function Header({
   }, [])
 
   // Derived ruta values from props (single source of truth managed in app/page.tsx)
+  const isGerencia = (currentUser?.rol ?? "").toLowerCase() === "gerencia"
   const ruta = selectedRuta?.id ?? null
-  const nombreruta = selectedRuta?.nombre ?? ""
-  const ciudad = selectedRuta?.ciudad ?? ""
-  const pais = selectedRuta?.pais ?? ""
+  const nombreruta = isGerencia ? "" : (selectedRuta?.nombre ?? "")
+  const ciudad = isGerencia ? "" : (selectedRuta?.ciudad ?? "")
+  const pais = isGerencia ? "" : (selectedRuta?.pais ?? "")
 
   const formatDateTime = (date: Date) => {
     const options: Intl.DateTimeFormatOptions = {

@@ -21,7 +21,9 @@ import {
   FileText,
   ShieldOff,
   ZoomIn,
+  Pencil,
 } from "lucide-react"
+import { DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import type { AuthenticatedUser } from "@/components/views/login-view"
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -158,6 +160,10 @@ function SecretariaView({
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [editingInforme, setEditingInforme] = useState<Informe | null>(null)
+  const [editNombre, setEditNombre] = useState("")
+  const [editNotas, setEditNotas] = useState("")
+  const [savingEdit, setSavingEdit] = useState(false)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -259,6 +265,32 @@ function SecretariaView({
     }
   }
 
+  const handleEditSave = async () => {
+    if (!editingInforme || !editNombre.trim()) return
+    setSavingEdit(true)
+    try {
+      const supabase = createClient()
+      const { error } = await supabase
+        .from("informes")
+        .update({ nombre_reporte: editNombre.trim(), notas: editNotas.trim() || null })
+        .eq("id", editingInforme.id)
+      if (!error) {
+        setInformes((prev) =>
+          prev.map((i) =>
+            i.id === editingInforme.id
+              ? { ...i, nombre_reporte: editNombre.trim(), notas: editNotas.trim() || null }
+              : i
+          )
+        )
+        setEditingInforme(null)
+      }
+    } catch (e) {
+      console.error("[v0] handleEditSave error:", e)
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
   const handleEliminarConfirm = async () => {
     if (!confirmDeleteId) return
     const id = confirmDeleteId
@@ -280,7 +312,10 @@ function SecretariaView({
       {/* Encabezado */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="flex items-center gap-2 flex-1">
-          <FileText className="h-5 w-5 text-primary shrink-0" />
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white ring-1 ring-border overflow-hidden p-0.5">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/opad-logo.png" alt="OPAD" className="h-full w-full object-contain" />
+          </div>
           <h2 className="text-base md:text-xl font-bold">Mis reportes</h2>
         </div>
         <div className="flex items-center gap-2">
@@ -423,15 +458,25 @@ function SecretariaView({
                       {inf.informe_imagenes.length} imagen{inf.informe_imagenes.length !== 1 ? "es" : ""}
                     </p>
                   </div>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7 text-destructive hover:bg-destructive/10 shrink-0"
-                    onClick={() => setConfirmDeleteId(inf.id)}
-                    disabled={deleting === inf.id}
-                  >
-                    {deleting === inf.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                  </Button>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
+                      onClick={() => { setEditingInforme(inf); setEditNombre(inf.nombre_reporte); setEditNotas(inf.notas ?? "") }}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                      onClick={() => setConfirmDeleteId(inf.id)}
+                      disabled={deleting === inf.id}
+                    >
+                      {deleting === inf.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                    </Button>
+                  </div>
                 </div>
                 {inf.informe_imagenes.length > 0 && (
                   <div className="grid grid-cols-3 gap-2 pt-1">
@@ -456,6 +501,43 @@ function SecretariaView({
           ))}
         </div>
       )}
+
+      {/* Editar reporte */}
+      <Dialog open={!!editingInforme} onOpenChange={(open) => { if (!open) setEditingInforme(null) }}>
+        <DialogContent className="p-4 md:p-6 max-w-[90vw] md:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm md:text-base">Editar reporte</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs md:text-sm">Nombre del reporte <span className="text-red-500">*</span></Label>
+              <Input
+                value={editNombre}
+                onChange={(e) => setEditNombre(e.target.value)}
+                className="h-8 md:h-10 text-xs md:text-sm"
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs md:text-sm">Notas / Comentarios</Label>
+              <Textarea
+                value={editNotas}
+                onChange={(e) => setEditNotas(e.target.value)}
+                rows={3}
+                className="text-xs md:text-sm resize-none"
+              />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1 h-8 md:h-10 text-xs" onClick={() => setEditingInforme(null)} disabled={savingEdit}>
+                Cancelar
+              </Button>
+              <Button className="flex-1 h-8 md:h-10 text-xs" onClick={handleEditSave} disabled={savingEdit || !editNombre.trim()}>
+                {savingEdit ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Confirmar eliminación */}
       <Dialog open={!!confirmDeleteId} onOpenChange={(open) => { if (!open) setConfirmDeleteId(null) }}>
@@ -552,7 +634,10 @@ function GerenciaView() {
       {/* Encabezado */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="flex items-center gap-2 flex-1">
-          <FileText className="h-5 w-5 text-primary shrink-0" />
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white ring-1 ring-border overflow-hidden p-0.5">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/opad-logo.png" alt="OPAD" className="h-full w-full object-contain" />
+          </div>
           <h2 className="text-base md:text-xl font-bold">Reportes de secretarias</h2>
         </div>
         <div className="flex items-center gap-2">

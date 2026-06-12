@@ -29,7 +29,10 @@ export function DashboardLayout({
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(false)
 
+  const isGerencia = (currentUser?.rol ?? "").toLowerCase() === "gerencia"
+
   const getViewTitle = (view: string) => {
+    if (isGerencia) return "Gerencia"
     const titleMap: Record<string, string> = {
       dashboard: "Panel Principal",
       "view-clients": "Ver Clientes",

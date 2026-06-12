@@ -88,8 +88,14 @@ export default function Page() {
             setSelectedRuta(parsedRuta)
             hydratedRutaId = parsedRuta.id
             // Admin recargando página con ruta virtual → ir directo al dashboard
-            if (parsedRuta.id === 0 && parsed && ["admin", "administrador"].includes((parsed.rol ?? "").toLowerCase())) {
-              setCurrentView("admin-dashboard")
+            if (rawUser) {
+              const parsedUser = JSON.parse(rawUser) as AuthenticatedUser
+              const rol = (parsedUser.rol ?? "").toLowerCase()
+              if (parsedRuta.id === 0 && ["admin", "administrador"].includes(rol)) {
+                setCurrentView("admin-dashboard")
+              } else if (rol === "gerencia") {
+                setCurrentView("secretary-reports")
+              }
             }
           }
         }
@@ -327,6 +333,9 @@ export default function Page() {
         const ruta = rutasData[0]
         try { localStorage.setItem(RUTA_STORAGE_KEY, JSON.stringify(ruta)) } catch {}
         setSelectedRuta(ruta)
+        if ((user.rol ?? "").toLowerCase() === "gerencia") {
+          setCurrentView("secretary-reports")
+        }
       } else {
         // Sin rutas asignadas: caer al selector como antes
         try { localStorage.removeItem(RUTA_STORAGE_KEY) } catch {}
