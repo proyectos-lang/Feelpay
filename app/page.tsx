@@ -94,7 +94,7 @@ export default function Page() {
               const rol = (parsedUser.rol ?? "").toLowerCase()
               if (parsedRuta.id === 0 && ["admin", "administrador"].includes(rol)) {
                 setCurrentView("admin-dashboard")
-              } else if (rol === "gerencia") {
+              } else if (["gerencia", "secretaria", "secretario"].includes(rol)) {
                 setCurrentView("secretary-reports")
               }
             }
@@ -326,19 +326,21 @@ export default function Page() {
           .sort((a: SelectedRuta, b: SelectedRuta) => a.id - b.id)
       }
 
+      const rolLower = (user.rol ?? "").toLowerCase()
+      const isSecretariaOrGerencia = ["secretaria", "secretario", "gerencia"].includes(rolLower)
+
       if (rutasData.length > 0) {
         const ruta = rutasData[0]
         try { localStorage.setItem(RUTA_STORAGE_KEY, JSON.stringify(ruta)) } catch {}
         setSelectedRuta(ruta)
         setShowRutaSelector(false)
-        if ((user.rol ?? "").toLowerCase() === "gerencia") {
-          setCurrentView("secretary-reports")
-        }
+        if (isSecretariaOrGerencia) setCurrentView("secretary-reports")
       } else {
         // Sin rutas asignadas: entrar al dashboard sin ruta
         try { localStorage.removeItem(RUTA_STORAGE_KEY) } catch {}
         setSelectedRuta(null)
         setShowRutaSelector(false)
+        if (isSecretariaOrGerencia) setCurrentView("secretary-reports")
       }
     } catch (err) {
       console.error("[v0] Error auto-selecting ruta:", err)

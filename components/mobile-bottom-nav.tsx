@@ -1,55 +1,61 @@
 "use client"
 
-import { Home, DollarSign, Plus, TrendingUp, BarChart3 } from "lucide-react"
+import {
+  DollarSign, Plus, TrendingUp, BarChart3, Users,
+  LayoutDashboard, ClipboardList, CheckCircle, Route, MapPin,
+  ListChecks, FileText,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
+import type { AuthenticatedUser } from "./views/login-view"
+
+type NavItem = { id: string; icon: React.ElementType; label: string; colorClass: string }
 
 interface MobileBottomNavProps {
   currentView: string
   onViewChange: (view: string) => void
+  currentUser?: AuthenticatedUser | null
 }
 
-export function MobileBottomNav({ currentView, onViewChange }: MobileBottomNavProps) {
-  // Using semantic tokens for nav item colors
-  const navItems = [
-    {
-      id: "dashboard",
-      icon: Home,
-      label: "Inicio",
-      colorClass: "nav-item-home",
-    },
-    {
-      id: "register-payment",
-      icon: DollarSign,
-      label: "Pagos",
-      colorClass: "nav-item-payment",
-    },
-    {
-      id: "new-loan",
-      icon: Plus,
-      label: "Venta",
-      colorClass: "nav-item-sale",
-    },
-    {
-      id: "register-transaction",
-      icon: TrendingUp,
-      label: "Gastos",
-      colorClass: "nav-item-expense",
-    },
-    {
-      id: "daily-summary",
-      icon: BarChart3,
-      label: "Resumen",
-      colorClass: "nav-item-summary",
-    },
-  ]
+const VENDEDOR_ITEMS: NavItem[] = [
+  { id: "daily-summary",        icon: BarChart3,       label: "Resumen",   colorClass: "nav-item-summary"  },
+  { id: "register-payment",     icon: DollarSign,      label: "Pagos",     colorClass: "nav-item-payment"  },
+  { id: "new-loan",             icon: Plus,            label: "Venta",     colorClass: "nav-item-sale"     },
+  { id: "register-transaction", icon: TrendingUp,      label: "Gastos",    colorClass: "nav-item-expense"  },
+  { id: "view-clients",         icon: Users,           label: "Clientes",  colorClass: "nav-item-home"     },
+]
+
+const ADMIN_ITEMS: NavItem[] = [
+  { id: "admin-dashboard",        icon: LayoutDashboard, label: "Dashboard", colorClass: "nav-item-home"     },
+  { id: "admin-route-detail",     icon: ClipboardList,   label: "Rutas",     colorClass: "nav-item-summary"  },
+  { id: "pending-authorizations", icon: CheckCircle,     label: "Autoriz.",  colorClass: "nav-item-payment"  },
+  { id: "admin-route-monitor",    icon: Route,           label: "Monitor",   colorClass: "nav-item-expense"  },
+  { id: "configure-route",        icon: MapPin,          label: "Ordenar",   colorClass: "nav-item-sale"     },
+]
+
+const SECRETARIA_ITEMS: NavItem[] = [
+  { id: "secretary-authorizations", icon: CheckCircle, label: "Autoriz.",  colorClass: "nav-item-payment"  },
+  { id: "payment-control",          icon: ListChecks,  label: "Control",   colorClass: "nav-item-summary"  },
+  { id: "secretary-reports",        icon: FileText,    label: "Reportes",  colorClass: "nav-item-home"     },
+]
+
+const COLS: Record<number, string> = { 3: "grid-cols-3", 4: "grid-cols-4", 5: "grid-cols-5" }
+
+export function MobileBottomNav({ currentView, onViewChange, currentUser }: MobileBottomNavProps) {
+  const rol = (currentUser?.rol ?? "").toLowerCase()
+
+  const navItems =
+    ["admin", "administrador"].includes(rol)              ? ADMIN_ITEMS :
+    ["secretaria", "secretario", "gerencia"].includes(rol)? SECRETARIA_ITEMS :
+                                                            VENDEDOR_ITEMS
+
+  const colsClass = COLS[navItems.length] ?? "grid-cols-5"
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-border md:hidden safe-area-inset-bottom">
-      <div className="grid grid-cols-5 gap-1 p-1.5">
+      <div className={`grid ${colsClass} gap-1 p-1.5`}>
         {navItems.map((item) => {
           const Icon = item.icon
           const isActive = currentView === item.id
-
           return (
             <Button
               key={item.id}
@@ -59,7 +65,7 @@ export function MobileBottomNav({ currentView, onViewChange }: MobileBottomNavPr
                 isActive ? "nav-item-active" : "nav-item-inactive"
               }`}
               style={{
-                boxShadow: isActive 
+                boxShadow: isActive
                   ? "0 6px 16px rgba(58, 124, 165, 0.7), 0 2px 4px rgba(58, 124, 165, 0.5), inset 0 1px 0 rgba(255,255,255,0.25)"
                   : "0 5px 14px rgba(58, 124, 165, 0.55), 0 2px 4px rgba(58, 124, 165, 0.4), inset 0 1px 0 rgba(255,255,255,0.2)",
               }}

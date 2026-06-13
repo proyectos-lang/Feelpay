@@ -79,12 +79,18 @@ export function Sidebar({
   currentUser,
   onLogout,
 }: SidebarProps) {
-  const isGerencia = (currentUser?.rol ?? "").toLowerCase() === "gerencia"
+  const rol = (currentUser?.rol ?? "").toLowerCase()
 
-  // Para gerencia: solo mostrar el item de Reportes
-  const visibleGroups = isGerencia
-    ? [{ group: "Gerencia", items: navGroups.flatMap((g) => g.items).filter((i) => i.id === "secretary-reports") }]
-    : navGroups
+  // Filtrar grupos de navegación según el rol del usuario
+  const visibleGroups = (() => {
+    if (["vendedor", "asesor"].includes(rol))
+      return navGroups.filter((g) => g.group === "Asesor")
+    if (["admin", "administrador"].includes(rol))
+      return navGroups.filter((g) => g.group === "Administrador")
+    if (["secretaria", "secretario", "gerencia"].includes(rol))
+      return navGroups.filter((g) => g.group === "Secretaria")
+    return navGroups
+  })()
 
   const initials = currentUser?.nombre
     ? currentUser.nombre
