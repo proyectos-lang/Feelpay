@@ -11,6 +11,7 @@ import { NewLoan } from "@/components/views/new-loan"
 import { PendingAuthorizations } from "@/components/views/pending-authorizations"
 import { SecretaryAuthorizations } from "@/components/views/secretary-authorizations"
 import { SecretaryReports } from "@/components/views/secretary-reports"
+import { GestionUsuariosRutas } from "@/components/views/gestion-usuarios-rutas"
 import { DailyRoute } from "@/components/views/daily-route"
 import { RegisterPayment } from "@/components/views/register-payment"
 import { PaymentControl } from "@/components/views/payment-control"
@@ -496,6 +497,8 @@ export default function Page() {
         return <PaymentControl currentRutaId={rutaId} rutaPais={rutaPais} />
       case "secretary-reports":
         return <SecretaryReports currentRutaId={rutaId} />
+      case "user-route-management":
+        return <GestionUsuariosRutas />
       default:
         return <MainDashboard onViewChange={handleViewChange} />
     }

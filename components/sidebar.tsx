@@ -58,6 +58,7 @@ const navGroups: NavGroup[] = [
       { id: "secretary-authorizations", label: "Autor. Secret.",  icon: CheckCircle, colorClass: "sidebar-item-secretary" },
       { id: "payment-control",          label: "Control Pagos",   icon: ListChecks,  colorClass: "sidebar-item-payment"   },
       { id: "secretary-reports",        label: "Reportes",        icon: FileText,    colorClass: "sidebar-item-secretary" },
+      { id: "user-route-management",    label: "Usuarios/Rutas",  icon: Users,       colorClass: "sidebar-item-clients"   },
     ],
   },
 ]

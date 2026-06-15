@@ -1,0 +1,769 @@
+"use client"
+
+import { useState, useEffect, useCallback } from "react"
+import { createClient } from "@/lib/supabase/client"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2 } from "lucide-react"
+import { useToast } from "@/hooks/use-toast"
+
+// ─── Tipos ───────────────────────────────────────────────────────────────────
+
+type Usuario = {
+  id: number
+  usuario: string
+  nombre: string
+  rol: string
+  activo: boolean
+  acceso_modulo_reporte: boolean | null
+}
+
+type Ruta = {
+  id: number
+  nombre: string
+  ciudad: string | null
+  pais: string | null
+}
+
+const ROLES = ["vendedor", "secretaria", "gerencia", "admin"] as const
+
+const ROL_LABELS: Record<string, string> = {
+  vendedor: "Vendedor",
+  admin: "Administrador",
+  secretaria: "Secretaria",
+  gerencia: "Gerencia",
+}
+
+const ROL_BADGE: Record<string, string> = {
+  vendedor:   "bg-blue-100   text-blue-800   dark:bg-blue-900/40   dark:text-blue-300",
+  admin:      "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
+  secretaria: "bg-green-100  text-green-800  dark:bg-green-900/40  dark:text-green-300",
+  gerencia:   "bg-amber-100  text-amber-800  dark:bg-amber-900/40  dark:text-amber-300",
+}
+
+// ─── Tab Usuarios ─────────────────────────────────────────────────────────────
+
+function UsuariosTab() {
+  const { toast } = useToast()
+  const [usuarios, setUsuarios] = useState<Usuario[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showForm, setShowForm] = useState(false)
+  const [editing, setEditing] = useState<Usuario | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [showPass, setShowPass] = useState(false)
+
+  const [fNombre, setFNombre] = useState("")
+  const [fUsuario, setFUsuario] = useState("")
+  const [fPassword, setFPassword] = useState("")
+  const [fRol, setFRol] = useState<string>("vendedor")
+  const [fActivo, setFActivo] = useState(true)
+  const [fAccesoReporte, setFAccesoReporte] = useState(false)
+
+  const fetchUsuarios = useCallback(async () => {
+    setLoading(true)
+    try {
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from("usuarios")
+        .select("id, usuario, nombre, rol, activo, acceso_modulo_reporte")
+        .order("nombre", { ascending: true })
+      if (error) throw error
+      setUsuarios(data ?? [])
+    } catch (err) {
+      console.error("[v0] Error fetching usuarios:", err)
+      toast({ title: "Error", description: "No se pudieron cargar los usuarios", variant: "destructive" })
+    } finally {
+      setLoading(false)
+    }
+  }, [toast])
+
+  useEffect(() => { fetchUsuarios() }, [fetchUsuarios])
+
+  const openCreate = () => {
+    setEditing(null)
+    setFNombre(""); setFUsuario(""); setFPassword(""); setFRol("vendedor")
+    setFActivo(true); setFAccesoReporte(false); setShowPass(false)
+    setShowForm(true)
+  }
+
+  const openEdit = (u: Usuario) => {
+    setEditing(u)
+    setFNombre(u.nombre); setFUsuario(u.usuario); setFPassword("")
+    setFRol(u.rol); setFActivo(u.activo)
+    setFAccesoReporte(u.acceso_modulo_reporte ?? false)
+    setShowPass(false); setShowForm(true)
+  }
+
+  const handleSave = async () => {
+    if (!fNombre.trim() || !fUsuario.trim()) {
+      toast({ title: "Campos requeridos", description: "Nombre y usuario son obligatorios", variant: "destructive" })
+      return
+    }
+    if (!editing && !fPassword.trim()) {
+      toast({ title: "Contraseña requerida", description: "Ingresa una contraseña para el nuevo usuario", variant: "destructive" })
+      return
+    }
+    setSaving(true)
+    try {
+      const supabase = createClient()
+      if (editing) {
+        const payload: Record<string, unknown> = {
+          nombre: fNombre.trim(), usuario: fUsuario.trim(),
+          rol: fRol, activo: fActivo, acceso_modulo_reporte: fAccesoReporte,
+        }
+        if (fPassword.trim()) payload.password = fPassword.trim()
+        const { error } = await supabase.from("usuarios").update(payload).eq("id", editing.id)
+        if (error) throw error
+        toast({ title: "Usuario actualizado" })
+      } else {
+        const { error } = await supabase.from("usuarios").insert({
+          nombre: fNombre.trim(), usuario: fUsuario.trim(),
+          password: fPassword.trim(), rol: fRol,
+          activo: fActivo, acceso_modulo_reporte: fAccesoReporte,
+        })
+        if (error) throw error
+        toast({ title: "Usuario creado" })
+      }
+      setShowForm(false)
+      fetchUsuarios()
+    } catch (err: any) {
+      const msg: string = err?.message ?? "Error desconocido"
+      console.error("[v0] Error saving usuario:", msg)
+      toast({
+        title: "Error",
+        description: msg.toLowerCase().includes("unique") ? "El nombre de usuario ya existe" : msg,
+        variant: "destructive",
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (confirmDeleteId === null) return
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.from("usuarios").delete().eq("id", confirmDeleteId)
+      if (error) throw error
+      toast({ title: "Usuario eliminado" })
+      setConfirmDeleteId(null)
+      fetchUsuarios()
+    } catch (err: any) {
+      console.error("[v0] Error deleting usuario:", err)
+      toast({ title: "Error", description: "No se pudo eliminar el usuario", variant: "destructive" })
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">
+          {loading ? "Cargando..." : `${usuarios.length} usuario${usuarios.length !== 1 ? "s" : ""} registrados`}
+        </p>
+        <Button size="sm" onClick={openCreate} className="gap-1.5 h-8 text-xs">
+          <Plus className="h-3.5 w-3.5" /> Nuevo usuario
+        </Button>
+      </div>
+
+      {loading ? (
+        <div className="flex h-40 items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <div className="rounded-xl border border-border overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50 border-b border-border">
+              <tr>
+                <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Nombre</th>
+                <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden sm:table-cell">Usuario</th>
+                <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Rol</th>
+                <th className="px-3 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell">Activo</th>
+                <th className="px-3 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Reportes</th>
+                <th className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {usuarios.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-3 py-10 text-center text-sm text-muted-foreground">
+                    No hay usuarios registrados
+                  </td>
+                </tr>
+              )}
+              {usuarios.map((u) => (
+                <tr key={u.id} className="hover:bg-muted/20 transition-colors">
+                  <td className="px-3 py-2.5 font-medium text-sm">{u.nombre}</td>
+                  <td className="px-3 py-2.5 text-muted-foreground font-mono text-xs hidden sm:table-cell">{u.usuario}</td>
+                  <td className="px-3 py-2.5">
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${ROL_BADGE[u.rol] ?? "bg-muted text-muted-foreground"}`}>
+                      {ROL_LABELS[u.rol] ?? u.rol}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5 text-center hidden md:table-cell">
+                    <span className={`inline-block h-2 w-2 rounded-full ${u.activo ? "bg-green-500" : "bg-red-400"}`} title={u.activo ? "Activo" : "Inactivo"} />
+                  </td>
+                  <td className="px-3 py-2.5 text-center hidden lg:table-cell">
+                    <span className={`inline-block h-2 w-2 rounded-full ${u.acceso_modulo_reporte ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"}`} title={u.acceso_modulo_reporte ? "Con acceso" : "Sin acceso"} />
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <div className="flex items-center justify-end gap-0.5">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" title="Editar" onClick={() => openEdit(u)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" title="Eliminar" onClick={() => setConfirmDeleteId(u.id)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Formulario crear / editar */}
+      <Dialog open={showForm} onOpenChange={(o) => !saving && setShowForm(o)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editing ? "Editar usuario" : "Nuevo usuario"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="space-y-1">
+              <Label className="text-xs">Nombre completo</Label>
+              <Input value={fNombre} onChange={(e) => setFNombre(e.target.value)} placeholder="Juan Pérez" className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Nombre de usuario</Label>
+              <Input value={fUsuario} onChange={(e) => setFUsuario(e.target.value)} placeholder="jperez" autoComplete="off" className="h-9 text-sm font-mono" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">{editing ? "Nueva contraseña (vacío = no cambiar)" : "Contraseña"}</Label>
+              <div className="relative">
+                <Input
+                  type={showPass ? "text" : "password"}
+                  value={fPassword}
+                  onChange={(e) => setFPassword(e.target.value)}
+                  placeholder={editing ? "••••••••" : "Mínimo 4 caracteres"}
+                  autoComplete="new-password"
+                  className="h-9 text-sm pr-9"
+                />
+                <button type="button" onClick={() => setShowPass(!showPass)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Rol</Label>
+              <Select value={fRol} onValueChange={setFRol}>
+                <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {ROLES.map((r) => (
+                    <SelectItem key={r} value={r} className="text-sm">{ROL_LABELS[r]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-wrap gap-x-6 gap-y-2 pt-1">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <Checkbox checked={fActivo} onCheckedChange={(v) => setFActivo(v === true)} className="h-4 w-4" />
+                <span className="text-sm">Usuario activo</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <Checkbox checked={fAccesoReporte} onCheckedChange={(v) => setFAccesoReporte(v === true)} className="h-4 w-4" />
+                <span className="text-sm">Acceso a Reportes</span>
+              </label>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" size="sm" onClick={() => setShowForm(false)} disabled={saving}>Cancelar</Button>
+            <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5">
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {editing ? "Guardar cambios" : "Crear usuario"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirmar eliminación */}
+      <Dialog open={confirmDeleteId !== null} onOpenChange={(o) => !o && setConfirmDeleteId(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>Eliminar usuario</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground py-1">
+            ¿Confirmas la eliminación? También se eliminarán sus asignaciones de rutas.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setConfirmDeleteId(null)}>Cancelar</Button>
+            <Button variant="destructive" size="sm" onClick={handleDelete}>Eliminar</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+// ─── Tab Rutas ────────────────────────────────────────────────────────────────
+
+function RutasTab() {
+  const { toast } = useToast()
+  const [rutas, setRutas] = useState<Ruta[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showForm, setShowForm] = useState(false)
+  const [editing, setEditing] = useState<Ruta | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  const [fNombre, setFNombre] = useState("")
+  const [fCiudad, setFCiudad] = useState("")
+  const [fPais, setFPais] = useState("")
+
+  const fetchRutas = useCallback(async () => {
+    setLoading(true)
+    try {
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from("rutas")
+        .select("id, nombre, ciudad, pais")
+        .order("id", { ascending: true })
+      if (error) throw error
+      setRutas(data ?? [])
+    } catch (err) {
+      console.error("[v0] Error fetching rutas:", err)
+      toast({ title: "Error", description: "No se pudieron cargar las rutas", variant: "destructive" })
+    } finally {
+      setLoading(false)
+    }
+  }, [toast])
+
+  useEffect(() => { fetchRutas() }, [fetchRutas])
+
+  const openCreate = () => {
+    setEditing(null); setFNombre(""); setFCiudad(""); setFPais("")
+    setShowForm(true)
+  }
+
+  const openEdit = (r: Ruta) => {
+    setEditing(r); setFNombre(r.nombre); setFCiudad(r.ciudad ?? ""); setFPais(r.pais ?? "")
+    setShowForm(true)
+  }
+
+  const handleSave = async () => {
+    if (!fNombre.trim()) {
+      toast({ title: "Campo requerido", description: "El nombre de la ruta es obligatorio", variant: "destructive" })
+      return
+    }
+    setSaving(true)
+    try {
+      const supabase = createClient()
+      const payload = {
+        nombre: fNombre.trim(),
+        ciudad: fCiudad.trim() || null,
+        pais: fPais.trim() || null,
+      }
+      if (editing) {
+        const { error } = await supabase.from("rutas").update(payload).eq("id", editing.id)
+        if (error) throw error
+        toast({ title: "Ruta actualizada" })
+      } else {
+        const { error } = await supabase.from("rutas").insert(payload)
+        if (error) throw error
+        toast({ title: "Ruta creada" })
+      }
+      setShowForm(false)
+      fetchRutas()
+    } catch (err: any) {
+      console.error("[v0] Error saving ruta:", err)
+      toast({ title: "Error", description: err?.message ?? "Error desconocido", variant: "destructive" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (confirmDeleteId === null) return
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.from("rutas").delete().eq("id", confirmDeleteId)
+      if (error) throw error
+      toast({ title: "Ruta eliminada" })
+      setConfirmDeleteId(null)
+      fetchRutas()
+    } catch (err: any) {
+      console.error("[v0] Error deleting ruta:", err)
+      toast({ title: "Error", description: "No se pudo eliminar la ruta", variant: "destructive" })
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">
+          {loading ? "Cargando..." : `${rutas.length} ruta${rutas.length !== 1 ? "s" : ""} registradas`}
+        </p>
+        <Button size="sm" onClick={openCreate} className="gap-1.5 h-8 text-xs">
+          <Plus className="h-3.5 w-3.5" /> Nueva ruta
+        </Button>
+      </div>
+
+      {loading ? (
+        <div className="flex h-40 items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {rutas.length === 0 && (
+            <div className="col-span-full py-10 text-center text-sm text-muted-foreground">
+              No hay rutas registradas
+            </div>
+          )}
+          {rutas.map((r) => (
+            <div key={r.id} className="group relative rounded-xl border border-border bg-card p-4 hover:border-brand/40 transition-colors">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                    <RouteIcon className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-sm leading-tight truncate">{r.nombre}</p>
+                    <p className="text-[10px] font-bold text-muted-foreground">Ruta #{r.id}</p>
+                  </div>
+                </div>
+                <div className="flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Button variant="ghost" size="icon" className="h-7 w-7" title="Editar" onClick={() => openEdit(r)}>
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" title="Eliminar" onClick={() => setConfirmDeleteId(r.id)}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+              {(r.ciudad || r.pais) && (
+                <div className="mt-2.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  {r.ciudad && (
+                    <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{r.ciudad}</span>
+                  )}
+                  {r.pais && (
+                    <span className="flex items-center gap-1"><Globe2 className="h-3 w-3" />{r.pais}</span>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Formulario */}
+      <Dialog open={showForm} onOpenChange={(o) => !saving && setShowForm(o)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>{editing ? "Editar ruta" : "Nueva ruta"}</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="space-y-1">
+              <Label className="text-xs">Nombre de la ruta <span className="text-destructive">*</span></Label>
+              <Input value={fNombre} onChange={(e) => setFNombre(e.target.value)} placeholder="Ruta Norte" className="h-9 text-sm" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Ciudad</Label>
+                <Input value={fCiudad} onChange={(e) => setFCiudad(e.target.value)} placeholder="Bogotá" className="h-9 text-sm" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">País</Label>
+                <Input value={fPais} onChange={(e) => setFPais(e.target.value)} placeholder="Colombia" className="h-9 text-sm" />
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" size="sm" onClick={() => setShowForm(false)} disabled={saving}>Cancelar</Button>
+            <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5">
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {editing ? "Guardar cambios" : "Crear ruta"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirmar eliminación */}
+      <Dialog open={confirmDeleteId !== null} onOpenChange={(o) => !o && setConfirmDeleteId(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>Eliminar ruta</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground py-1">
+            ¿Confirmas la eliminación? También se eliminarán las asignaciones de usuarios a esta ruta.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setConfirmDeleteId(null)}>Cancelar</Button>
+            <Button variant="destructive" size="sm" onClick={handleDelete}>Eliminar</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+// ─── Tab Asignaciones ─────────────────────────────────────────────────────────
+
+function AsignacionesTab() {
+  const { toast } = useToast()
+  const [usuarios, setUsuarios] = useState<Usuario[]>([])
+  const [rutas, setRutas] = useState<Ruta[]>([])
+  const [asignaciones, setAsignaciones] = useState<{ usuario_id: number; ruta_id: number }[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
+  const [checkedRutas, setCheckedRutas] = useState<Set<number>>(new Set())
+  const [saving, setSaving] = useState(false)
+  const [dirty, setDirty] = useState(false)
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true)
+    try {
+      const supabase = createClient()
+      const [uRes, rRes, aRes] = await Promise.all([
+        supabase.from("usuarios").select("id, usuario, nombre, rol, activo, acceso_modulo_reporte").order("nombre"),
+        supabase.from("rutas").select("id, nombre, ciudad, pais").order("id"),
+        supabase.from("usuario_rutas").select("usuario_id, ruta_id"),
+      ])
+      if (uRes.error) throw uRes.error
+      if (rRes.error) throw rRes.error
+      if (aRes.error) throw aRes.error
+      setUsuarios(uRes.data ?? [])
+      setRutas(rRes.data ?? [])
+      setAsignaciones(aRes.data ?? [])
+    } catch (err) {
+      console.error("[v0] Error fetching asignaciones:", err)
+      toast({ title: "Error", description: "No se pudieron cargar los datos", variant: "destructive" })
+    } finally {
+      setLoading(false)
+    }
+  }, [toast])
+
+  useEffect(() => { fetchAll() }, [fetchAll])
+
+  // Cuando cambia el usuario seleccionado, cargar sus rutas actuales
+  useEffect(() => {
+    if (selectedUserId === null) { setCheckedRutas(new Set()); setDirty(false); return }
+    const assigned = asignaciones
+      .filter((a) => a.usuario_id === selectedUserId)
+      .map((a) => a.ruta_id)
+    setCheckedRutas(new Set(assigned))
+    setDirty(false)
+  }, [selectedUserId, asignaciones])
+
+  const toggleRuta = (rutaId: number) => {
+    setCheckedRutas((prev) => {
+      const next = new Set(prev)
+      if (next.has(rutaId)) next.delete(rutaId)
+      else next.add(rutaId)
+      return next
+    })
+    setDirty(true)
+  }
+
+  const handleGuardar = async () => {
+    if (selectedUserId === null) return
+    setSaving(true)
+    try {
+      const supabase = createClient()
+      const anteriores = new Set(
+        asignaciones.filter((a) => a.usuario_id === selectedUserId).map((a) => a.ruta_id)
+      )
+      const agregar = [...checkedRutas].filter((id) => !anteriores.has(id))
+      const quitar = [...anteriores].filter((id) => !checkedRutas.has(id))
+
+      if (quitar.length > 0) {
+        const { error } = await supabase
+          .from("usuario_rutas")
+          .delete()
+          .eq("usuario_id", selectedUserId)
+          .in("ruta_id", quitar)
+        if (error) throw error
+      }
+      if (agregar.length > 0) {
+        const { error } = await supabase
+          .from("usuario_rutas")
+          .insert(agregar.map((ruta_id) => ({ usuario_id: selectedUserId, ruta_id })))
+        if (error) throw error
+      }
+
+      // Actualizar estado local para reflejar cambios sin re-fetch completo
+      setAsignaciones((prev) => {
+        const sinEste = prev.filter((a) => a.usuario_id !== selectedUserId)
+        const nuevas = [...checkedRutas].map((ruta_id) => ({ usuario_id: selectedUserId, ruta_id }))
+        return [...sinEste, ...nuevas]
+      })
+      setDirty(false)
+      toast({ title: "Asignaciones guardadas" })
+    } catch (err: any) {
+      console.error("[v0] Error saving asignaciones:", err)
+      toast({ title: "Error", description: err?.message ?? "Error al guardar", variant: "destructive" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex h-40 items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  const usuarioSeleccionado = usuarios.find((u) => u.id === selectedUserId)
+  const totalAsignadas = selectedUserId
+    ? asignaciones.filter((a) => a.usuario_id === selectedUserId).length
+    : null
+
+  return (
+    <div className="grid gap-4 md:grid-cols-[260px_1fr]">
+      {/* Panel izquierdo: lista de usuarios */}
+      <div className="space-y-1.5">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-1 mb-2">
+          Seleccionar usuario
+        </p>
+        <div className="rounded-xl border border-border overflow-hidden max-h-[420px] overflow-y-auto">
+          {usuarios.map((u) => {
+            const isSelected = u.id === selectedUserId
+            const rutasCount = asignaciones.filter((a) => a.usuario_id === u.id).length
+            return (
+              <button
+                key={u.id}
+                type="button"
+                onClick={() => setSelectedUserId(u.id)}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left border-b border-border last:border-0 transition-colors ${
+                  isSelected ? "bg-brand/10 text-brand" : "hover:bg-muted/40"
+                }`}
+              >
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground text-xs font-bold">
+                  {u.nombre.charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-sm font-medium truncate leading-tight ${isSelected ? "text-brand" : ""}`}>{u.nombre}</p>
+                  <p className="text-[10px] text-muted-foreground">{ROL_LABELS[u.rol] ?? u.rol} · {rutasCount} ruta{rutasCount !== 1 ? "s" : ""}</p>
+                </div>
+                {isSelected && <CheckCircle2 className="h-4 w-4 shrink-0 text-brand" />}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Panel derecho: rutas del usuario */}
+      <div className="space-y-3">
+        {selectedUserId === null ? (
+          <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border text-muted-foreground">
+            <Link2 className="h-8 w-8 opacity-30" />
+            <p className="text-sm">Selecciona un usuario para gestionar sus rutas</p>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold text-sm">{usuarioSeleccionado?.nombre}</p>
+                <p className="text-xs text-muted-foreground">
+                  {checkedRutas.size} ruta{checkedRutas.size !== 1 ? "s" : ""} asignada{checkedRutas.size !== 1 ? "s" : ""}
+                  {totalAsignadas !== null && totalAsignadas !== checkedRutas.size && (
+                    <span className="ml-1 text-amber-600 dark:text-amber-400">(sin guardar)</span>
+                  )}
+                </p>
+              </div>
+              <Button
+                size="sm"
+                onClick={handleGuardar}
+                disabled={saving || !dirty}
+                className="gap-1.5 h-8 text-xs"
+              >
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                Guardar
+              </Button>
+            </div>
+
+            {rutas.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No hay rutas registradas</p>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {rutas.map((r) => {
+                  const checked = checkedRutas.has(r.id)
+                  return (
+                    <label
+                      key={r.id}
+                      className={`flex items-center gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
+                        checked
+                          ? "border-brand/50 bg-brand/5 dark:bg-brand/10"
+                          : "border-border hover:border-border/80 hover:bg-muted/20"
+                      }`}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={() => toggleRuta(r.id)}
+                        className="h-4 w-4"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{r.nombre}</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          #{r.id}{r.ciudad ? ` · ${r.ciudad}` : ""}{r.pais ? ` · ${r.pais}` : ""}
+                        </p>
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Componente principal ─────────────────────────────────────────────────────
+
+export function GestionUsuariosRutas() {
+  return (
+    <div className="space-y-4 md:space-y-6">
+      {/* Encabezado */}
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white ring-1 ring-border overflow-hidden p-0.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/opad-logo.png" alt="OPAD" className="h-full w-full object-contain" />
+        </div>
+        <div>
+          <h2 className="text-base md:text-lg font-bold leading-tight">Gestión de Usuarios y Rutas</h2>
+          <p className="text-[11px] text-muted-foreground">Crea y administra usuarios, rutas y sus asignaciones</p>
+        </div>
+      </div>
+
+      <Tabs defaultValue="usuarios" className="space-y-4">
+        <TabsList className="grid w-full grid-cols-3 h-9">
+          <TabsTrigger value="usuarios" className="gap-1.5 text-xs md:text-sm">
+            <Users className="h-3.5 w-3.5" />
+            <span>Usuarios</span>
+          </TabsTrigger>
+          <TabsTrigger value="rutas" className="gap-1.5 text-xs md:text-sm">
+            <RouteIcon className="h-3.5 w-3.5" />
+            <span>Rutas</span>
+          </TabsTrigger>
+          <TabsTrigger value="asignaciones" className="gap-1.5 text-xs md:text-sm">
+            <Link2 className="h-3.5 w-3.5" />
+            <span>Asignaciones</span>
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="usuarios">
+          <UsuariosTab />
+        </TabsContent>
+        <TabsContent value="rutas">
+          <RutasTab />
+        </TabsContent>
+        <TabsContent value="asignaciones">
+          <AsignacionesTab />
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}

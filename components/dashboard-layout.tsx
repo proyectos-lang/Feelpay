@@ -57,6 +57,8 @@ export function DashboardLayout({
       "admin-route-monitor": "Monitoreo de Rutas",
       "admin-dashboard": "Dashboard Administrador",
       "admin-route-detail": "Detalle de Rutas",
+      "secretary-reports": "Reportes",
+      "user-route-management": "Gestión de Usuarios y Rutas",
     }
     return titleMap[view] || "Panel Principal"
   }
