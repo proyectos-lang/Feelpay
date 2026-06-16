@@ -19,10 +19,8 @@ export async function saveTransaction(params: SaveTransactionParams) {
   const supabase = await getSupabaseServer()
 
   try {
-    // Get current date-time in Colombia timezone (UTC-5)
-    const now = new Date()
-    const colombiaTime = new Date(now.getTime() - 5 * 60 * 60 * 1000)
-    const fechahorasol = colombiaTime.toISOString()
+    // Timestamp en UTC real — la visualización usa zona Colombia al leer
+    const fechahorasol = new Date().toISOString()
 
     let fotoUrl: string | null = null
 

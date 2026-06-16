@@ -14,6 +14,8 @@
  * regla "skip domingo" para frecuencia diaria se mantiene aqui.
  */
 
+import { todayColombia } from "@/lib/colombia-date"
+
 export type Frecuencia = "daily" | "weekly" | "biweekly" | "monthly"
 export type TipoAmortizacion = "americano" | "aleman" | "empleado"
 
@@ -124,7 +126,7 @@ export function buildPaymentSchedule(p: BuildScheduleParams): ScheduleResult {
   if (p.fechaInicio) {
     fechaInicio = new Date(p.fechaInicio)
   } else {
-    const todayStr = new Date().toLocaleDateString("en-CA")
+    const todayStr = todayColombia()
     const [y, m, d] = todayStr.split("-").map(Number)
     fechaInicio = new Date(y, m - 1, d + 1)
   }

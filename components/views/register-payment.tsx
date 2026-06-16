@@ -30,6 +30,7 @@ import { SalesTodayList } from "@/components/views/sales-today-list"
 // `obtener_dashboard_pagos` primero (inmune al patron PgBouncer) y si no
 // esta desplegada cae al modo legacy con multiples SELECTs paralelos.
 import { loadDashboardPagos } from "@/lib/dashboard-data"
+import { todayColombia } from "@/lib/colombia-date"
 
 // Types matching DB schema
 type LoanWithClient = {
@@ -686,8 +687,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         let mora = moraMap.get(loan.id) ?? 0
         if (!moraMap.has(loan.id)) {
           // Fallback calculation if view data is not available
-          const hoy = new Date()
-          hoy.setHours(0, 0, 0, 0)
+          const [hy, hm, hd] = todayColombia().split("-").map(Number)
+          const hoy = new Date(hy, hm - 1, hd)
           const fechaPagoDate = new Date(targetEntry.fecha_pago + "T00:00:00")
           const diff = Math.floor((hoy.getTime() - fechaPagoDate.getTime()) / (1000 * 60 * 60 * 24))
           mora = Math.max(0, diff)
@@ -1521,10 +1522,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     // RLS aplicada antes de la lectura y dispara session-lost si falla.
     try {
       const supabase = await getSupabaseSafe()
-      const nowColombia = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }))
-      const today = nowColombia.getFullYear() + "-" +
-        String(nowColombia.getMonth() + 1).padStart(2, "0") + "-" +
-        String(nowColombia.getDate()).padStart(2, "0")
+      const today = todayColombia()
       const { data } = await supabase
         .from("payment_plan")
         .select("id")

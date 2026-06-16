@@ -18,9 +18,9 @@ interface CierreCajaProps {
 }
 
 export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaProps) {
-  const nowColombia = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }))
-  const fecha = nowColombia.toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric" })
-  const hora = nowColombia.toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit", hour12: true })
+  const _now = new Date()
+  const fecha = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "2-digit", month: "2-digit", year: "numeric" }).format(_now)
+  const hora = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", hour: "numeric", minute: "2-digit", hour12: true }).format(_now)
 
   // Estado real de la validación
   const [pagosPendientes, setPagosPendientes] = useState<number>(0)

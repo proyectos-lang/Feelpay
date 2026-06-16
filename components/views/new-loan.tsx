@@ -16,6 +16,7 @@ import { Barcode as BarCode, X, Loader2, UserPlus, AlertCircle, CheckCircle2 } f
 // transaccion via la RPC `crear_venta_atomica` que evita los problemas
 // de session vars RLS perdidas entre peticiones HTTP stateless.
 import { createClient } from "@/lib/supabase/client"
+import { todayColombia } from "@/lib/colombia-date"
 import { useToast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
@@ -426,7 +427,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     // dias totales del prestamo). Esto mantiene la simulacion consistente
     // con handleCreateVenta, que tambien usa `dias` como numero de cuotas.
     const numeroCuotas = Number.parseInt(dias)
-    const todayStr = new Date().toLocaleDateString("en-CA")
+    const todayStr = todayColombia()
     const [y, m, d] = todayStr.split("-").map(Number)
     const fechaInicio = new Date(y, m - 1, d + 1)
 
@@ -742,7 +743,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       // - Sumamos 1 dia.
       // - Si el resultado cae en domingo y la frecuencia es diaria, se corre
       //   al lunes.
-      const todayStr2 = new Date().toLocaleDateString("en-CA")
+      const todayStr2 = todayColombia()
       const [y2, m2, d2] = todayStr2.split("-").map(Number)
       let fechaInicio = new Date(y2, m2 - 1, d2 + 1)
       fechaInicio = skipDomingoSiDiario(fechaInicio)

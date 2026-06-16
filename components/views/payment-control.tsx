@@ -35,6 +35,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/hooks/use-toast"
 import { getSupabaseSafe } from "@/lib/api-helper"
+import { todayColombia } from "@/lib/colombia-date"
 import {
   Search,
   ChevronLeft,
@@ -319,8 +320,7 @@ export function PaymentControl({ currentRutaId, rutaPais }: PaymentControlProps)
       }
       // Si pasamos a "pagado" y no habia fecha real, sembramos hoy.
       if (newEstado === "pagado" && !row.fecha_pago_real) {
-        const today = new Date().toLocaleDateString("en-CA")
-        updatePayload.fecha_pago_real = today
+        updatePayload.fecha_pago_real = todayColombia()
       }
       // Si volvemos a "pendiente", limpiamos la fecha real para no
       // dejar registros incoherentes.

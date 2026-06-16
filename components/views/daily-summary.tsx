@@ -35,10 +35,12 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
   const [rutaDiariaEstado, setRutaDiariaEstado] = useState<RutaDiariaEstado>(null)
   const [loadingRutaDiaria, setLoadingRutaDiaria] = useState(true)
   const [processingRuta, setProcessingRuta] = useState(false)
-  const [selectedDate] = useState(() => {
-    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }))
-    return now.toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric" })
-  })
+  const [selectedDate] = useState(() =>
+    new Intl.DateTimeFormat("es-CO", {
+      timeZone: "America/Bogota",
+      day: "2-digit", month: "2-digit", year: "numeric",
+    }).format(new Date())
+  )
 
   // Real data from resumen_pagos_diarios
   const [collectedAmount, setCollectedAmount] = useState(0)

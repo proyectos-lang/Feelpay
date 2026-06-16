@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 import { Search, TrendingDown, TrendingUp, Wallet } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
+import { todayColombia, tsToColombiaDate } from "@/lib/colombia-date"
 
 type Transaction = {
   id: number
@@ -29,15 +30,9 @@ export function ViewExpensesIncome() {
   const [filterType, setFilterType] = useState("all")
   const [filterAdminStatus, setFilterAdminStatus] = useState("all")
   const [filterSecreStatus, setFilterSecreStatus] = useState("all")
-  const todayColombia = (() => {
-    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }))
-    return now.getFullYear() + "-" +
-      String(now.getMonth() + 1).padStart(2, "0") + "-" +
-      String(now.getDate()).padStart(2, "0")
-  })()
-
-  const [startDate, setStartDate] = useState(todayColombia)
-  const [endDate, setEndDate] = useState(todayColombia)
+  const todayCol = todayColombia()
+  const [startDate, setStartDate] = useState(todayCol)
+  const [endDate, setEndDate] = useState(todayCol)
 
   useEffect(() => {
     fetchTransactions()
@@ -97,12 +92,7 @@ export function ViewExpensesIncome() {
     }
 
     // Filter by date range — convert transaction timestamp to Colombia date
-    const toColombiaDate = (ts: string) => {
-      const d = new Date(new Date(ts).toLocaleString("en-US", { timeZone: "America/Bogota" }))
-      return d.getFullYear() + "-" +
-        String(d.getMonth() + 1).padStart(2, "0") + "-" +
-        String(d.getDate()).padStart(2, "0")
-    }
+    const toColombiaDate = tsToColombiaDate
 
     if (startDate) {
       filtered = filtered.filter((t) => toColombiaDate(t.fechahorasol) >= startDate)
