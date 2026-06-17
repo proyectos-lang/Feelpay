@@ -601,7 +601,7 @@ function GerenciaView() {
   const days = useMemo(() => {
     const [y, m, d] = endDate.split("-").map(Number)
     const base = new Date(y, m - 1, d)
-    return Array.from({ length: 7 }, (_, i) => {
+    return Array.from({ length: 6 }, (_, i) => {
       const dt = new Date(base)
       dt.setDate(base.getDate() - i)
       const yy = dt.getFullYear()
@@ -680,7 +680,7 @@ function GerenciaView() {
       ) : (
         <div className="overflow-x-auto pb-3 -mx-3 md:-mx-6 px-3 md:px-6">
           <div className="flex gap-2.5" style={{ minWidth: "max-content" }}>
-            {days.map((fecha) => {
+            {[...days].reverse().map((fecha) => {
               const [y, m, d] = fecha.split("-").map(Number)
               const dateObj = new Date(y, m - 1, d)
               const isToday = fecha === hoy
