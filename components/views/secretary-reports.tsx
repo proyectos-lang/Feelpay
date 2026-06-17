@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -585,52 +585,65 @@ interface AgrupacionSecretaria {
   reportes: Informe[]
 }
 
+const DIAS_ES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"]
+
 function GerenciaView() {
   const hoy = fechaColombiaHoy()
-  const [selectedDate, setSelectedDate] = useState(hoy)
-  const [agrupados, setAgrupados] = useState<AgrupacionSecretaria[]>([])
+  const [endDate, setEndDate] = useState(hoy)
+  // Record<"YYYY-MM-DD", AgrupacionSecretaria[]>
+  const [allData, setAllData] = useState<Record<string, AgrupacionSecretaria[]>>({})
   const [loading, setLoading] = useState(false)
-  const [expanded, setExpanded] = useState<number | null>(null)
+  // key = "YYYY-MM-DD-secretariaId" — permite múltiples abiertos a la vez
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [lightbox, setLightbox] = useState<string | null>(null)
 
-  const fetchReportes = async (fecha: string) => {
+  // Genera los 7 días (newest first) que terminan en endDate
+  const days = useMemo(() => {
+    const [y, m, d] = endDate.split("-").map(Number)
+    const base = new Date(y, m - 1, d)
+    return Array.from({ length: 7 }, (_, i) => {
+      const dt = new Date(base)
+      dt.setDate(base.getDate() - i)
+      const yy = dt.getFullYear()
+      const mm = String(dt.getMonth() + 1).padStart(2, "0")
+      const dd = String(dt.getDate()).padStart(2, "0")
+      return `${yy}-${mm}-${dd}`
+    })
+  }, [endDate])
+
+  useEffect(() => {
+    const oldest = days[days.length - 1]
+    const newest = days[0]
     setLoading(true)
-    setExpanded(null)
-    try {
-      const supabase = createClient()
-      const { data } = await supabase
-        .from("informes")
-        .select("*, informe_imagenes(*)")
-        .eq("fecha", fecha)
-        .order("secretaria_nombre", { ascending: true })
-        .order("created_at", { ascending: true })
-
-      const rows = (data as Informe[]) ?? []
-
-      // Agrupar por secretaria_id
-      const map = new Map<number, AgrupacionSecretaria>()
-      for (const inf of rows) {
-        if (!map.has(inf.secretaria_id)) {
-          map.set(inf.secretaria_id, {
-            secretaria_id: inf.secretaria_id,
-            secretaria_nombre: inf.secretaria_nombre,
-            reportes: [],
-          })
+    setExpanded(new Set())
+    const supabase = createClient()
+    supabase
+      .from("informes")
+      .select("*, informe_imagenes(*)")
+      .gte("fecha", oldest)
+      .lte("fecha", newest)
+      .order("secretaria_nombre", { ascending: true })
+      .order("created_at", { ascending: true })
+      .then(({ data, error }) => {
+        if (error) { console.error("[v0] GerenciaView fetch error:", error); setLoading(false); return }
+        const rows = (data as Informe[]) ?? []
+        const result: Record<string, AgrupacionSecretaria[]> = {}
+        for (const inf of rows) {
+          if (!result[inf.fecha]) result[inf.fecha] = []
+          const grp = result[inf.fecha].find(g => g.secretaria_id === inf.secretaria_id)
+          if (grp) { grp.reportes.push(inf) }
+          else { result[inf.fecha].push({ secretaria_id: inf.secretaria_id, secretaria_nombre: inf.secretaria_nombre, reportes: [inf] }) }
         }
-        map.get(inf.secretaria_id)!.reportes.push(inf)
-      }
-      setAgrupados(Array.from(map.values()))
-    } catch (e) {
-      console.error("[v0] GerenciaView fetchReportes error:", e)
-    } finally {
-      setLoading(false)
-    }
-  }
+        setAllData(result)
+        setLoading(false)
+      })
+  }, [days])
 
-  useEffect(() => { void fetchReportes(selectedDate) }, [selectedDate])
+  const toggleExpanded = (key: string) =>
+    setExpanded(prev => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next })
 
   return (
-    <div className="p-3 md:p-6 space-y-4 max-w-3xl mx-auto">
+    <div className="p-3 md:p-6 space-y-4">
       {/* Encabezado */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="flex items-center gap-2 flex-1">
@@ -641,98 +654,157 @@ function GerenciaView() {
           <h2 className="text-base md:text-xl font-bold">Reportes de secretarias</h2>
         </div>
         <div className="flex items-center gap-2">
-          <CalendarDays className="h-4 w-4 text-muted-foreground shrink-0" />
-          <Input
-            type="date"
-            value={selectedDate}
-            max={hoy}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            className="h-8 md:h-9 text-xs md:text-sm w-40"
-          />
+          {endDate !== hoy && (
+            <Button size="sm" variant="outline" onClick={() => setEndDate(hoy)} className="h-8 text-xs px-3">
+              Hoy
+            </Button>
+          )}
+          <div className="flex items-center gap-1.5">
+            <CalendarDays className="h-4 w-4 text-muted-foreground shrink-0" />
+            <Input
+              type="date"
+              value={endDate}
+              max={hoy}
+              onChange={(e) => { if (e.target.value) setEndDate(e.target.value) }}
+              className="h-8 text-xs w-36"
+            />
+          </div>
         </div>
       </div>
 
-      {/* Contenido */}
+      {/* Timeline de 7 columnas */}
       {loading ? (
-        <div className="flex justify-center py-10">
+        <div className="flex justify-center py-14">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
-      ) : agrupados.length === 0 ? (
-        <div className="text-center text-muted-foreground text-sm py-10">
-          No hay reportes para el {formatFecha(selectedDate)}.
-        </div>
       ) : (
-        <div className="space-y-3">
-          {agrupados.map((grupo) => (
-            <Card key={grupo.secretaria_id} className="overflow-hidden">
-              {/* Cabecera clickeable */}
-              <button
-                type="button"
-                className="w-full text-left"
-                onClick={() => setExpanded(expanded === grupo.secretaria_id ? null : grupo.secretaria_id)}
-              >
-                <CardHeader className="py-3 px-4 hover:bg-muted/40 transition-colors">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <p className="font-semibold text-sm md:text-base truncate">{grupo.secretaria_nombre}</p>
-                      <Badge variant="secondary" className="shrink-0 text-[10px]">
-                        {grupo.reportes.length} reporte{grupo.reportes.length !== 1 ? "s" : ""}
-                      </Badge>
-                    </div>
-                    {expanded === grupo.secretaria_id
-                      ? <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
-                      : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                    }
-                  </div>
-                </CardHeader>
-              </button>
+        <div className="overflow-x-auto pb-3 -mx-3 md:-mx-6 px-3 md:px-6">
+          <div className="flex gap-2.5" style={{ minWidth: "max-content" }}>
+            {days.map((fecha) => {
+              const [y, m, d] = fecha.split("-").map(Number)
+              const dateObj = new Date(y, m - 1, d)
+              const isToday = fecha === hoy
+              const grupos = allData[fecha] ?? []
+              const totalReportes = grupos.reduce((s, g) => s + g.reportes.length, 0)
 
-              {/* Reportes desplegados */}
-              {expanded === grupo.secretaria_id && (
-                <CardContent className="px-4 pb-4 pt-0 space-y-4">
-                  <div className="border-t pt-3 space-y-4">
-                    {grupo.reportes.map((inf) => (
-                      <div key={inf.id} className="space-y-2">
-                        <div>
-                          <p className="font-medium text-sm">{inf.nombre_reporte}</p>
-                          {inf.notas && (
-                            <p className="text-xs text-muted-foreground whitespace-pre-wrap mt-0.5">{inf.notas}</p>
-                          )}
-                          <p className="text-[10px] text-muted-foreground mt-0.5">
-                            {new Date(inf.created_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}
-                            {" · "}
-                            {inf.informe_imagenes.length} imagen{inf.informe_imagenes.length !== 1 ? "es" : ""}
-                          </p>
-                        </div>
-                        {inf.informe_imagenes.length > 0 && (
-                          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                            {inf.informe_imagenes.map((img) => (
-                              <button
-                                key={img.id}
-                                type="button"
-                                onClick={() => setLightbox(img.url_imagen)}
-                                className="relative aspect-square rounded-md overflow-hidden border hover:opacity-90 transition-opacity group"
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={img.url_imagen} alt={img.nombre_archivo ?? ""} className="w-full h-full object-cover" />
-                                <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/20 transition-colors">
-                                  <ZoomIn className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        {/* Separador entre reportes (excepto el último) */}
-                        {inf !== grupo.reportes[grupo.reportes.length - 1] && (
-                          <div className="border-t border-dashed" />
-                        )}
+              return (
+                <div key={fecha} className="flex flex-col gap-2 w-[210px] shrink-0">
+                  {/* Cabecera del día */}
+                  <div className={`rounded-xl px-3 py-2.5 text-center select-none ${
+                    isToday
+                      ? "bg-brand text-brand-foreground shadow-md"
+                      : "bg-muted/70 text-foreground"
+                  }`}>
+                    <div className="text-[10px] font-bold uppercase tracking-widest opacity-75">
+                      {isToday ? "HOY" : DIAS_ES[dateObj.getDay()]}
+                    </div>
+                    <div className="text-2xl font-extrabold leading-none mt-0.5">
+                      {String(d).padStart(2, "0")}
+                    </div>
+                    <div className="text-[10px] opacity-60 mt-0.5">
+                      {String(m).padStart(2, "0")}/{y}
+                    </div>
+                    {totalReportes > 0 && (
+                      <div className={`mt-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full inline-block ${
+                        isToday ? "bg-white/20" : "bg-foreground/10"
+                      }`}>
+                        {totalReportes} reporte{totalReportes !== 1 ? "s" : ""}
                       </div>
-                    ))}
+                    )}
                   </div>
-                </CardContent>
-              )}
-            </Card>
-          ))}
+
+                  {/* Secretarias de este día */}
+                  {grupos.length === 0 ? (
+                    <div className="flex items-center justify-center py-5 text-[11px] text-muted-foreground/60 border border-dashed rounded-lg">
+                      Sin reportes
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {grupos.map((grupo) => {
+                        const key = `${fecha}-${grupo.secretaria_id}`
+                        const isExp = expanded.has(key)
+                        return (
+                          <Card key={grupo.secretaria_id} className="overflow-hidden">
+                            {/* Acordeón: cabecera */}
+                            <button
+                              type="button"
+                              className="w-full text-left"
+                              onClick={() => toggleExpanded(key)}
+                            >
+                              <div className="flex items-center justify-between gap-1.5 px-3 py-2 hover:bg-muted/40 transition-colors">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                  <p className="font-medium text-[11px] leading-tight truncate">
+                                    {grupo.secretaria_nombre}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4">
+                                    {grupo.reportes.length}
+                                  </Badge>
+                                  {isExp
+                                    ? <ChevronUp className="h-3 w-3 text-muted-foreground" />
+                                    : <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                                  }
+                                </div>
+                              </div>
+                            </button>
+
+                            {/* Acordeón: contenido desplegado */}
+                            {isExp && (
+                              <div className="border-t divide-y divide-border/60">
+                                {grupo.reportes.map((inf) => (
+                                  <div key={inf.id} className="px-3 py-2.5 space-y-1.5">
+                                    <p className="font-semibold text-[11px] leading-snug">
+                                      {inf.nombre_reporte}
+                                    </p>
+                                    {inf.notas && (
+                                      <p className="text-[10px] text-muted-foreground whitespace-pre-wrap leading-snug">
+                                        {inf.notas}
+                                      </p>
+                                    )}
+                                    {inf.informe_imagenes.length > 0 && (
+                                      <div className="grid grid-cols-3 gap-1 pt-0.5">
+                                        {inf.informe_imagenes.map((img) => (
+                                          <button
+                                            key={img.id}
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); setLightbox(img.url_imagen) }}
+                                            className="relative aspect-square rounded overflow-hidden border hover:opacity-90 transition-opacity group"
+                                          >
+                                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                                            <img
+                                              src={img.url_imagen}
+                                              alt={img.nombre_archivo ?? ""}
+                                              className="w-full h-full object-cover"
+                                            />
+                                            <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/25 transition-colors">
+                                              <ZoomIn className="h-3 w-3 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                            </div>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+                                    <p className="text-[9px] text-muted-foreground/70">
+                                      {new Intl.DateTimeFormat("es-CO", {
+                                        timeZone: "America/Bogota",
+                                        hour: "2-digit", minute: "2-digit", hour12: true,
+                                      }).format(new Date(inf.created_at))}
+                                      {inf.informe_imagenes.length > 0 && ` · ${inf.informe_imagenes.length} img`}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </Card>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 
