@@ -672,139 +672,137 @@ function GerenciaView() {
         </div>
       </div>
 
-      {/* Timeline de 7 columnas */}
+      {/* Timeline de 3 columnas */}
       {loading ? (
         <div className="flex justify-center py-14">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
-        <div className="overflow-x-auto pb-3 -mx-3 md:-mx-6 px-3 md:px-6">
-          <div className="flex gap-2.5" style={{ minWidth: "max-content" }}>
-            {days.map((fecha) => {
-              const [y, m, d] = fecha.split("-").map(Number)
-              const dateObj = new Date(y, m - 1, d)
-              const isToday = fecha === hoy
-              const grupos = allData[fecha] ?? []
-              const totalReportes = grupos.reduce((s, g) => s + g.reportes.length, 0)
+        <div className="grid grid-cols-3 gap-3 md:gap-4">
+          {days.map((fecha) => {
+            const [y, m, d] = fecha.split("-").map(Number)
+            const dateObj = new Date(y, m - 1, d)
+            const isToday = fecha === hoy
+            const grupos = allData[fecha] ?? []
+            const totalReportes = grupos.reduce((s, g) => s + g.reportes.length, 0)
 
-              return (
-                <div key={fecha} className="flex flex-col gap-2 w-[210px] shrink-0">
-                  {/* Cabecera del día */}
-                  <div className={`rounded-xl px-3 py-2.5 text-center select-none ${
-                    isToday
-                      ? "bg-brand text-brand-foreground shadow-md"
-                      : "bg-muted/70 text-foreground"
-                  }`}>
-                    <div className="text-[10px] font-bold uppercase tracking-widest opacity-75">
-                      {isToday ? "HOY" : DIAS_ES[dateObj.getDay()]}
-                    </div>
-                    <div className="text-2xl font-extrabold leading-none mt-0.5">
-                      {String(d).padStart(2, "0")}
-                    </div>
-                    <div className="text-[10px] opacity-60 mt-0.5">
-                      {String(m).padStart(2, "0")}/{y}
-                    </div>
-                    {totalReportes > 0 && (
-                      <div className={`mt-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full inline-block ${
-                        isToday ? "bg-white/20" : "bg-foreground/10"
-                      }`}>
-                        {totalReportes} reporte{totalReportes !== 1 ? "s" : ""}
-                      </div>
-                    )}
+            return (
+              <div key={fecha} className="flex flex-col gap-2 min-w-0">
+                {/* Cabecera del día */}
+                <div className={`rounded-xl px-3 py-3 md:py-4 text-center select-none ${
+                  isToday
+                    ? "bg-brand text-brand-foreground shadow-md"
+                    : "bg-muted/70 text-foreground"
+                }`}>
+                  <div className="text-[11px] md:text-xs font-bold uppercase tracking-widest opacity-75">
+                    {isToday ? "HOY" : DIAS_ES[dateObj.getDay()]}
                   </div>
-
-                  {/* Secretarias de este día */}
-                  {grupos.length === 0 ? (
-                    <div className="flex items-center justify-center py-5 text-[11px] text-muted-foreground/60 border border-dashed rounded-lg">
-                      Sin reportes
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {grupos.map((grupo) => {
-                        const key = `${fecha}-${grupo.secretaria_id}`
-                        const isExp = expanded.has(key)
-                        return (
-                          <Card key={grupo.secretaria_id} className="overflow-hidden">
-                            {/* Acordeón: cabecera */}
-                            <button
-                              type="button"
-                              className="w-full text-left"
-                              onClick={() => toggleExpanded(key)}
-                            >
-                              <div className="flex items-center justify-between gap-1.5 px-3 py-2 hover:bg-muted/40 transition-colors">
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                  <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
-                                  <p className="font-medium text-[11px] leading-tight truncate">
-                                    {grupo.secretaria_nombre}
-                                  </p>
-                                </div>
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4">
-                                    {grupo.reportes.length}
-                                  </Badge>
-                                  {isExp
-                                    ? <ChevronUp className="h-3 w-3 text-muted-foreground" />
-                                    : <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                                  }
-                                </div>
-                              </div>
-                            </button>
-
-                            {/* Acordeón: contenido desplegado */}
-                            {isExp && (
-                              <div className="border-t divide-y divide-border/60">
-                                {grupo.reportes.map((inf) => (
-                                  <div key={inf.id} className="px-3 py-2.5 space-y-1.5">
-                                    <p className="font-semibold text-[11px] leading-snug">
-                                      {inf.nombre_reporte}
-                                    </p>
-                                    {inf.notas && (
-                                      <p className="text-[10px] text-muted-foreground whitespace-pre-wrap leading-snug">
-                                        {inf.notas}
-                                      </p>
-                                    )}
-                                    {inf.informe_imagenes.length > 0 && (
-                                      <div className="grid grid-cols-3 gap-1 pt-0.5">
-                                        {inf.informe_imagenes.map((img) => (
-                                          <button
-                                            key={img.id}
-                                            type="button"
-                                            onClick={(e) => { e.stopPropagation(); setLightbox(img.url_imagen) }}
-                                            className="relative aspect-square rounded overflow-hidden border hover:opacity-90 transition-opacity group"
-                                          >
-                                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                                            <img
-                                              src={img.url_imagen}
-                                              alt={img.nombre_archivo ?? ""}
-                                              className="w-full h-full object-cover"
-                                            />
-                                            <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/25 transition-colors">
-                                              <ZoomIn className="h-3 w-3 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                                            </div>
-                                          </button>
-                                        ))}
-                                      </div>
-                                    )}
-                                    <p className="text-[9px] text-muted-foreground/70">
-                                      {new Intl.DateTimeFormat("es-CO", {
-                                        timeZone: "America/Bogota",
-                                        hour: "2-digit", minute: "2-digit", hour12: true,
-                                      }).format(new Date(inf.created_at))}
-                                      {inf.informe_imagenes.length > 0 && ` · ${inf.informe_imagenes.length} img`}
-                                    </p>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </Card>
-                        )
-                      })}
+                  <div className="text-3xl md:text-4xl font-extrabold leading-none mt-1">
+                    {String(d).padStart(2, "0")}
+                  </div>
+                  <div className="text-[11px] md:text-xs opacity-60 mt-1">
+                    {String(m).padStart(2, "0")}/{y}
+                  </div>
+                  {totalReportes > 0 && (
+                    <div className={`mt-2 text-[10px] md:text-[11px] font-semibold px-2 py-0.5 rounded-full inline-block ${
+                      isToday ? "bg-white/20" : "bg-foreground/10"
+                    }`}>
+                      {totalReportes} reporte{totalReportes !== 1 ? "s" : ""}
                     </div>
                   )}
                 </div>
-              )
-            })}
-          </div>
+
+                {/* Secretarias de este día */}
+                {grupos.length === 0 ? (
+                  <div className="flex items-center justify-center py-6 text-xs text-muted-foreground/60 border border-dashed rounded-lg">
+                    Sin reportes
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {grupos.map((grupo) => {
+                      const key = `${fecha}-${grupo.secretaria_id}`
+                      const isExp = expanded.has(key)
+                      return (
+                        <Card key={grupo.secretaria_id} className="overflow-hidden">
+                          {/* Acordeón: cabecera */}
+                          <button
+                            type="button"
+                            className="w-full text-left"
+                            onClick={() => toggleExpanded(key)}
+                          >
+                            <div className="flex items-center justify-between gap-2 px-3 md:px-4 py-2.5 md:py-3 hover:bg-muted/40 transition-colors">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                <p className="font-medium text-xs md:text-sm leading-tight truncate">
+                                  {grupo.secretaria_nombre}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                                  {grupo.reportes.length}
+                                </Badge>
+                                {isExp
+                                  ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                                  : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                                }
+                              </div>
+                            </div>
+                          </button>
+
+                          {/* Acordeón: contenido desplegado */}
+                          {isExp && (
+                            <div className="border-t divide-y divide-border/60">
+                              {grupo.reportes.map((inf) => (
+                                <div key={inf.id} className="px-3 md:px-4 py-3 space-y-2">
+                                  <p className="font-semibold text-xs md:text-sm leading-snug">
+                                    {inf.nombre_reporte}
+                                  </p>
+                                  {inf.notas && (
+                                    <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-snug">
+                                      {inf.notas}
+                                    </p>
+                                  )}
+                                  {inf.informe_imagenes.length > 0 && (
+                                    <div className="grid grid-cols-3 gap-1.5 pt-0.5">
+                                      {inf.informe_imagenes.map((img) => (
+                                        <button
+                                          key={img.id}
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); setLightbox(img.url_imagen) }}
+                                          className="relative aspect-square rounded-md overflow-hidden border hover:opacity-90 transition-opacity group"
+                                        >
+                                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                                          <img
+                                            src={img.url_imagen}
+                                            alt={img.nombre_archivo ?? ""}
+                                            className="w-full h-full object-cover"
+                                          />
+                                          <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/25 transition-colors">
+                                            <ZoomIn className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                          </div>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                  <p className="text-[10px] md:text-[11px] text-muted-foreground/70">
+                                    {new Intl.DateTimeFormat("es-CO", {
+                                      timeZone: "America/Bogota",
+                                      hour: "2-digit", minute: "2-digit", hour12: true,
+                                    }).format(new Date(inf.created_at))}
+                                    {inf.informe_imagenes.length > 0 && ` · ${inf.informe_imagenes.length} img`}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </Card>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
 
