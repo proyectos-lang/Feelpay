@@ -22,6 +22,8 @@ import {
   ShieldOff,
   ZoomIn,
   Pencil,
+  Bell,
+  BellRing,
 } from "lucide-react"
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import type { AuthenticatedUser } from "@/components/views/login-view"
@@ -590,14 +592,20 @@ const DIAS_ES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"]
 function GerenciaView() {
   const hoy = fechaColombiaHoy()
   const [endDate, setEndDate] = useState(hoy)
-  // Record<"YYYY-MM-DD", AgrupacionSecretaria[]>
   const [allData, setAllData] = useState<Record<string, AgrupacionSecretaria[]>>({})
   const [loading, setLoading] = useState(false)
-  // key = "YYYY-MM-DD-secretariaId" — permite múltiples abiertos a la vez
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [lightbox, setLightbox] = useState<string | null>(null)
 
-  // Genera los 7 días (newest first) que terminan en endDate
+  // ── Notificaciones ────────────────────────────────────────────────────────
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission | "unsupported">("default")
+  const [newCount, setNewCount] = useState(0)
+  const [banner, setBanner] = useState<{ nombre: string; reporte: string } | null>(null)
+  const bannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Ref para que el callback realtime acceda a `days` sin re-suscribirse
+  const daysRef = useRef<string[]>([])
+
+  // Genera los 3 días (newest first) que terminan en endDate
   const days = useMemo(() => {
     const [y, m, d] = endDate.split("-").map(Number)
     const base = new Date(y, m - 1, d)
@@ -611,6 +619,86 @@ function GerenciaView() {
     })
   }, [endDate])
 
+  // Mantener ref sincronizada
+  useEffect(() => { daysRef.current = days }, [days])
+
+  // Detectar soporte y permiso actual de notificaciones
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      setNotifPermission("unsupported")
+    } else {
+      setNotifPermission(Notification.permission)
+    }
+  }, [])
+
+  // Suscripción Realtime — se crea una sola vez al montar
+  useEffect(() => {
+    const supabase = createClient()
+    const channel = supabase
+      .channel("gerencia-informes-realtime")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "informes" },
+        (payload) => {
+          const raw = payload.new as {
+            id: string
+            secretaria_id: number
+            secretaria_nombre: string
+            fecha: string
+            nombre_reporte: string
+            notas: string | null
+            ruta_id: number | null
+            created_at: string
+          }
+
+          // Notificación nativa del navegador
+          if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+            new Notification(`Nuevo reporte — ${raw.secretaria_nombre}`, {
+              body: raw.nombre_reporte,
+              icon: "/opad-logo.png",
+              tag: `informe-${raw.id}`,
+            })
+          }
+
+          // Banner in-app (se auto-cierra en 7 s)
+          setNewCount((c) => c + 1)
+          if (bannerTimer.current) clearTimeout(bannerTimer.current)
+          setBanner({ nombre: raw.secretaria_nombre, reporte: raw.nombre_reporte })
+          bannerTimer.current = setTimeout(() => setBanner(null), 7000)
+
+          // Actualizar columna si la fecha está en la ventana actual
+          if (daysRef.current.includes(raw.fecha)) {
+            supabase
+              .from("informes")
+              .select("*, informe_imagenes(*)")
+              .eq("id", raw.id)
+              .single()
+              .then(({ data }) => {
+                if (!data) return
+                const fullInf = data as Informe
+                setAllData((prev) => {
+                  const dateGroups = [...(prev[fullInf.fecha] ?? [])]
+                  const grpIdx = dateGroups.findIndex((g) => g.secretaria_id === fullInf.secretaria_id)
+                  if (grpIdx >= 0) {
+                    dateGroups[grpIdx] = { ...dateGroups[grpIdx], reportes: [...dateGroups[grpIdx].reportes, fullInf] }
+                  } else {
+                    dateGroups.push({ secretaria_id: fullInf.secretaria_id, secretaria_nombre: fullInf.secretaria_nombre, reportes: [fullInf] })
+                  }
+                  return { ...prev, [fullInf.fecha]: dateGroups }
+                })
+              })
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+      if (bannerTimer.current) clearTimeout(bannerTimer.current)
+    }
+  }, [])
+
+  // Carga inicial y al cambiar ventana de fechas
   useEffect(() => {
     const oldest = days[days.length - 1]
     const newest = days[0]
@@ -642,6 +730,12 @@ function GerenciaView() {
   const toggleExpanded = (key: string) =>
     setExpanded(prev => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next })
 
+  const requestPermission = async () => {
+    if (!("Notification" in window)) return
+    const result = await Notification.requestPermission()
+    setNotifPermission(result)
+  }
+
   return (
     <div className="p-3 md:p-6 space-y-4">
       {/* Encabezado */}
@@ -669,8 +763,56 @@ function GerenciaView() {
               className="h-8 text-xs w-36"
             />
           </div>
+          {/* Botón notificaciones */}
+          {notifPermission !== "unsupported" && (
+            notifPermission === "granted" ? (
+              <button
+                type="button"
+                title="Notificaciones activas"
+                onClick={() => setNewCount(0)}
+                className="relative flex h-8 w-8 items-center justify-center rounded-md border border-border bg-card hover:bg-muted transition-colors"
+              >
+                <BellRing className="h-4 w-4 text-brand" />
+                {newCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+                    {newCount > 9 ? "9+" : newCount}
+                  </span>
+                )}
+              </button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={requestPermission}
+                disabled={notifPermission === "denied"}
+                title={notifPermission === "denied" ? "Notificaciones bloqueadas en el navegador" : "Activar notificaciones"}
+                className="h-8 gap-1.5 text-xs px-2.5"
+              >
+                <Bell className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">
+                  {notifPermission === "denied" ? "Bloqueadas" : "Activar avisos"}
+                </span>
+              </Button>
+            )
+          )}
         </div>
       </div>
+
+      {/* Banner in-app para reportes nuevos */}
+      {banner && (
+        <div className="flex items-center gap-3 rounded-lg border border-brand/30 bg-brand/10 px-4 py-2.5 text-sm">
+          <BellRing className="h-4 w-4 shrink-0 animate-pulse text-brand" />
+          <div className="flex-1 min-w-0">
+            <span className="font-semibold">Nuevo reporte</span>
+            <span className="text-muted-foreground"> · {banner.nombre}</span>
+            <span className="text-muted-foreground"> — </span>
+            <span className="truncate">{banner.reporte}</span>
+          </div>
+          <button type="button" onClick={() => setBanner(null)} className="shrink-0 text-muted-foreground hover:text-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* Timeline de 3 columnas */}
       {loading ? (
