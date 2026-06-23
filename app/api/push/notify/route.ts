@@ -2,15 +2,20 @@ import { NextRequest, NextResponse } from "next/server"
 import webpush from "web-push"
 import { getSupabaseServerClient } from "@/lib/supabase/server"
 
-webpush.setVapidDetails(
-  process.env.VAPID_EMAIL!,
-  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!,
-  process.env.VAPID_PRIVATE_KEY!
-)
-
 type PushSub = { endpoint: string; p256dh: string; auth: string }
 
 export async function POST(req: NextRequest) {
+  // Inicializar aquí (no en nivel de módulo) para que las env vars estén disponibles en runtime
+  if (!process.env.VAPID_EMAIL || !process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
+    console.error("[v0] push/notify: faltan variables VAPID")
+    return NextResponse.json({ error: "Push no configurado" }, { status: 503 })
+  }
+  webpush.setVapidDetails(
+    process.env.VAPID_EMAIL,
+    process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  )
+
   const { title, body, tag, url } = await req.json() as {
     title: string
     body: string
