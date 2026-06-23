@@ -24,6 +24,7 @@ import {
   Pencil,
   Bell,
   BellRing,
+  MessageSquare,
 } from "lucide-react"
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import type { AuthenticatedUser } from "@/components/views/login-view"
@@ -452,7 +453,10 @@ function SecretariaView({
                   <div className="space-y-0.5 min-w-0">
                     <p className="font-semibold text-sm md:text-base truncate">{inf.nombre_reporte}</p>
                     {inf.notas && (
-                      <p className="text-xs md:text-sm text-muted-foreground whitespace-pre-wrap">{inf.notas}</p>
+                      <div className="flex items-start gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 mt-1">
+                        <MessageSquare className="h-3 w-3 shrink-0 text-muted-foreground mt-0.5" />
+                        <p className="text-xs md:text-sm text-muted-foreground whitespace-pre-wrap">{inf.notas}</p>
+                      </div>
                     )}
                     <p className="text-[10px] text-muted-foreground">
                       {new Date(inf.created_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}
@@ -906,9 +910,12 @@ function GerenciaView() {
                                     {inf.nombre_reporte}
                                   </p>
                                   {inf.notas && (
-                                    <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-snug">
-                                      {inf.notas}
-                                    </p>
+                                    <div className="flex items-start gap-2 rounded-md bg-muted/50 px-3 py-2">
+                                      <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground mt-0.5" />
+                                      <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-snug">
+                                        {inf.notas}
+                                      </p>
+                                    </div>
                                   )}
                                   {inf.informe_imagenes.length > 0 && (
                                     /* 2 columnas en móvil, 3 en escritorio — imágenes más grandes */
