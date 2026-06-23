@@ -814,13 +814,17 @@ function GerenciaView() {
         </div>
       )}
 
-      {/* Timeline de 3 columnas */}
+      {/* Timeline — scroll horizontal en móvil, grid en escritorio */}
       {loading ? (
         <div className="flex justify-center py-14">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-3 md:gap-4">
+        /* En móvil: carrusel con snap. En escritorio: grid de 3 columnas */
+        <div className="
+          flex gap-3 overflow-x-auto snap-x snap-mandatory pb-4 -mx-3 px-3
+          md:grid md:grid-cols-3 md:gap-4 md:overflow-visible md:snap-none md:pb-0 md:mx-0 md:px-0
+        ">
           {days.map((fecha) => {
             const [y, m, d] = fecha.split("-").map(Number)
             const dateObj = new Date(y, m - 1, d)
@@ -829,24 +833,26 @@ function GerenciaView() {
             const totalReportes = grupos.reduce((s, g) => s + g.reportes.length, 0)
 
             return (
-              <div key={fecha} className="flex flex-col gap-2 min-w-0">
+              /* Móvil: 82 vw para que asome el siguiente día. Escritorio: ocupa la celda del grid */
+              <div key={fecha} className="snap-start shrink-0 w-[82vw] sm:w-[68vw] flex flex-col gap-2 md:w-auto md:min-w-0">
+
                 {/* Cabecera del día */}
-                <div className={`rounded-xl px-3 py-3 md:py-4 text-center select-none ${
+                <div className={`rounded-xl px-4 py-4 text-center select-none ${
                   isToday
                     ? "bg-brand text-brand-foreground shadow-md"
                     : "bg-muted/70 text-foreground"
                 }`}>
-                  <div className="text-[11px] md:text-xs font-bold uppercase tracking-widest opacity-75">
+                  <div className="text-xs font-bold uppercase tracking-widest opacity-75">
                     {isToday ? "HOY" : DIAS_ES[dateObj.getDay()]}
                   </div>
-                  <div className="text-3xl md:text-4xl font-extrabold leading-none mt-1">
+                  <div className="text-5xl font-extrabold leading-none mt-1 md:text-4xl">
                     {String(d).padStart(2, "0")}
                   </div>
-                  <div className="text-[11px] md:text-xs opacity-60 mt-1">
+                  <div className="text-xs opacity-60 mt-1">
                     {String(m).padStart(2, "0")}/{y}
                   </div>
                   {totalReportes > 0 && (
-                    <div className={`mt-2 text-[10px] md:text-[11px] font-semibold px-2 py-0.5 rounded-full inline-block ${
+                    <div className={`mt-2 text-xs font-semibold px-2.5 py-0.5 rounded-full inline-block ${
                       isToday ? "bg-white/20" : "bg-foreground/10"
                     }`}>
                       {totalReportes} reporte{totalReportes !== 1 ? "s" : ""}
@@ -856,7 +862,7 @@ function GerenciaView() {
 
                 {/* Secretarias de este día */}
                 {grupos.length === 0 ? (
-                  <div className="flex items-center justify-center py-6 text-xs text-muted-foreground/60 border border-dashed rounded-lg">
+                  <div className="flex items-center justify-center py-8 text-sm text-muted-foreground/60 border border-dashed rounded-lg">
                     Sin reportes
                   </div>
                 ) : (
@@ -872,20 +878,20 @@ function GerenciaView() {
                             className="w-full text-left"
                             onClick={() => toggleExpanded(key)}
                           >
-                            <div className="flex items-center justify-between gap-2 px-3 md:px-4 py-2.5 md:py-3 hover:bg-muted/40 transition-colors">
+                            <div className="flex items-center justify-between gap-2 px-4 py-3 hover:bg-muted/40 transition-colors">
                               <div className="flex items-center gap-2 min-w-0">
-                                <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                                <p className="font-medium text-xs md:text-sm leading-tight truncate">
+                                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <p className="font-semibold text-sm leading-tight truncate">
                                   {grupo.secretaria_nombre}
                                 </p>
                               </div>
                               <div className="flex items-center gap-1.5 shrink-0">
-                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                                <Badge variant="secondary" className="text-xs px-1.5 py-0">
                                   {grupo.reportes.length}
                                 </Badge>
                                 {isExp
-                                  ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
-                                  : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                                  ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                                  : <ChevronDown className="h-4 w-4 text-muted-foreground" />
                                 }
                               </div>
                             </div>
@@ -895,23 +901,24 @@ function GerenciaView() {
                           {isExp && (
                             <div className="border-t divide-y divide-border/60">
                               {grupo.reportes.map((inf) => (
-                                <div key={inf.id} className="px-3 md:px-4 py-3 space-y-2">
-                                  <p className="font-semibold text-xs md:text-sm leading-snug">
+                                <div key={inf.id} className="px-4 py-3 space-y-2.5">
+                                  <p className="font-semibold text-sm leading-snug">
                                     {inf.nombre_reporte}
                                   </p>
                                   {inf.notas && (
-                                    <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-snug">
+                                    <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-snug">
                                       {inf.notas}
                                     </p>
                                   )}
                                   {inf.informe_imagenes.length > 0 && (
-                                    <div className="grid grid-cols-3 gap-1.5 pt-0.5">
+                                    /* 2 columnas en móvil, 3 en escritorio — imágenes más grandes */
+                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 pt-0.5">
                                       {inf.informe_imagenes.map((img) => (
                                         <button
                                           key={img.id}
                                           type="button"
                                           onClick={(e) => { e.stopPropagation(); setLightbox(img.url_imagen) }}
-                                          className="relative aspect-square rounded-md overflow-hidden border hover:opacity-90 transition-opacity group"
+                                          className="relative aspect-square rounded-lg overflow-hidden border hover:opacity-90 transition-opacity group"
                                         >
                                           {/* eslint-disable-next-line @next/next/no-img-element */}
                                           <img
@@ -920,13 +927,13 @@ function GerenciaView() {
                                             className="w-full h-full object-cover"
                                           />
                                           <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/25 transition-colors">
-                                            <ZoomIn className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                            <ZoomIn className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                                           </div>
                                         </button>
                                       ))}
                                     </div>
                                   )}
-                                  <p className="text-[10px] md:text-[11px] text-muted-foreground/70">
+                                  <p className="text-xs text-muted-foreground/70">
                                     {new Intl.DateTimeFormat("es-CO", {
                                       timeZone: "America/Bogota",
                                       hour: "2-digit", minute: "2-digit", hour12: true,
