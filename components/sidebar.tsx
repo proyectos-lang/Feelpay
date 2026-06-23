@@ -1,6 +1,6 @@
 "use client"
 
-import React from "react"
+import React, { useState, useEffect } from "react"
 import {
   DollarSign,
   ChevronLeft,
@@ -20,11 +20,18 @@ import {
   LayoutDashboard,
   ClipboardList,
   FileText,
+  Download,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import type { AuthenticatedUser } from "./views/login-view"
+
+// Tipo para el evento de instalación PWA (no está en los tipos estándar de TS)
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>
+}
 
 type NavItem = { id: string; label: string; icon: React.ElementType; colorClass: string }
 type NavGroup = { group: string; items: NavItem[] }
@@ -81,6 +88,26 @@ export function Sidebar({
   onLogout,
 }: SidebarProps) {
   const rol = (currentUser?.rol ?? "").toLowerCase()
+
+  // ── PWA install prompt ────────────────────────────────────────────────────
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault()
+      setInstallPrompt(e as BeforeInstallPromptEvent)
+    }
+    window.addEventListener("beforeinstallprompt", handler)
+    window.addEventListener("appinstalled", () => setInstallPrompt(null))
+    return () => window.removeEventListener("beforeinstallprompt", handler)
+  }, [])
+
+  const handleInstall = async () => {
+    if (!installPrompt) return
+    await installPrompt.prompt()
+    const { outcome } = await installPrompt.userChoice
+    if (outcome === "accepted") setInstallPrompt(null)
+  }
 
   // Filtrar grupos de navegación según el rol del usuario
   const visibleGroups = (() => {
@@ -201,6 +228,32 @@ export function Sidebar({
 
       </div>
 
+      {/* Botón instalar app — desktop (aparece al fondo del sidebar cuando el browser lo permite) */}
+      {installPrompt && !isCollapsed && (
+        <div className="hidden md:block flex-shrink-0 px-3 pb-3">
+          <button
+            type="button"
+            onClick={handleInstall}
+            className="w-full flex items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs font-medium text-sidebar-foreground hover:bg-white/20 transition-colors"
+          >
+            <Download className="h-3.5 w-3.5 shrink-0" />
+            Instalar app
+          </button>
+        </div>
+      )}
+      {installPrompt && isCollapsed && (
+        <div className="hidden md:block flex-shrink-0 px-1.5 pb-3">
+          <button
+            type="button"
+            onClick={handleInstall}
+            title="Instalar app"
+            className="w-full flex items-center justify-center rounded-lg border border-white/20 bg-white/10 p-2 text-sidebar-foreground hover:bg-white/20 transition-colors"
+          >
+            <Download className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Mobile-only session footer with user info + logout */}
       {currentUser && (
         <div className="md:hidden flex-shrink-0 border-t border-sidebar-border bg-white/10 backdrop-blur-sm p-3">
@@ -222,13 +275,27 @@ export function Sidebar({
             </div>
           </div>
 
+          {/* Instalar app — móvil */}
+          {installPrompt && (
+            <Button
+              type="button"
+              onClick={handleInstall}
+              variant="outline"
+              size="sm"
+              className="mt-3 w-full gap-2 border-white/30 bg-white/10 text-sidebar-foreground hover:bg-white/20 hover:text-sidebar-foreground"
+            >
+              <Download className="h-4 w-4" />
+              Instalar app
+            </Button>
+          )}
+
           {onLogout && (
             <Button
               type="button"
               onClick={onLogout}
               variant="outline"
               size="sm"
-              className="mt-3 w-full gap-2 border-white/30 bg-white/10 text-sidebar-foreground hover:bg-white/20 hover:text-sidebar-foreground"
+              className="mt-2 w-full gap-2 border-white/30 bg-white/10 text-sidebar-foreground hover:bg-white/20 hover:text-sidebar-foreground"
             >
               <LogOut className="h-4 w-4" />
               Cerrar sesion
