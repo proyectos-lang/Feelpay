@@ -25,6 +25,7 @@ import {
   Bell,
   BellRing,
   MessageSquare,
+  BarChart2,
 } from "lucide-react"
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import type { AuthenticatedUser } from "@/components/views/login-view"
@@ -613,6 +614,7 @@ function GerenciaView() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
+  const [tab, setTab] = useState<"reportes" | "bi">("reportes")
 
   // ── Notificaciones ────────────────────────────────────────────────────────
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | "unsupported">("default")
@@ -754,164 +756,226 @@ function GerenciaView() {
   }).format(new Date(sy, sm - 1, sd))
 
   return (
-    <div className="p-3 md:p-6 space-y-4 max-w-2xl mx-auto">
+    <div className="p-3 md:p-6 space-y-4">
       {/* Encabezado */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-        {/* Título + fecha */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2 max-w-2xl mx-auto">
+        {/* Título */}
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white ring-1 ring-border overflow-hidden p-0.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/opad-logo.png" alt="OPAD" className="h-full w-full object-contain" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-base md:text-lg font-bold leading-tight">
-              {esHoy ? "Reportes de hoy" : "Reportes del día"}
-            </h2>
-            <p className="text-xs text-muted-foreground capitalize">{fechaDisplay}</p>
+            <h2 className="text-base md:text-lg font-bold leading-tight">Reportes</h2>
+            <p className="text-xs text-muted-foreground">Vista de gerencia</p>
           </div>
         </div>
 
-        {/* Selector de fecha + notificaciones */}
-        <div className="flex items-center gap-2 shrink-0">
-          {!esHoy && (
-            <Button size="sm" variant="outline" onClick={() => setSelectedDate(hoy)} className="h-8 text-xs px-3">
-              Hoy
-            </Button>
-          )}
-          <div className="flex items-center gap-1.5">
-            <CalendarDays className="h-4 w-4 text-muted-foreground shrink-0" />
-            <Input
-              type="date"
-              value={selectedDate}
-              max={hoy}
-              onChange={(e) => { if (e.target.value) setSelectedDate(e.target.value) }}
-              className="h-8 text-xs w-36"
-            />
-          </div>
-
-          {/* Botón notificaciones */}
-          {notifPermission !== "unsupported" && (
-            notifPermission === "granted" ? (
-              <button
-                type="button"
-                title="Notificaciones activas"
-                onClick={() => setNewCount(0)}
-                className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-card hover:bg-muted transition-colors"
-              >
-                <BellRing className="h-4 w-4 text-brand" />
-                {newCount > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
-                    {newCount > 9 ? "9+" : newCount}
-                  </span>
-                )}
-              </button>
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={requestPermission}
-                disabled={notifPermission === "denied"}
-                className="shrink-0 h-8 gap-1.5 text-xs px-2.5"
-              >
-                <Bell className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">{notifPermission === "denied" ? "Bloqueadas" : "Activar avisos"}</span>
+        {/* Controles solo visibles en la pestaña de reportes */}
+        {tab === "reportes" && (
+          <div className="flex items-center gap-2 shrink-0">
+            {!esHoy && (
+              <Button size="sm" variant="outline" onClick={() => setSelectedDate(hoy)} className="h-8 text-xs px-3">
+                Hoy
               </Button>
-            )
-          )}
-        </div>
+            )}
+            <div className="flex items-center gap-1.5">
+              <CalendarDays className="h-4 w-4 text-muted-foreground shrink-0" />
+              <Input
+                type="date"
+                value={selectedDate}
+                max={hoy}
+                onChange={(e) => { if (e.target.value) setSelectedDate(e.target.value) }}
+                className="h-8 text-xs w-36"
+              />
+            </div>
+            {notifPermission !== "unsupported" && (
+              notifPermission === "granted" ? (
+                <button
+                  type="button"
+                  title="Notificaciones activas"
+                  onClick={() => setNewCount(0)}
+                  className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-card hover:bg-muted transition-colors"
+                >
+                  <BellRing className="h-4 w-4 text-brand" />
+                  {newCount > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+                      {newCount > 9 ? "9+" : newCount}
+                    </span>
+                  )}
+                </button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={requestPermission}
+                  disabled={notifPermission === "denied"}
+                  className="shrink-0 h-8 gap-1.5 text-xs px-2.5"
+                >
+                  <Bell className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">{notifPermission === "denied" ? "Bloqueadas" : "Activar avisos"}</span>
+                </Button>
+              )
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Banner in-app */}
-      {banner && (
-        <div className="flex items-center gap-3 rounded-lg border border-brand/30 bg-brand/10 px-4 py-2.5 text-sm">
-          <BellRing className="h-4 w-4 shrink-0 animate-pulse text-brand" />
-          <div className="flex-1 min-w-0">
-            <span className="font-semibold">Nuevo reporte</span>
-            <span className="text-muted-foreground"> · {banner.nombre}</span>
-            {" — "}
-            <span>{banner.reporte}</span>
-          </div>
-          <button type="button" onClick={() => setBanner(null)} className="shrink-0 text-muted-foreground hover:text-foreground">
-            <X className="h-4 w-4" />
-          </button>
+      {/* Pestañas */}
+      <div className="flex gap-1 border-b max-w-2xl mx-auto">
+        <button
+          type="button"
+          onClick={() => setTab("reportes")}
+          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            tab === "reportes"
+              ? "border-brand text-brand"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <FileText className="h-4 w-4" />
+          Reportes
+          {tab === "reportes" && newCount > 0 && (
+            <span className="flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+              {newCount > 9 ? "9+" : newCount}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("bi")}
+          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            tab === "bi"
+              ? "border-brand text-brand"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <BarChart2 className="h-4 w-4" />
+          Reportes BI
+        </button>
+      </div>
+
+      {/* ── Pestaña: Reportes de secretarias ─────────────────────────────── */}
+      {tab === "reportes" && (
+        <div className="space-y-4 max-w-2xl mx-auto">
+          {/* Banner in-app */}
+          {banner && (
+            <div className="flex items-center gap-3 rounded-lg border border-brand/30 bg-brand/10 px-4 py-2.5 text-sm">
+              <BellRing className="h-4 w-4 shrink-0 animate-pulse text-brand" />
+              <div className="flex-1 min-w-0">
+                <span className="font-semibold">Nuevo reporte</span>
+                <span className="text-muted-foreground"> · {banner.nombre}</span>
+                {" — "}
+                <span>{banner.reporte}</span>
+              </div>
+              <button type="button" onClick={() => setBanner(null)} className="shrink-0 text-muted-foreground hover:text-foreground">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
+          {/* Subtítulo con fecha */}
+          <p className="text-sm font-medium capitalize text-muted-foreground">
+            {esHoy ? "Hoy · " : ""}{fechaDisplay}
+          </p>
+
+          {/* Lista */}
+          {loading ? (
+            <div className="flex justify-center py-14">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : grupos.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
+              <FileText className="h-8 w-8 opacity-30" />
+              <p className="text-sm">No hay reportes registrados{esHoy ? " hoy" : " este día"}</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {grupos.map((grupo) => {
+                const isExp = expanded.has(grupo.secretaria_id)
+                return (
+                  <Card key={grupo.secretaria_id} className="overflow-hidden">
+                    <button type="button" className="w-full text-left" onClick={() => toggle(grupo.secretaria_id)}>
+                      <div className="flex items-center justify-between gap-2 px-4 py-3.5 hover:bg-muted/40 transition-colors">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <p className="font-semibold text-sm md:text-base leading-tight truncate">
+                            {grupo.secretaria_nombre}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Badge variant="secondary" className="text-xs px-2">
+                            {grupo.reportes.length} reporte{grupo.reportes.length !== 1 ? "s" : ""}
+                          </Badge>
+                          {isExp ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                        </div>
+                      </div>
+                    </button>
+                    {isExp && (
+                      <div className="border-t divide-y divide-border/60">
+                        {grupo.reportes.map((inf) => (
+                          <div key={inf.id} className="px-4 py-4 space-y-3">
+                            <p className="font-semibold text-sm md:text-base leading-snug">{inf.nombre_reporte}</p>
+                            {inf.notas && (
+                              <div className="flex items-start gap-2 rounded-md bg-muted/50 px-3 py-2">
+                                <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground mt-0.5" />
+                                <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-snug">{inf.notas}</p>
+                              </div>
+                            )}
+                            {inf.informe_imagenes.length > 0 && (
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                {inf.informe_imagenes.map((img) => (
+                                  <button
+                                    key={img.id}
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setLightbox(img.url_imagen) }}
+                                    className="relative aspect-square rounded-lg overflow-hidden border hover:opacity-90 transition-opacity group"
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img src={img.url_imagen} alt={img.nombre_archivo ?? ""} className="w-full h-full object-cover" />
+                                    <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/25 transition-colors">
+                                      <ZoomIn className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            <p className="text-xs text-muted-foreground/70">
+                              {new Intl.DateTimeFormat("es-CO", {
+                                timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: true,
+                              }).format(new Date(inf.created_at))}
+                              {inf.informe_imagenes.length > 0 && ` · ${inf.informe_imagenes.length} img`}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Lista de secretarias */}
-      {loading ? (
-        <div className="flex justify-center py-14">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : grupos.length === 0 ? (
-        <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
-          <FileText className="h-8 w-8 opacity-30" />
-          <p className="text-sm">No hay reportes registrados hoy</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {grupos.map((grupo) => {
-            const isExp = expanded.has(grupo.secretaria_id)
-            return (
-              <Card key={grupo.secretaria_id} className="overflow-hidden">
-                <button type="button" className="w-full text-left" onClick={() => toggle(grupo.secretaria_id)}>
-                  <div className="flex items-center justify-between gap-2 px-4 py-3.5 hover:bg-muted/40 transition-colors">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <p className="font-semibold text-sm md:text-base leading-tight truncate">
-                        {grupo.secretaria_nombre}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Badge variant="secondary" className="text-xs px-2">
-                        {grupo.reportes.length} reporte{grupo.reportes.length !== 1 ? "s" : ""}
-                      </Badge>
-                      {isExp ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
-                    </div>
-                  </div>
-                </button>
-
-                {isExp && (
-                  <div className="border-t divide-y divide-border/60">
-                    {grupo.reportes.map((inf) => (
-                      <div key={inf.id} className="px-4 py-4 space-y-3">
-                        <p className="font-semibold text-sm md:text-base leading-snug">{inf.nombre_reporte}</p>
-                        {inf.notas && (
-                          <div className="flex items-start gap-2 rounded-md bg-muted/50 px-3 py-2">
-                            <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground mt-0.5" />
-                            <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-snug">{inf.notas}</p>
-                          </div>
-                        )}
-                        {inf.informe_imagenes.length > 0 && (
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                            {inf.informe_imagenes.map((img) => (
-                              <button
-                                key={img.id}
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); setLightbox(img.url_imagen) }}
-                                className="relative aspect-square rounded-lg overflow-hidden border hover:opacity-90 transition-opacity group"
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={img.url_imagen} alt={img.nombre_archivo ?? ""} className="w-full h-full object-cover" />
-                                <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/25 transition-colors">
-                                  <ZoomIn className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        <p className="text-xs text-muted-foreground/70">
-                          {new Intl.DateTimeFormat("es-CO", {
-                            timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: true,
-                          }).format(new Date(inf.created_at))}
-                          {inf.informe_imagenes.length > 0 && ` · ${inf.informe_imagenes.length} img`}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Card>
-            )
-          })}
+      {/* ── Pestaña: Reportes BI ──────────────────────────────────────────── */}
+      {tab === "bi" && (
+        <div className="space-y-4">
+          {/* Reporte de Recaudos */}
+          <div className="rounded-xl border bg-card overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-3 border-b">
+              <BarChart2 className="h-4 w-4 text-muted-foreground shrink-0" />
+              <span className="font-semibold text-sm">Reporte de Recaudos</span>
+            </div>
+            <div className="relative w-full" style={{ paddingBottom: "62.5%" }}>
+              <iframe
+                title="Reporte de Recaudos"
+                src="https://app.powerbi.com/view?r=eyJrIjoiOWQzMGE0OWYtMmM0NS00ODQ0LTkyODUtMDcwYzczNDc4ZDliIiwidCI6Ijk2YWMwMjE3LTc4OTEtNGNmYy05MjExLTM5MTEyNThjMmMwMyIsImMiOjR9"
+                className="absolute inset-0 w-full h-full"
+                frameBorder={0}
+                allowFullScreen
+              />
+            </div>
+          </div>
         </div>
       )}
 
