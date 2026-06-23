@@ -1,0 +1,23 @@
+{
+  "name": "OPAD APP",
+  "short_name": "OPAD",
+  "description": "Plataforma de gestión de cobranzas y rutas",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#163970",
+  "icons": [
+    {
+      "src": "/opad-logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/opad-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

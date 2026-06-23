@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useMemo } from "react"
+import { useState, useEffect, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -256,6 +256,18 @@ function SecretariaView({
           }))
         )
       }
+
+      // Notificar a gerencia vía Web Push (fire-and-forget)
+      fetch("/api/push/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `Nuevo reporte — ${currentUser.nombre}`,
+          body: formNombre.trim(),
+          tag: `informe-${informe.id}`,
+          url: "/",
+        }),
+      }).catch(() => {})
 
       // Sincronizar la vista al día del reporte recién creado
       setViewDate(formFecha)
@@ -591,51 +603,69 @@ interface AgrupacionSecretaria {
   reportes: Informe[]
 }
 
-const DIAS_ES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"]
 
 function GerenciaView() {
   const hoy = fechaColombiaHoy()
-  const [endDate, setEndDate] = useState(hoy)
-  const [allData, setAllData] = useState<Record<string, AgrupacionSecretaria[]>>({})
-  const [loading, setLoading] = useState(false)
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [selectedDate, setSelectedDate] = useState(hoy)
+  const selectedDateRef = useRef(hoy)
+  const [grupos, setGrupos] = useState<AgrupacionSecretaria[]>([])
+  const [loading, setLoading] = useState(true)
+  const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [lightbox, setLightbox] = useState<string | null>(null)
+  const [userId, setUserId] = useState<string | null>(null)
 
   // ── Notificaciones ────────────────────────────────────────────────────────
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | "unsupported">("default")
   const [newCount, setNewCount] = useState(0)
   const [banner, setBanner] = useState<{ nombre: string; reporte: string } | null>(null)
   const bannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Ref para que el callback realtime acceda a `days` sin re-suscribirse
-  const daysRef = useRef<string[]>([])
 
-  // Genera los 3 días (newest first) que terminan en endDate
-  const days = useMemo(() => {
-    const [y, m, d] = endDate.split("-").map(Number)
-    const base = new Date(y, m - 1, d)
-    return Array.from({ length: 3 }, (_, i) => {
-      const dt = new Date(base)
-      dt.setDate(base.getDate() - i)
-      const yy = dt.getFullYear()
-      const mm = String(dt.getMonth() + 1).padStart(2, "0")
-      const dd = String(dt.getDate()).padStart(2, "0")
-      return `${yy}-${mm}-${dd}`
-    })
-  }, [endDate])
+  // Mantener ref sincronizada con selectedDate para el callback realtime
+  useEffect(() => { selectedDateRef.current = selectedDate }, [selectedDate])
 
-  // Mantener ref sincronizada
-  useEffect(() => { daysRef.current = days }, [days])
-
-  // Detectar soporte y permiso actual de notificaciones
+  // Detectar soporte, permiso actual y user_id; auto-suscribir si ya hay permiso
   useEffect(() => {
-    if (typeof window === "undefined" || !("Notification" in window)) {
-      setNotifPermission("unsupported")
-    } else {
-      setNotifPermission(Notification.permission)
+    if (typeof window === "undefined") return
+    const raw = localStorage.getItem("currentUser")
+    const uid = raw ? (JSON.parse(raw) as { id: string | number }).id : null
+    setUserId(uid ? String(uid) : null)
+
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+      setNotifPermission("unsupported"); return
+    }
+    setNotifPermission(Notification.permission)
+    if (Notification.permission === "granted" && uid) {
+      subscribeToPush(String(uid)).catch(() => {})
     }
   }, [])
 
-  // Suscripción Realtime — se crea una sola vez al montar
+  // Carga de reportes al cambiar de fecha
+  useEffect(() => {
+    setLoading(true)
+    setExpanded(new Set())
+    const supabase = createClient()
+    supabase
+      .from("informes")
+      .select("*, informe_imagenes(*)")
+      .eq("fecha", selectedDate)
+      .order("secretaria_nombre", { ascending: true })
+      .order("created_at", { ascending: true })
+      .then(({ data, error }) => {
+        if (error) { console.error("[v0] GerenciaView fetch error:", error); setLoading(false); return }
+        const rows = (data as Informe[]) ?? []
+        const map = new Map<number, AgrupacionSecretaria>()
+        for (const inf of rows) {
+          if (!map.has(inf.secretaria_id)) {
+            map.set(inf.secretaria_id, { secretaria_id: inf.secretaria_id, secretaria_nombre: inf.secretaria_nombre, reportes: [] })
+          }
+          map.get(inf.secretaria_id)!.reportes.push(inf)
+        }
+        setGrupos(Array.from(map.values()))
+        setLoading(false)
+      })
+  }, [selectedDate])
+
+  // Suscripción Realtime — actualiza estado si la fecha seleccionada coincide
   useEffect(() => {
     const supabase = createClient()
     const channel = supabase
@@ -645,53 +675,40 @@ function GerenciaView() {
         { event: "INSERT", schema: "public", table: "informes" },
         (payload) => {
           const raw = payload.new as {
-            id: string
-            secretaria_id: number
-            secretaria_nombre: string
-            fecha: string
-            nombre_reporte: string
-            notas: string | null
-            ruta_id: number | null
-            created_at: string
+            id: string; secretaria_id: number; secretaria_nombre: string
+            fecha: string; nombre_reporte: string; notas: string | null
+            ruta_id: number | null; created_at: string
           }
 
-          // Notificación nativa del navegador
+          // Notificación nativa siempre (independiente del día seleccionado)
           if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
             new Notification(`Nuevo reporte — ${raw.secretaria_nombre}`, {
-              body: raw.nombre_reporte,
-              icon: "/opad-logo.png",
-              tag: `informe-${raw.id}`,
+              body: raw.nombre_reporte, icon: "/opad-logo.png", tag: `informe-${raw.id}`,
             })
           }
 
-          // Banner in-app (se auto-cierra en 7 s)
+          // Banner in-app siempre
           setNewCount((c) => c + 1)
           if (bannerTimer.current) clearTimeout(bannerTimer.current)
           setBanner({ nombre: raw.secretaria_nombre, reporte: raw.nombre_reporte })
           bannerTimer.current = setTimeout(() => setBanner(null), 7000)
 
-          // Actualizar columna si la fecha está en la ventana actual
-          if (daysRef.current.includes(raw.fecha)) {
-            supabase
-              .from("informes")
-              .select("*, informe_imagenes(*)")
-              .eq("id", raw.id)
-              .single()
-              .then(({ data }) => {
-                if (!data) return
-                const fullInf = data as Informe
-                setAllData((prev) => {
-                  const dateGroups = [...(prev[fullInf.fecha] ?? [])]
-                  const grpIdx = dateGroups.findIndex((g) => g.secretaria_id === fullInf.secretaria_id)
-                  if (grpIdx >= 0) {
-                    dateGroups[grpIdx] = { ...dateGroups[grpIdx], reportes: [...dateGroups[grpIdx].reportes, fullInf] }
-                  } else {
-                    dateGroups.push({ secretaria_id: fullInf.secretaria_id, secretaria_nombre: fullInf.secretaria_nombre, reportes: [fullInf] })
-                  }
-                  return { ...prev, [fullInf.fecha]: dateGroups }
-                })
+          // Actualizar lista solo si el reporte es del día que se está viendo
+          if (raw.fecha !== selectedDateRef.current) return
+          supabase.from("informes").select("*, informe_imagenes(*)").eq("id", raw.id).single()
+            .then(({ data }) => {
+              if (!data) return
+              const fullInf = data as Informe
+              setGrupos((prev) => {
+                const idx = prev.findIndex((g) => g.secretaria_id === fullInf.secretaria_id)
+                if (idx >= 0) {
+                  const next = [...prev]
+                  next[idx] = { ...next[idx], reportes: [...next[idx].reportes, fullInf] }
+                  return next
+                }
+                return [...prev, { secretaria_id: fullInf.secretaria_id, secretaria_nombre: fullInf.secretaria_nombre, reportes: [fullInf] }]
               })
-          }
+            })
         }
       )
       .subscribe()
@@ -702,58 +719,62 @@ function GerenciaView() {
     }
   }, [])
 
-  // Carga inicial y al cambiar ventana de fechas
-  useEffect(() => {
-    const oldest = days[days.length - 1]
-    const newest = days[0]
-    setLoading(true)
-    setExpanded(new Set())
-    const supabase = createClient()
-    supabase
-      .from("informes")
-      .select("*, informe_imagenes(*)")
-      .gte("fecha", oldest)
-      .lte("fecha", newest)
-      .order("secretaria_nombre", { ascending: true })
-      .order("created_at", { ascending: true })
-      .then(({ data, error }) => {
-        if (error) { console.error("[v0] GerenciaView fetch error:", error); setLoading(false); return }
-        const rows = (data as Informe[]) ?? []
-        const result: Record<string, AgrupacionSecretaria[]> = {}
-        for (const inf of rows) {
-          if (!result[inf.fecha]) result[inf.fecha] = []
-          const grp = result[inf.fecha].find(g => g.secretaria_id === inf.secretaria_id)
-          if (grp) { grp.reportes.push(inf) }
-          else { result[inf.fecha].push({ secretaria_id: inf.secretaria_id, secretaria_nombre: inf.secretaria_nombre, reportes: [inf] }) }
-        }
-        setAllData(result)
-        setLoading(false)
-      })
-  }, [days])
+  const toggle = (id: number) =>
+    setExpanded(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
 
-  const toggleExpanded = (key: string) =>
-    setExpanded(prev => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next })
+  async function subscribeToPush(uid: string) {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return
+    const reg = await navigator.serviceWorker.ready
+    const existing = await reg.pushManager.getSubscription()
+    const sub = existing ?? await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+    })
+    await fetch("/api/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: uid, rol: "gerencia", subscription: sub.toJSON() }),
+    })
+  }
 
   const requestPermission = async () => {
     if (!("Notification" in window)) return
     const result = await Notification.requestPermission()
     setNotifPermission(result)
+    if (result === "granted" && userId) {
+      await subscribeToPush(userId).catch(() => {})
+    }
   }
 
+  // Fecha formateada para el encabezado
+  const [sy, sm, sd] = selectedDate.split("-").map(Number)
+  const esHoy = selectedDate === hoy
+  const fechaDisplay = new Intl.DateTimeFormat("es-CO", {
+    timeZone: "America/Bogota", weekday: "long", day: "numeric", month: "long",
+  }).format(new Date(sy, sm - 1, sd))
+
   return (
-    <div className="p-3 md:p-6 space-y-4">
+    <div className="p-3 md:p-6 space-y-4 max-w-2xl mx-auto">
       {/* Encabezado */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-        <div className="flex items-center gap-2 flex-1">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+        {/* Título + fecha */}
+        <div className="flex items-center gap-2 flex-1 min-w-0">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white ring-1 ring-border overflow-hidden p-0.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/opad-logo.png" alt="OPAD" className="h-full w-full object-contain" />
           </div>
-          <h2 className="text-base md:text-xl font-bold">Reportes de secretarias</h2>
+          <div className="min-w-0">
+            <h2 className="text-base md:text-lg font-bold leading-tight">
+              {esHoy ? "Reportes de hoy" : "Reportes del día"}
+            </h2>
+            <p className="text-xs text-muted-foreground capitalize">{fechaDisplay}</p>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          {endDate !== hoy && (
-            <Button size="sm" variant="outline" onClick={() => setEndDate(hoy)} className="h-8 text-xs px-3">
+
+        {/* Selector de fecha + notificaciones */}
+        <div className="flex items-center gap-2 shrink-0">
+          {!esHoy && (
+            <Button size="sm" variant="outline" onClick={() => setSelectedDate(hoy)} className="h-8 text-xs px-3">
               Hoy
             </Button>
           )}
@@ -761,12 +782,13 @@ function GerenciaView() {
             <CalendarDays className="h-4 w-4 text-muted-foreground shrink-0" />
             <Input
               type="date"
-              value={endDate}
+              value={selectedDate}
               max={hoy}
-              onChange={(e) => { if (e.target.value) setEndDate(e.target.value) }}
+              onChange={(e) => { if (e.target.value) setSelectedDate(e.target.value) }}
               className="h-8 text-xs w-36"
             />
           </div>
+
           {/* Botón notificaciones */}
           {notifPermission !== "unsupported" && (
             notifPermission === "granted" ? (
@@ -774,7 +796,7 @@ function GerenciaView() {
                 type="button"
                 title="Notificaciones activas"
                 onClick={() => setNewCount(0)}
-                className="relative flex h-8 w-8 items-center justify-center rounded-md border border-border bg-card hover:bg-muted transition-colors"
+                className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-card hover:bg-muted transition-colors"
               >
                 <BellRing className="h-4 w-4 text-brand" />
                 {newCount > 0 && (
@@ -789,28 +811,25 @@ function GerenciaView() {
                 variant="outline"
                 onClick={requestPermission}
                 disabled={notifPermission === "denied"}
-                title={notifPermission === "denied" ? "Notificaciones bloqueadas en el navegador" : "Activar notificaciones"}
-                className="h-8 gap-1.5 text-xs px-2.5"
+                className="shrink-0 h-8 gap-1.5 text-xs px-2.5"
               >
                 <Bell className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">
-                  {notifPermission === "denied" ? "Bloqueadas" : "Activar avisos"}
-                </span>
+                <span className="hidden sm:inline">{notifPermission === "denied" ? "Bloqueadas" : "Activar avisos"}</span>
               </Button>
             )
           )}
         </div>
       </div>
 
-      {/* Banner in-app para reportes nuevos */}
+      {/* Banner in-app */}
       {banner && (
         <div className="flex items-center gap-3 rounded-lg border border-brand/30 bg-brand/10 px-4 py-2.5 text-sm">
           <BellRing className="h-4 w-4 shrink-0 animate-pulse text-brand" />
           <div className="flex-1 min-w-0">
             <span className="font-semibold">Nuevo reporte</span>
             <span className="text-muted-foreground"> · {banner.nombre}</span>
-            <span className="text-muted-foreground"> — </span>
-            <span className="truncate">{banner.reporte}</span>
+            {" — "}
+            <span>{banner.reporte}</span>
           </div>
           <button type="button" onClick={() => setBanner(null)} className="shrink-0 text-muted-foreground hover:text-foreground">
             <X className="h-4 w-4" />
@@ -818,145 +837,79 @@ function GerenciaView() {
         </div>
       )}
 
-      {/* Timeline — scroll horizontal en móvil, grid en escritorio */}
+      {/* Lista de secretarias */}
       {loading ? (
         <div className="flex justify-center py-14">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
+      ) : grupos.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
+          <FileText className="h-8 w-8 opacity-30" />
+          <p className="text-sm">No hay reportes registrados hoy</p>
+        </div>
       ) : (
-        /* En móvil: carrusel con snap. En escritorio: grid de 3 columnas */
-        <div className="
-          flex gap-3 overflow-x-auto snap-x snap-mandatory pb-4 -mx-3 px-3
-          md:grid md:grid-cols-3 md:gap-4 md:overflow-visible md:snap-none md:pb-0 md:mx-0 md:px-0
-        ">
-          {days.map((fecha) => {
-            const [y, m, d] = fecha.split("-").map(Number)
-            const dateObj = new Date(y, m - 1, d)
-            const isToday = fecha === hoy
-            const grupos = allData[fecha] ?? []
-            const totalReportes = grupos.reduce((s, g) => s + g.reportes.length, 0)
-
+        <div className="space-y-2">
+          {grupos.map((grupo) => {
+            const isExp = expanded.has(grupo.secretaria_id)
             return (
-              /* Móvil: 82 vw para que asome el siguiente día. Escritorio: ocupa la celda del grid */
-              <div key={fecha} className="snap-start shrink-0 w-[82vw] sm:w-[68vw] flex flex-col gap-2 md:w-auto md:min-w-0">
-
-                {/* Cabecera del día */}
-                <div className={`rounded-xl px-4 py-4 text-center select-none ${
-                  isToday
-                    ? "bg-brand text-brand-foreground shadow-md"
-                    : "bg-muted/70 text-foreground"
-                }`}>
-                  <div className="text-xs font-bold uppercase tracking-widest opacity-75">
-                    {isToday ? "HOY" : DIAS_ES[dateObj.getDay()]}
-                  </div>
-                  <div className="text-5xl font-extrabold leading-none mt-1 md:text-4xl">
-                    {String(d).padStart(2, "0")}
-                  </div>
-                  <div className="text-xs opacity-60 mt-1">
-                    {String(m).padStart(2, "0")}/{y}
-                  </div>
-                  {totalReportes > 0 && (
-                    <div className={`mt-2 text-xs font-semibold px-2.5 py-0.5 rounded-full inline-block ${
-                      isToday ? "bg-white/20" : "bg-foreground/10"
-                    }`}>
-                      {totalReportes} reporte{totalReportes !== 1 ? "s" : ""}
+              <Card key={grupo.secretaria_id} className="overflow-hidden">
+                <button type="button" className="w-full text-left" onClick={() => toggle(grupo.secretaria_id)}>
+                  <div className="flex items-center justify-between gap-2 px-4 py-3.5 hover:bg-muted/40 transition-colors">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <p className="font-semibold text-sm md:text-base leading-tight truncate">
+                        {grupo.secretaria_nombre}
+                      </p>
                     </div>
-                  )}
-                </div>
-
-                {/* Secretarias de este día */}
-                {grupos.length === 0 ? (
-                  <div className="flex items-center justify-center py-8 text-sm text-muted-foreground/60 border border-dashed rounded-lg">
-                    Sin reportes
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant="secondary" className="text-xs px-2">
+                        {grupo.reportes.length} reporte{grupo.reportes.length !== 1 ? "s" : ""}
+                      </Badge>
+                      {isExp ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                    </div>
                   </div>
-                ) : (
-                  <div className="space-y-2">
-                    {grupos.map((grupo) => {
-                      const key = `${fecha}-${grupo.secretaria_id}`
-                      const isExp = expanded.has(key)
-                      return (
-                        <Card key={grupo.secretaria_id} className="overflow-hidden">
-                          {/* Acordeón: cabecera */}
-                          <button
-                            type="button"
-                            className="w-full text-left"
-                            onClick={() => toggleExpanded(key)}
-                          >
-                            <div className="flex items-center justify-between gap-2 px-4 py-3 hover:bg-muted/40 transition-colors">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                <p className="font-semibold text-sm leading-tight truncate">
-                                  {grupo.secretaria_nombre}
-                                </p>
-                              </div>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <Badge variant="secondary" className="text-xs px-1.5 py-0">
-                                  {grupo.reportes.length}
-                                </Badge>
-                                {isExp
-                                  ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
-                                  : <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                                }
-                              </div>
-                            </div>
-                          </button>
+                </button>
 
-                          {/* Acordeón: contenido desplegado */}
-                          {isExp && (
-                            <div className="border-t divide-y divide-border/60">
-                              {grupo.reportes.map((inf) => (
-                                <div key={inf.id} className="px-4 py-3 space-y-2.5">
-                                  <p className="font-semibold text-sm leading-snug">
-                                    {inf.nombre_reporte}
-                                  </p>
-                                  {inf.notas && (
-                                    <div className="flex items-start gap-2 rounded-md bg-muted/50 px-3 py-2">
-                                      <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground mt-0.5" />
-                                      <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-snug">
-                                        {inf.notas}
-                                      </p>
-                                    </div>
-                                  )}
-                                  {inf.informe_imagenes.length > 0 && (
-                                    /* 2 columnas en móvil, 3 en escritorio — imágenes más grandes */
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 pt-0.5">
-                                      {inf.informe_imagenes.map((img) => (
-                                        <button
-                                          key={img.id}
-                                          type="button"
-                                          onClick={(e) => { e.stopPropagation(); setLightbox(img.url_imagen) }}
-                                          className="relative aspect-square rounded-lg overflow-hidden border hover:opacity-90 transition-opacity group"
-                                        >
-                                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                                          <img
-                                            src={img.url_imagen}
-                                            alt={img.nombre_archivo ?? ""}
-                                            className="w-full h-full object-cover"
-                                          />
-                                          <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/25 transition-colors">
-                                            <ZoomIn className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                                          </div>
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-                                  <p className="text-xs text-muted-foreground/70">
-                                    {new Intl.DateTimeFormat("es-CO", {
-                                      timeZone: "America/Bogota",
-                                      hour: "2-digit", minute: "2-digit", hour12: true,
-                                    }).format(new Date(inf.created_at))}
-                                    {inf.informe_imagenes.length > 0 && ` · ${inf.informe_imagenes.length} img`}
-                                  </p>
+                {isExp && (
+                  <div className="border-t divide-y divide-border/60">
+                    {grupo.reportes.map((inf) => (
+                      <div key={inf.id} className="px-4 py-4 space-y-3">
+                        <p className="font-semibold text-sm md:text-base leading-snug">{inf.nombre_reporte}</p>
+                        {inf.notas && (
+                          <div className="flex items-start gap-2 rounded-md bg-muted/50 px-3 py-2">
+                            <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground mt-0.5" />
+                            <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-snug">{inf.notas}</p>
+                          </div>
+                        )}
+                        {inf.informe_imagenes.length > 0 && (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            {inf.informe_imagenes.map((img) => (
+                              <button
+                                key={img.id}
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setLightbox(img.url_imagen) }}
+                                className="relative aspect-square rounded-lg overflow-hidden border hover:opacity-90 transition-opacity group"
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={img.url_imagen} alt={img.nombre_archivo ?? ""} className="w-full h-full object-cover" />
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/25 transition-colors">
+                                  <ZoomIn className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                                 </div>
-                              ))}
-                            </div>
-                          )}
-                        </Card>
-                      )
-                    })}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <p className="text-xs text-muted-foreground/70">
+                          {new Intl.DateTimeFormat("es-CO", {
+                            timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: true,
+                          }).format(new Date(inf.created_at))}
+                          {inf.informe_imagenes.length > 0 && ` · ${inf.informe_imagenes.length} img`}
+                        </p>
+                      </div>
+                    ))}
                   </div>
                 )}
-              </div>
+              </Card>
             )
           })}
         </div>
