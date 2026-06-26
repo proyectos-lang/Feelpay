@@ -8,9 +8,10 @@ self.addEventListener("push", (event) => {
       icon: "/opad-logo.png",
       badge: "/opad-logo.png",
       tag: data.tag ?? "reporte",
+      renotify: true,
       data: { url: data.url ?? "/" },
       vibrate: [200, 100, 200],
-      requireInteraction: false,
+      requireInteraction: true,
     })
   );
 });
