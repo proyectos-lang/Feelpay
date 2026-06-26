@@ -23,6 +23,15 @@ interface AdminInformeImagen {
   nombre_archivo: string | null
 }
 
+interface AdminInformeRevision {
+  id: string
+  accion: "aprobado" | "rechazado"
+  secretaria_nombre: string
+  comentario: string | null
+  version_reporte: number
+  created_at: string
+}
+
 interface AdminInforme {
   id: string
   admin_id: number
@@ -38,6 +47,7 @@ interface AdminInforme {
   created_at: string
   updated_at: string
   admin_informe_imagenes: AdminInformeImagen[]
+  admin_informe_revisiones: AdminInformeRevision[]
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -87,13 +97,15 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
   // Push
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | "unsupported">("default")
 
+  // Dialog aprobar (con comentario opcional)
+  const [approveTarget, setApproveTarget] = useState<AdminInforme | null>(null)
+  const [approveComment, setApproveComment] = useState("")
+  const [approving, setApproving] = useState(false)
+
   // Dialog rechazar
   const [rejectTarget, setRejectTarget] = useState<AdminInforme | null>(null)
   const [rejectComment, setRejectComment] = useState("")
   const [rejecting, setRejecting] = useState(false)
-
-  // Actions pendientes
-  const [actioning, setActioning] = useState<string | null>(null)
 
   const uid = String(currentUser.id)
 
@@ -136,14 +148,13 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
     const supabase = createClient()
     const { data, error } = await supabase
       .from("admin_informes")
-      .select("*, admin_informe_imagenes(*)")
+      .select("*, admin_informe_imagenes(*), admin_informe_revisiones(id, accion, secretaria_nombre, comentario, version_reporte, created_at)")
       .eq("fecha", fecha)
       .order("admin_nombre", { ascending: true })
       .order("created_at", { ascending: true })
     if (error) console.error("[v0] SecretaryAdminReportes fetch error:", error)
     const result = (data as AdminInforme[]) ?? []
     setInformes(result)
-    // Abrir todos los grupos por defecto
     const grupos = new Set(result.map((i) => i.admin_nombre))
     setOpenGroups(grupos)
   }
@@ -164,13 +175,15 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
         if (raw.fecha !== selectedDateRef.current) return
         setInformes((prev) => {
           if (prev.find((i) => i.id === raw.id)) return prev
-          return [...prev, { ...raw, admin_informe_imagenes: [] }]
+          return [...prev, { ...raw, admin_informe_imagenes: [], admin_informe_revisiones: [] }]
         })
         setOpenGroups((prev) => new Set([...prev, raw.admin_nombre]))
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "admin_informes" }, (payload) => {
         const raw = payload.new as AdminInforme
-        setInformes((prev) => prev.map((i) => i.id === raw.id ? { ...i, ...raw } : i))
+        setInformes((prev) => prev.map((i) =>
+          i.id === raw.id ? { ...i, ...raw, admin_informe_revisiones: i.admin_informe_revisiones } : i
+        ))
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
@@ -192,26 +205,47 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
   }
 
   // Aprobar
-  const handleAprobar = async (informe: AdminInforme) => {
-    setActioning(informe.id)
+  const openApprove = (informe: AdminInforme) => { setApproveTarget(informe); setApproveComment("") }
+  const closeApprove = () => { setApproveTarget(null); setApproveComment("") }
+
+  const handleConfirmarAprobacion = async () => {
+    if (!approveTarget) return
+    setApproving(true)
     try {
       const supabase = createClient()
-      const { error } = await supabase
+      const ahora = new Date().toISOString()
+      const comentarioFinal = approveComment.trim() || null
+      await supabase
         .from("admin_informes")
         .update({
           estado: "aprobado",
           revision_secretaria_id: Number(currentUser.id),
           revision_secretaria_nombre: currentUser.nombre,
-          revision_comentario: null,
-          revision_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          revision_comentario: comentarioFinal,
+          revision_at: ahora,
+          updated_at: ahora,
         })
-        .eq("id", informe.id)
+        .eq("id", approveTarget.id)
         .eq("estado", "pendiente")
-      if (error) throw error
+      await supabase.from("admin_informe_revisiones").insert({
+        admin_informe_id: approveTarget.id,
+        accion: "aprobado",
+        secretaria_id: Number(currentUser.id),
+        secretaria_nombre: currentUser.nombre,
+        comentario: comentarioFinal,
+        version_reporte: approveTarget.version,
+      })
+      const nuevaRevision: AdminInformeRevision = {
+        id: crypto.randomUUID(),
+        accion: "aprobado",
+        secretaria_nombre: currentUser.nombre,
+        comentario: comentarioFinal,
+        version_reporte: approveTarget.version,
+        created_at: ahora,
+      }
       setInformes((prev) => prev.map((i) =>
-        i.id === informe.id
-          ? { ...i, estado: "aprobado", revision_secretaria_nombre: currentUser.nombre }
+        i.id === approveTarget.id
+          ? { ...i, estado: "aprobado", revision_secretaria_nombre: currentUser.nombre, revision_comentario: comentarioFinal, admin_informe_revisiones: [...i.admin_informe_revisiones, nuevaRevision] }
           : i
       ))
       fetch("/api/push/notify", {
@@ -219,46 +253,62 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: "Reporte aprobado ✓",
-          body: informe.nombre_reporte,
-          tag: `admin-informe-${informe.id}`,
+          body: comentarioFinal ?? approveTarget.nombre_reporte,
+          tag: `admin-informe-${approveTarget.id}`,
           url: "/",
-          user_id: informe.admin_id,
+          user_id: approveTarget.admin_id,
         }),
       }).catch(() => {})
+      closeApprove()
     } catch (e) {
       console.error("[v0] SecretaryAdminReportes aprobar error:", e)
     } finally {
-      setActioning(null)
+      setApproving(false)
     }
   }
 
   // Rechazar
-  const openReject = (informe: AdminInforme) => {
-    setRejectTarget(informe)
-    setRejectComment("")
-  }
+  const openReject = (informe: AdminInforme) => { setRejectTarget(informe); setRejectComment("") }
   const closeReject = () => { setRejectTarget(null); setRejectComment("") }
+
   const handleRechazar = async () => {
     if (!rejectTarget || !rejectComment.trim()) return
     setRejecting(true)
     try {
       const supabase = createClient()
-      const { error } = await supabase
+      const ahora = new Date().toISOString()
+      const comentario = rejectComment.trim()
+      await supabase
         .from("admin_informes")
         .update({
           estado: "rechazado",
           revision_secretaria_id: Number(currentUser.id),
           revision_secretaria_nombre: currentUser.nombre,
-          revision_comentario: rejectComment.trim(),
-          revision_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          revision_comentario: comentario,
+          revision_at: ahora,
+          updated_at: ahora,
         })
         .eq("id", rejectTarget.id)
         .eq("estado", "pendiente")
-      if (error) throw error
+      await supabase.from("admin_informe_revisiones").insert({
+        admin_informe_id: rejectTarget.id,
+        accion: "rechazado",
+        secretaria_id: Number(currentUser.id),
+        secretaria_nombre: currentUser.nombre,
+        comentario,
+        version_reporte: rejectTarget.version,
+      })
+      const nuevaRevision: AdminInformeRevision = {
+        id: crypto.randomUUID(),
+        accion: "rechazado",
+        secretaria_nombre: currentUser.nombre,
+        comentario,
+        version_reporte: rejectTarget.version,
+        created_at: ahora,
+      }
       setInformes((prev) => prev.map((i) =>
         i.id === rejectTarget.id
-          ? { ...i, estado: "rechazado", revision_secretaria_nombre: currentUser.nombre, revision_comentario: rejectComment.trim() }
+          ? { ...i, estado: "rechazado", revision_secretaria_nombre: currentUser.nombre, revision_comentario: comentario, admin_informe_revisiones: [...i.admin_informe_revisiones, nuevaRevision] }
           : i
       ))
       fetch("/api/push/notify", {
@@ -266,7 +316,7 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: "Reporte rechazado",
-          body: rejectComment.trim(),
+          body: comentario,
           tag: `admin-informe-${rejectTarget.id}`,
           url: "/",
           user_id: rejectTarget.admin_id,
@@ -425,14 +475,9 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
                             <Button
                               size="sm"
                               className="flex-1 gap-1 text-xs bg-green-600 hover:bg-green-700 text-white"
-                              onClick={() => handleAprobar(inf)}
-                              disabled={actioning === inf.id}
+                              onClick={() => openApprove(inf)}
                             >
-                              {actioning === inf.id ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <CheckCircle2 className="h-3.5 w-3.5" />
-                              )}
+                              <CheckCircle2 className="h-3.5 w-3.5" />
                               Aprobar
                             </Button>
                             <Button
@@ -440,7 +485,6 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
                               variant="outline"
                               className="flex-1 gap-1 text-xs border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
                               onClick={() => openReject(inf)}
-                              disabled={actioning === inf.id}
                             >
                               <XCircle className="h-3.5 w-3.5" />
                               Rechazar
@@ -448,12 +492,17 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
                           </div>
                         )}
 
-                        {/* Resultado */}
+                        {/* Estado final */}
                         {inf.estado === "aprobado" && inf.revision_secretaria_nombre && (
-                          <p className="text-xs text-green-600 flex items-center gap-1">
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                            Aprobado por {inf.revision_secretaria_nombre}
-                          </p>
+                          <div className="rounded-md border border-green-500/30 bg-green-500/5 px-2.5 py-2 space-y-1">
+                            <p className="text-xs font-medium text-green-700 flex items-center gap-1">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              Aprobado por {inf.revision_secretaria_nombre}
+                            </p>
+                            {inf.revision_comentario && (
+                              <p className="text-xs text-muted-foreground whitespace-pre-wrap">{inf.revision_comentario}</p>
+                            )}
+                          </div>
                         )}
 
                         {inf.estado === "rechazado" && (
@@ -480,6 +529,50 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
           })}
         </div>
       )}
+
+      {/* Dialog aprobar */}
+      <Dialog open={!!approveTarget} onOpenChange={(open) => { if (!open) closeApprove() }}>
+        <DialogContent className="p-4 md:p-6 max-w-[90vw] md:max-w-md">
+          <h2 className="text-sm md:text-base font-bold mb-3">Aprobar reporte</h2>
+          <div className="space-y-3">
+            {approveTarget && (
+              <p className="text-xs text-muted-foreground border rounded-md px-2.5 py-2 bg-muted/50">
+                {approveTarget.nombre_reporte}
+              </p>
+            )}
+            <div className="space-y-1">
+              <Label className="text-xs md:text-sm">
+                Comentario de aprobación <span className="text-muted-foreground">(opcional)</span>
+              </Label>
+              <Textarea
+                value={approveComment}
+                onChange={(e) => setApproveComment(e.target.value)}
+                placeholder="Observaciones, confirmación, etc..."
+                rows={3}
+                className="text-xs md:text-sm resize-none"
+                autoFocus
+              />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button
+                variant="outline"
+                className="flex-1 h-8 md:h-10 text-xs"
+                onClick={closeApprove}
+                disabled={approving}
+              >
+                Cancelar
+              </Button>
+              <Button
+                className="flex-1 h-8 md:h-10 text-xs bg-green-600 hover:bg-green-700 text-white"
+                onClick={handleConfirmarAprobacion}
+                disabled={approving}
+              >
+                {approving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirmar aprobación"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog rechazar */}
       <Dialog open={!!rejectTarget} onOpenChange={(open) => { if (!open) closeReject() }}>

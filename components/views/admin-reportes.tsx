@@ -12,6 +12,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog"
 import {
   Plus, Loader2, ImagePlus, X, CalendarDays, ZoomIn,
   CheckCircle2, XCircle, Clock, AlertTriangle, Bell, BellRing,
+  ChevronDown, ChevronUp, History,
 } from "lucide-react"
 import type { AuthenticatedUser } from "@/components/views/login-view"
 
@@ -21,6 +22,15 @@ interface AdminInformeImagen {
   id: string
   url_imagen: string
   nombre_archivo: string | null
+}
+
+interface AdminInformeRevision {
+  id: string
+  accion: "aprobado" | "rechazado"
+  secretaria_nombre: string
+  comentario: string | null
+  version_reporte: number
+  created_at: string
 }
 
 interface AdminInforme {
@@ -37,6 +47,7 @@ interface AdminInforme {
   created_at: string
   updated_at: string
   admin_informe_imagenes: AdminInformeImagen[]
+  admin_informe_revisiones: AdminInformeRevision[]
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -67,6 +78,51 @@ function EstadoBadge({ estado }: { estado: "pendiente" | "aprobado" | "rechazado
     <Badge variant="outline" className="gap-1 border-amber-400/50 text-amber-600 shrink-0">
       <Clock className="h-3 w-3" /> En revisión
     </Badge>
+  )
+}
+
+// ─── Historial de revisiones ──────────────────────────────────────────────────
+
+function HistorialRevisiones({ revisiones }: { revisiones: AdminInformeRevision[] }) {
+  const [open, setOpen] = useState(false)
+  if (revisiones.length === 0) return null
+  const sorted = [...revisiones].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((p) => !p)}
+        className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <History className="h-3.5 w-3.5" />
+        {sorted.length} revisión{sorted.length !== 1 ? "es" : ""}
+        {open ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+      </button>
+      {open && (
+        <ol className="mt-2 space-y-2 border-l-2 border-border pl-3">
+          {sorted.map((rev, idx) => (
+            <li key={rev.id ?? idx} className="space-y-0.5">
+              <div className="flex items-center gap-1.5">
+                {rev.accion === "aprobado" ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-600" />
+                ) : (
+                  <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+                )}
+                <span className={`text-[11px] font-semibold ${rev.accion === "aprobado" ? "text-green-700" : "text-destructive"}`}>
+                  {rev.accion === "aprobado" ? "Aprobado" : "Rechazado"} por {rev.secretaria_nombre}
+                </span>
+                <span className="text-[10px] text-muted-foreground ml-auto shrink-0">
+                  v{rev.version_reporte} · {new Date(rev.created_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </div>
+              {rev.comentario && (
+                <p className="text-[11px] text-muted-foreground pl-5 whitespace-pre-wrap">{rev.comentario}</p>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
   )
 }
 
@@ -117,7 +173,7 @@ export function AdminReportes({ currentUser }: { currentUser: AuthenticatedUser 
     const supabase = createClient()
     supabase
       .from("admin_informes")
-      .select("*, admin_informe_imagenes(*)")
+      .select("*, admin_informe_imagenes(*), admin_informe_revisiones(id, accion, secretaria_nombre, comentario, version_reporte, created_at)")
       .eq("admin_id", Number(uid))
       .eq("fecha", selectedDate)
       .order("created_at", { ascending: false })
@@ -128,7 +184,7 @@ export function AdminReportes({ currentUser }: { currentUser: AuthenticatedUser 
       })
   }, [selectedDate, uid])
 
-  // Realtime: escuchar UPDATEs (secretaria aprobó/rechazó)
+  // Realtime: UPDATE en admin_informes (estado cambió)
   useEffect(() => {
     const supabase = createClient()
     const channel = supabase
@@ -136,7 +192,19 @@ export function AdminReportes({ currentUser }: { currentUser: AuthenticatedUser 
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "admin_informes" }, (payload) => {
         const raw = payload.new as AdminInforme
         if (Number(raw.admin_id) !== Number(uid)) return
-        setInformes((prev) => prev.map((i) => i.id === raw.id ? { ...i, ...raw } : i))
+        // Preservamos las revisiones existentes; la nueva revisión llega por el canal de revisiones
+        setInformes((prev) => prev.map((i) =>
+          i.id === raw.id ? { ...i, ...raw, admin_informe_revisiones: i.admin_informe_revisiones, admin_informe_imagenes: i.admin_informe_imagenes } : i
+        ))
+      })
+      // INSERT en admin_informe_revisiones: agregar al reporte correspondiente
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "admin_informe_revisiones" }, (payload) => {
+        const rev = payload.new as AdminInformeRevision & { admin_informe_id: string }
+        setInformes((prev) => prev.map((i) => {
+          if (i.id !== rev.admin_informe_id) return i
+          if (i.admin_informe_revisiones.find((r) => r.id === rev.id)) return i
+          return { ...i, admin_informe_revisiones: [...i.admin_informe_revisiones, rev] }
+        }))
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
@@ -263,7 +331,8 @@ export function AdminReportes({ currentUser }: { currentUser: AuthenticatedUser 
       setSelectedDate(formFecha)
       resetForm()
       const { data } = await supabase
-        .from("admin_informes").select("*, admin_informe_imagenes(*)")
+        .from("admin_informes")
+        .select("*, admin_informe_imagenes(*), admin_informe_revisiones(id, accion, secretaria_nombre, comentario, version_reporte, created_at)")
         .eq("admin_id", Number(uid)).eq("fecha", formFecha).order("created_at", { ascending: false })
       setInformes((data as AdminInforme[]) ?? [])
     } catch (e) {
@@ -309,7 +378,8 @@ export function AdminReportes({ currentUser }: { currentUser: AuthenticatedUser 
       }).catch(() => {})
       closeResubmit()
       const { data } = await supabase
-        .from("admin_informes").select("*, admin_informe_imagenes(*)")
+        .from("admin_informes")
+        .select("*, admin_informe_imagenes(*), admin_informe_revisiones(id, accion, secretaria_nombre, comentario, version_reporte, created_at)")
         .eq("admin_id", Number(uid)).eq("fecha", selectedDate).order("created_at", { ascending: false })
       setInformes((data as AdminInforme[]) ?? [])
     } catch (e) {
@@ -534,7 +604,7 @@ export function AdminReportes({ currentUser }: { currentUser: AuthenticatedUser 
                   </div>
                 )}
 
-                {/* Reporte rechazado: mostrar comentario y botón de corrección */}
+                {/* Estado rechazado: último comentario + botón corregir */}
                 {inf.estado === "rechazado" && (
                   <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 space-y-2">
                     <div className="flex items-center gap-1.5 text-destructive">
@@ -559,13 +629,21 @@ export function AdminReportes({ currentUser }: { currentUser: AuthenticatedUser 
                   </div>
                 )}
 
-                {/* Reporte aprobado */}
+                {/* Estado aprobado */}
                 {inf.estado === "aprobado" && inf.revision_secretaria_nombre && (
-                  <p className="text-xs text-green-600 flex items-center gap-1">
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    Aprobado por {inf.revision_secretaria_nombre}
-                  </p>
+                  <div className="rounded-md border border-green-500/30 bg-green-500/5 px-2.5 py-2 space-y-0.5">
+                    <p className="text-xs font-medium text-green-700 flex items-center gap-1">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Aprobado por {inf.revision_secretaria_nombre}
+                    </p>
+                    {inf.revision_comentario && (
+                      <p className="text-xs text-muted-foreground pl-5 whitespace-pre-wrap">{inf.revision_comentario}</p>
+                    )}
+                  </div>
                 )}
+
+                {/* Historial de revisiones */}
+                <HistorialRevisiones revisiones={inf.admin_informe_revisiones} />
 
                 <p className="text-[10px] text-muted-foreground">
                   {new Date(inf.created_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}
