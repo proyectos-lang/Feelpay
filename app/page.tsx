@@ -12,6 +12,8 @@ import { PendingAuthorizations } from "@/components/views/pending-authorizations
 import { SecretaryAuthorizations } from "@/components/views/secretary-authorizations"
 import { SecretaryReports } from "@/components/views/secretary-reports"
 import { SocioAdminReportes } from "@/components/views/socio-admin-reportes"
+import { AdminReportes } from "@/components/views/admin-reportes"
+import { SecretaryAdminReportes } from "@/components/views/secretary-admin-reportes"
 import { GestionUsuariosRutas } from "@/components/views/gestion-usuarios-rutas"
 import { DailyRoute } from "@/components/views/daily-route"
 import { RegisterPayment } from "@/components/views/register-payment"
@@ -505,6 +507,10 @@ export default function Page() {
         return <SecretaryReports currentRutaId={rutaId} />
       case "socio-admin-reportes":
         return <SocioAdminReportes currentUser={currentUser!} />
+      case "admin-reportes":
+        return <AdminReportes currentUser={currentUser!} />
+      case "secretary-admin-reportes":
+        return <SecretaryAdminReportes currentUser={currentUser!} />
       case "user-route-management":
         return <GestionUsuariosRutas />
       default:

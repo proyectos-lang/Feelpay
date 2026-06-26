@@ -57,15 +57,17 @@ const navGroups: NavGroup[] = [
       { id: "pending-authorizations", label: "Autor. Admin",       icon: CheckCircle,     colorClass: "sidebar-item-auth"     },
       { id: "admin-route-monitor",    label: "Monitoreo Rutas",    icon: Route,           colorClass: "sidebar-item-route"    },
       { id: "configure-route",        label: "Ordenar Ruta",       icon: MapPin,          colorClass: "sidebar-item-route"    },
+      { id: "admin-reportes",         label: "Rep. diarios",       icon: FileText,        colorClass: "sidebar-item-secretary"},
     ],
   },
   {
     group: "Secretaria",
     items: [
-      { id: "secretary-authorizations", label: "Autor. Secret.",  icon: CheckCircle, colorClass: "sidebar-item-secretary" },
-      { id: "payment-control",          label: "Control Pagos",   icon: ListChecks,  colorClass: "sidebar-item-payment"   },
-      { id: "secretary-reports",        label: "Reportes",        icon: FileText,    colorClass: "sidebar-item-secretary" },
-      { id: "user-route-management",    label: "Usuarios/Rutas",  icon: Users,       colorClass: "sidebar-item-clients"   },
+      { id: "secretary-authorizations",  label: "Autor. Secret.",  icon: CheckCircle, colorClass: "sidebar-item-secretary" },
+      { id: "payment-control",           label: "Control Pagos",   icon: ListChecks,  colorClass: "sidebar-item-payment"   },
+      { id: "secretary-reports",         label: "Reportes",        icon: FileText,    colorClass: "sidebar-item-secretary" },
+      { id: "secretary-admin-reportes",  label: "Rep. Admin",      icon: FileText,    colorClass: "sidebar-item-clients"   },
+      { id: "user-route-management",     label: "Usuarios/Rutas",  icon: Users,       colorClass: "sidebar-item-clients"   },
     ],
   },
   {
