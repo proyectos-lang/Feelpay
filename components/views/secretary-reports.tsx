@@ -598,6 +598,14 @@ function SecretariaView({
 
 // ─── Vista Gerencia ───────────────────────────────────────────────────────────
 
+// Convierte la clave VAPID de base64url a Uint8Array (requerido por PushManager.subscribe)
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4)
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/")
+  const raw = atob(base64)
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)))
+}
+
 interface AgrupacionSecretaria {
   secretaria_id: number
   secretaria_nombre: string
@@ -726,17 +734,33 @@ function GerenciaView() {
 
   async function subscribeToPush(uid: string) {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) return
+    const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
+    if (!vapidKey) { console.error("[v0] VAPID public key no configurada"); return }
+
     const reg = await navigator.serviceWorker.ready
-    const existing = await reg.pushManager.getSubscription()
+
+    // PushManager.subscribe requiere Uint8Array, no un string plano
+    let existing = await reg.pushManager.getSubscription()
+    // Si la suscripción existente fue creada sin la clave VAPID correcta, limpiarla
+    if (existing && !existing.options?.applicationServerKey) {
+      await existing.unsubscribe()
+      existing = null
+    }
     const sub = existing ?? await reg.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+      applicationServerKey: urlBase64ToUint8Array(vapidKey),
     })
-    await fetch("/api/push/subscribe", {
+
+    const res = await fetch("/api/push/subscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: uid, rol: "gerencia", subscription: sub.toJSON() }),
     })
+    if (!res.ok) {
+      console.error("[v0] push/subscribe error:", await res.text())
+    } else {
+      console.log("[v0] push subscription guardada para uid:", uid)
+    }
   }
 
   const requestPermission = async () => {
