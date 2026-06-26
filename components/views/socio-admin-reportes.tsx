@@ -62,6 +62,13 @@ function fechaColombiaHoy(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date())
 }
 
+function formatFechaLarga(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number)
+  return new Intl.DateTimeFormat("es-CO", {
+    timeZone: "America/Bogota", weekday: "long", day: "numeric", month: "long",
+  }).format(new Date(y, m - 1, d))
+}
+
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4)
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/")
@@ -84,6 +91,7 @@ export function SocioAdminReportes({ currentUser }: SocioAdminReportesProps) {
   const [newCount, setNewCount] = useState(0)
   const [banner, setBanner] = useState<{ nombre: string; reporte: string } | null>(null)
   const bannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [lastReportDate, setLastReportDate] = useState<string | null>(null)
 
   const uid = String(currentUser.id)
 
@@ -100,6 +108,21 @@ export function SocioAdminReportes({ currentUser }: SocioAdminReportesProps) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const fetchLastReportDate = () => {
+    const supabase = createClient()
+    supabase
+      .from("informes")
+      .select("fecha")
+      .eq("destinatario", "socioadmin")
+      .eq("socioadmin_id", Number(uid))
+      .order("fecha", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => { setLastReportDate(data?.fecha ?? null) })
+  }
+
+  useEffect(() => { fetchLastReportDate() }, [uid]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setLoading(true)
@@ -155,6 +178,8 @@ export function SocioAdminReportes({ currentUser }: SocioAdminReportesProps) {
           if (bannerTimer.current) clearTimeout(bannerTimer.current)
           setBanner({ nombre: raw.secretaria_nombre, reporte: raw.nombre_reporte })
           bannerTimer.current = setTimeout(() => setBanner(null), 7000)
+          // Actualizar último día con reporte si este es más reciente
+          setLastReportDate((prev) => (!prev || raw.fecha > prev ? raw.fecha : prev))
 
           if (raw.fecha !== selectedDateRef.current) return
           supabase.from("informes").select("*, informe_imagenes(*)").eq("id", raw.id).single()
@@ -306,6 +331,26 @@ export function SocioAdminReportes({ currentUser }: SocioAdminReportesProps) {
       <p className="text-sm font-medium capitalize text-muted-foreground max-w-2xl mx-auto">
         {esHoy ? "Hoy · " : ""}{fechaDisplay}
       </p>
+
+      {/* Último día con reporte — visible cuando el día seleccionado no tiene reportes */}
+      {!loading && grupos.length === 0 && lastReportDate && lastReportDate !== selectedDate && (
+        <div className="flex items-center gap-3 rounded-lg border bg-muted/50 px-4 py-2.5 max-w-2xl mx-auto">
+          <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <p className="flex-1 text-sm text-muted-foreground">
+            Último reporte:{" "}
+            <span className="font-medium text-foreground capitalize">
+              {formatFechaLarga(lastReportDate)}
+            </span>
+          </p>
+          <button
+            type="button"
+            onClick={() => setSelectedDate(lastReportDate)}
+            className="shrink-0 text-xs font-medium text-brand hover:underline"
+          >
+            Ver
+          </button>
+        </div>
+      )}
 
       {/* Lista */}
       <div className="max-w-2xl mx-auto">
