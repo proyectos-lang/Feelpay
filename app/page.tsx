@@ -11,6 +11,7 @@ import { NewLoan } from "@/components/views/new-loan"
 import { PendingAuthorizations } from "@/components/views/pending-authorizations"
 import { SecretaryAuthorizations } from "@/components/views/secretary-authorizations"
 import { SecretaryReports } from "@/components/views/secretary-reports"
+import { SocioAdminReportes } from "@/components/views/socio-admin-reportes"
 import { GestionUsuariosRutas } from "@/components/views/gestion-usuarios-rutas"
 import { DailyRoute } from "@/components/views/daily-route"
 import { RegisterPayment } from "@/components/views/register-payment"
@@ -97,6 +98,8 @@ export default function Page() {
                 setCurrentView("admin-dashboard")
               } else if (["gerencia", "secretaria", "secretario"].includes(rol)) {
                 setCurrentView("secretary-reports")
+              } else if (rol === "socioadmin") {
+                setCurrentView("socio-admin-reportes")
               }
             }
           }
@@ -329,6 +332,7 @@ export default function Page() {
 
       const rolLower = (user.rol ?? "").toLowerCase()
       const isSecretariaOrGerencia = ["secretaria", "secretario", "gerencia"].includes(rolLower)
+      const isSocioadmin = rolLower === "socioadmin"
 
       if (rutasData.length > 0) {
         const ruta = rutasData[0]
@@ -336,12 +340,14 @@ export default function Page() {
         setSelectedRuta(ruta)
         setShowRutaSelector(false)
         if (isSecretariaOrGerencia) setCurrentView("secretary-reports")
+        else if (isSocioadmin) setCurrentView("socio-admin-reportes")
       } else {
         // Sin rutas asignadas: entrar al dashboard sin ruta
         try { localStorage.removeItem(RUTA_STORAGE_KEY) } catch {}
         setSelectedRuta(null)
         setShowRutaSelector(false)
         if (isSecretariaOrGerencia) setCurrentView("secretary-reports")
+        else if (isSocioadmin) setCurrentView("socio-admin-reportes")
       }
     } catch (err) {
       console.error("[v0] Error auto-selecting ruta:", err)
@@ -497,6 +503,8 @@ export default function Page() {
         return <PaymentControl currentRutaId={rutaId} rutaPais={rutaPais} />
       case "secretary-reports":
         return <SecretaryReports currentRutaId={rutaId} />
+      case "socio-admin-reportes":
+        return <SocioAdminReportes currentUser={currentUser!} />
       case "user-route-management":
         return <GestionUsuariosRutas />
       default:

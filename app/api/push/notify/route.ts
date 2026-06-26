@@ -16,19 +16,20 @@ export async function POST(req: NextRequest) {
     process.env.VAPID_PRIVATE_KEY
   )
 
-  const { title, body, tag, url } = await req.json() as {
+  const { title, body, tag, url, user_id } = await req.json() as {
     title: string
     body: string
     tag?: string
     url?: string
+    user_id?: string | number
   }
 
   const supabase = await getSupabaseServerClient()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (supabase as any)
-    .from("push_subscriptions")
-    .select("endpoint, p256dh, auth")
-    .eq("rol", "gerencia")
+  const baseQuery = (supabase as any).from("push_subscriptions").select("endpoint, p256dh, auth")
+  const { data, error } = await (
+    user_id ? baseQuery.eq("user_id", String(user_id)) : baseQuery.eq("rol", "gerencia")
+  )
 
   if (error) {
     console.error("[v0] push/notify fetch error:", error)

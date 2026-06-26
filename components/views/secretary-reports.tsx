@@ -26,6 +26,8 @@ import {
   BellRing,
   MessageSquare,
   BarChart2,
+  FileSpreadsheet,
+  Download,
 } from "lucide-react"
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import type { AuthenticatedUser } from "@/components/views/login-view"
@@ -36,6 +38,7 @@ interface InformeImagen {
   id: string
   url_imagen: string
   nombre_archivo: string | null
+  tipo: "imagen" | "archivo"
 }
 
 interface Informe {
@@ -47,6 +50,8 @@ interface Informe {
   nombre_reporte: string
   notas: string | null
   created_at: string
+  destinatario: "gerencia" | "socioadmin"
+  socioadmin_id: number | null
   informe_imagenes: InformeImagen[]
 }
 
@@ -170,6 +175,12 @@ function SecretariaView({
   const [savingEdit, setSavingEdit] = useState(false)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [destinatario, setDestinatario] = useState<"gerencia" | "socioadmin">("gerencia")
+  const [socioadminId, setSocioadminId] = useState<number | null>(null)
+  const [socioadmins, setSocioadmins] = useState<{ id: number; nombre: string }[]>([])
+  const [excelFiles, setExcelFiles] = useState<File[]>([])
+  const [excelError, setExcelError] = useState<string | null>(null)
+  const excelInputRef = useRef<HTMLInputElement>(null)
 
   const fetchInformes = async (fecha: string) => {
     setLoading(true)
@@ -191,6 +202,19 @@ function SecretariaView({
 
   useEffect(() => { void fetchInformes(viewDate) }, [viewDate])
 
+  useEffect(() => {
+    const supabase = createClient()
+    supabase
+      .from("usuarios")
+      .select("id, nombre")
+      .eq("rol", "socioadmin")
+      .eq("activo", true)
+      .order("nombre")
+      .then(({ data }) => {
+        setSocioadmins((data as { id: number; nombre: string }[]) ?? [])
+      })
+  }, [])
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? [])
     setSelectedFiles((prev) => [...prev, ...files])
@@ -205,6 +229,23 @@ function SecretariaView({
     setPreviews((prev) => prev.filter((_, i) => i !== idx))
   }
 
+  const handleExcelChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
+    const MAX_SIZE = 25 * 1024 * 1024
+    const oversized = files.filter((f) => f.size > MAX_SIZE)
+    if (oversized.length > 0) {
+      setExcelError(`"${oversized[0].name}" supera el límite de 25 MB`)
+      e.target.value = ""; return
+    }
+    setExcelError(null)
+    setExcelFiles((prev) => [...prev, ...files])
+    e.target.value = ""
+  }
+
+  const removeExcel = (idx: number) => {
+    setExcelFiles((prev) => prev.filter((_, i) => i !== idx))
+  }
+
   const resetForm = () => {
     setFormNombre("")
     setFormNotas("")
@@ -212,25 +253,41 @@ function SecretariaView({
     previews.forEach((p) => URL.revokeObjectURL(p))
     setSelectedFiles([])
     setPreviews([])
+    setDestinatario("gerencia")
+    setSocioadminId(null)
+    setExcelFiles([])
+    setExcelError(null)
     setShowForm(false)
   }
 
   const handleCrearReporte = async () => {
     if (!formNombre.trim()) return
+    if (destinatario === "socioadmin" && !socioadminId) return
     setSaving(true)
     try {
       // 1. Subir imágenes a Vercel Blob
-      const urls: { url: string; nombre: string }[] = []
+      const imgUrls: { url: string; nombre: string }[] = []
       for (const file of selectedFiles) {
         const fd = new FormData()
         fd.append("file", file)
         fd.append("folder", "informes")
         const res = await fetch("/api/upload-photo", { method: "POST", body: fd })
         const json = await res.json()
-        if (json.url) urls.push({ url: json.url, nombre: file.name })
+        if (json.url) imgUrls.push({ url: json.url, nombre: file.name })
       }
 
-      // 2. Insertar cabecera del informe
+      // 2. Subir archivos Excel a Vercel Blob
+      const excelUrls: { url: string; nombre: string }[] = []
+      for (const file of excelFiles) {
+        const fd = new FormData()
+        fd.append("file", file)
+        fd.append("folder", "informes")
+        const res = await fetch("/api/upload-photo", { method: "POST", body: fd })
+        const json = await res.json()
+        if (json.url) excelUrls.push({ url: json.url, nombre: file.name })
+      }
+
+      // 3. Insertar cabecera del informe
       const supabase = createClient()
       const { data: informe, error: errInforme } = await supabase
         .from("informes")
@@ -241,36 +298,34 @@ function SecretariaView({
           fecha: formFecha,
           nombre_reporte: formNombre.trim(),
           notas: formNotas.trim() || null,
+          destinatario,
+          socioadmin_id: destinatario === "socioadmin" ? socioadminId : null,
         })
         .select("id")
         .single()
 
       if (errInforme || !informe) throw new Error(errInforme?.message ?? "Error al crear reporte")
 
-      // 3. Insertar imágenes
-      if (urls.length > 0) {
-        await supabase.from("informe_imagenes").insert(
-          urls.map(({ url, nombre }) => ({
-            informe_id: informe.id,
-            url_imagen: url,
-            nombre_archivo: nombre,
-          }))
-        )
+      // 4. Insertar adjuntos (imágenes + Excel)
+      const adjuntos = [
+        ...imgUrls.map(({ url, nombre }) => ({ informe_id: informe.id, url_imagen: url, nombre_archivo: nombre, tipo: "imagen" as const })),
+        ...excelUrls.map(({ url, nombre }) => ({ informe_id: informe.id, url_imagen: url, nombre_archivo: nombre, tipo: "archivo" as const })),
+      ]
+      if (adjuntos.length > 0) {
+        await supabase.from("informe_imagenes").insert(adjuntos)
       }
 
-      // Notificar a gerencia vía Web Push (fire-and-forget)
+      // 5. Notificar vía Web Push (fire-and-forget)
       fetch("/api/push/notify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: `Nuevo reporte — ${currentUser.nombre}`,
-          body: formNombre.trim(),
-          tag: `informe-${informe.id}`,
-          url: "/",
-        }),
+        body: JSON.stringify(
+          destinatario === "socioadmin"
+            ? { title: `Nuevo reporte — ${currentUser.nombre}`, body: formNombre.trim(), tag: `informe-${informe.id}`, url: "/", user_id: socioadminId }
+            : { title: `Nuevo reporte — ${currentUser.nombre}`, body: formNombre.trim(), tag: `informe-${informe.id}`, url: "/" }
+        ),
       }).catch(() => {})
 
-      // Sincronizar la vista al día del reporte recién creado
       setViewDate(formFecha)
       resetForm()
       void fetchInformes(formFecha)
@@ -360,6 +415,48 @@ function SecretariaView({
             <CardTitle className="text-sm md:text-base">Nuevo reporte</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 px-4 pb-4">
+            {/* Destinatario */}
+            <div className="space-y-1">
+              <Label className="text-xs md:text-sm">Dirigido a</Label>
+              <div className="flex rounded-md border overflow-hidden divide-x">
+                <button
+                  type="button"
+                  onClick={() => { setDestinatario("gerencia"); setSocioadminId(null) }}
+                  className={`flex-1 py-1.5 text-xs font-medium transition-colors ${
+                    destinatario === "gerencia" ? "bg-brand text-brand-foreground" : "bg-card text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  Gerencia
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDestinatario("socioadmin")}
+                  className={`flex-1 py-1.5 text-xs font-medium transition-colors ${
+                    destinatario === "socioadmin" ? "bg-brand text-brand-foreground" : "bg-card text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  Socio Admin
+                </button>
+              </div>
+            </div>
+
+            {/* Selector de Socio Admin */}
+            {destinatario === "socioadmin" && (
+              <div className="space-y-1">
+                <Label className="text-xs md:text-sm">Socio Administrador <span className="text-red-500">*</span></Label>
+                <select
+                  value={socioadminId ?? ""}
+                  onChange={(e) => setSocioadminId(e.target.value ? Number(e.target.value) : null)}
+                  className="h-8 md:h-10 text-xs md:text-sm w-full rounded-md border border-input bg-background px-3"
+                >
+                  <option value="">— Seleccionar —</option>
+                  {socioadmins.map((sa) => (
+                    <option key={sa.id} value={sa.id}>{sa.nombre}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1 col-span-2 sm:col-span-1">
                 <Label className="text-xs md:text-sm">Nombre del reporte <span className="text-red-500">*</span></Label>
@@ -431,6 +528,42 @@ function SecretariaView({
               />
             </div>
 
+            {/* Archivos Excel */}
+            <div className="space-y-2">
+              <Label className="text-xs md:text-sm">Archivos Excel (.xlsx, .xls, .csv)</Label>
+              {excelError && <p className="text-xs text-destructive">{excelError}</p>}
+              {excelFiles.length > 0 && (
+                <div className="space-y-1.5">
+                  {excelFiles.map((f, idx) => (
+                    <div key={idx} className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
+                      <FileSpreadsheet className="h-4 w-4 shrink-0 text-green-600" />
+                      <span className="flex-1 text-xs truncate min-w-0">{f.name}</span>
+                      <button type="button" onClick={() => removeExcel(idx)} className="text-muted-foreground hover:text-foreground">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1 text-xs w-full"
+                onClick={() => excelInputRef.current?.click()}
+              >
+                <Download className="h-4 w-4" /> Agregar Excel
+              </Button>
+              <input
+                ref={excelInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                multiple
+                className="hidden"
+                onChange={handleExcelChange}
+              />
+            </div>
+
             <div className="flex gap-2 pt-1">
               <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={resetForm} disabled={saving}>
                 Cancelar
@@ -439,7 +572,7 @@ function SecretariaView({
                 size="sm"
                 className="flex-1 text-xs"
                 onClick={handleCrearReporte}
-                disabled={saving || !formNombre.trim()}
+                disabled={saving || !formNombre.trim() || (destinatario === "socioadmin" && !socioadminId)}
               >
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar reporte"}
               </Button>
@@ -473,8 +606,14 @@ function SecretariaView({
                     )}
                     <p className="text-[10px] text-muted-foreground">
                       {new Date(inf.created_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}
-                      {" · "}
-                      {inf.informe_imagenes.length} imagen{inf.informe_imagenes.length !== 1 ? "es" : ""}
+                      {(() => {
+                        const imgs = inf.informe_imagenes.filter((a) => a.tipo !== "archivo").length
+                        const docs = inf.informe_imagenes.filter((a) => a.tipo === "archivo").length
+                        const parts = []
+                        if (imgs > 0) parts.push(`${imgs} imagen${imgs !== 1 ? "es" : ""}`)
+                        if (docs > 0) parts.push(`${docs} archivo${docs !== 1 ? "s" : ""}`)
+                        return parts.length > 0 ? ` · ${parts.join(" · ")}` : ""
+                      })()}
                     </p>
                   </div>
                   <div className="flex items-center gap-0.5 shrink-0">
@@ -497,9 +636,9 @@ function SecretariaView({
                     </Button>
                   </div>
                 </div>
-                {inf.informe_imagenes.length > 0 && (
+                {inf.informe_imagenes.filter((a) => a.tipo !== "archivo").length > 0 && (
                   <div className="grid grid-cols-3 gap-2 pt-1">
-                    {inf.informe_imagenes.map((img) => (
+                    {inf.informe_imagenes.filter((a) => a.tipo !== "archivo").map((img) => (
                       <button
                         key={img.id}
                         type="button"
@@ -512,6 +651,16 @@ function SecretariaView({
                           <ZoomIn className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                         </div>
                       </button>
+                    ))}
+                  </div>
+                )}
+                {inf.informe_imagenes.filter((a) => a.tipo === "archivo").length > 0 && (
+                  <div className="space-y-1 pt-1">
+                    {inf.informe_imagenes.filter((a) => a.tipo === "archivo").map((arch) => (
+                      <div key={arch.id} className="flex items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-1.5">
+                        <FileSpreadsheet className="h-3.5 w-3.5 shrink-0 text-green-600" />
+                        <span className="flex-1 text-xs truncate min-w-0">{arch.nombre_archivo ?? "Archivo"}</span>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -657,6 +806,7 @@ function GerenciaView() {
     supabase
       .from("informes")
       .select("*, informe_imagenes(*)")
+      .eq("destinatario", "gerencia")
       .eq("fecha", selectedDate)
       .order("secretaria_nombre", { ascending: true })
       .order("created_at", { ascending: true })
@@ -688,7 +838,11 @@ function GerenciaView() {
             id: string; secretaria_id: number; secretaria_nombre: string
             fecha: string; nombre_reporte: string; notas: string | null
             ruta_id: number | null; created_at: string
+            destinatario?: string
           }
+
+          // Ignorar informes dirigidos a socioadmin
+          if (raw.destinatario && raw.destinatario !== "gerencia") return
 
           // Notificación nativa siempre (independiente del día seleccionado)
           if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
@@ -945,9 +1099,9 @@ function GerenciaView() {
                                 <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-snug">{inf.notas}</p>
                               </div>
                             )}
-                            {inf.informe_imagenes.length > 0 && (
+                            {inf.informe_imagenes.filter((a) => a.tipo !== "archivo").length > 0 && (
                               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                {inf.informe_imagenes.map((img) => (
+                                {inf.informe_imagenes.filter((a) => a.tipo !== "archivo").map((img) => (
                                   <button
                                     key={img.id}
                                     type="button"
@@ -967,7 +1121,7 @@ function GerenciaView() {
                               {new Intl.DateTimeFormat("es-CO", {
                                 timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: true,
                               }).format(new Date(inf.created_at))}
-                              {inf.informe_imagenes.length > 0 && ` · ${inf.informe_imagenes.length} img`}
+                              {inf.informe_imagenes.filter((a) => a.tipo !== "archivo").length > 0 && ` · ${inf.informe_imagenes.filter((a) => a.tipo !== "archivo").length} img`}
                             </p>
                           </div>
                         ))}

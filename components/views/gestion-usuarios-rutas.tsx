@@ -30,13 +30,14 @@ type Ruta = {
   pais: string | null
 }
 
-const ROLES = ["vendedor", "secretaria", "gerencia", "admin"] as const
+const ROLES = ["vendedor", "secretaria", "gerencia", "admin", "socioadmin"] as const
 
 const ROL_LABELS: Record<string, string> = {
-  vendedor: "Vendedor",
-  admin: "Administrador",
+  vendedor:   "Vendedor",
+  admin:      "Administrador",
   secretaria: "Secretaria",
-  gerencia: "Gerencia",
+  gerencia:   "Gerencia",
+  socioadmin: "Socio Admin",
 }
 
 const ROL_BADGE: Record<string, string> = {
@@ -44,6 +45,7 @@ const ROL_BADGE: Record<string, string> = {
   admin:      "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
   secretaria: "bg-green-100  text-green-800  dark:bg-green-900/40  dark:text-green-300",
   gerencia:   "bg-amber-100  text-amber-800  dark:bg-amber-900/40  dark:text-amber-300",
+  socioadmin: "bg-teal-100   text-teal-800   dark:bg-teal-900/40   dark:text-teal-300",
 }
 
 // ─── Tab Usuarios ─────────────────────────────────────────────────────────────

@@ -68,6 +68,12 @@ const navGroups: NavGroup[] = [
       { id: "user-route-management",    label: "Usuarios/Rutas",  icon: Users,       colorClass: "sidebar-item-clients"   },
     ],
   },
+  {
+    group: "Socio Administrador",
+    items: [
+      { id: "socio-admin-reportes", label: "Reportes", icon: FileText, colorClass: "sidebar-item-secretary" },
+    ],
+  },
 ]
 
 interface SidebarProps {
@@ -117,6 +123,8 @@ export function Sidebar({
       return navGroups.filter((g) => g.group === "Administrador")
     if (["secretaria", "secretario", "gerencia"].includes(rol))
       return navGroups.filter((g) => g.group === "Secretaria")
+    if (rol === "socioadmin")
+      return navGroups.filter((g) => g.group === "Socio Administrador")
     return navGroups
   })()
 

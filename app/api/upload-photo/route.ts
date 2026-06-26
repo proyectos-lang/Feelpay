@@ -11,6 +11,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 })
     }
 
+    const MAX_SIZE = 25 * 1024 * 1024 // 25 MB
+    if (file.size > MAX_SIZE) {
+      return NextResponse.json({ error: 'El archivo supera el límite de 25 MB' }, { status: 413 })
+    }
+
     // Create a unique filename
     const timestamp = Date.now()
     const filename = `${folderPath}/${timestamp}_${file.name}`
