@@ -15,7 +15,10 @@ export async function POST(req: NextRequest) {
 
   const supabase = await getSupabaseServerClient()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (supabase as any).from("push_subscriptions").upsert(
+  const sb = supabase as any
+
+  // Guardar (o actualizar) la suscripción actual
+  const { error } = await sb.from("push_subscriptions").upsert(
     {
       user_id: String(user_id),
       rol,
@@ -29,6 +32,19 @@ export async function POST(req: NextRequest) {
   if (error) {
     console.error("[v0] push/subscribe POST error:", error)
     return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  // Eliminar endpoints huérfanos del mismo usuario (endpoint diferente al actual).
+  // Garantiza que cada usuario tenga exactamente una suscripción activa y evita
+  // que endpoints caducos acumulen errores silenciosos en /notify.
+  const { error: cleanupError } = await sb
+    .from("push_subscriptions")
+    .delete()
+    .eq("user_id", String(user_id))
+    .neq("endpoint", subscription.endpoint)
+
+  if (cleanupError) {
+    console.warn("[v0] push/subscribe cleanup error:", cleanupError.message)
   }
 
   return NextResponse.json({ ok: true })

@@ -51,23 +51,27 @@ export async function POST(req: NextRequest) {
     )
   )
 
-  // Eliminar suscripciones vencidas (dispositivo revocó el permiso)
-  const expiredEndpoints = results
-    .map((r, i) => ({ r, endpoint: subs[i].endpoint }))
-    .filter(({ r }) => {
-      if (r.status !== "rejected") return false
-      const code = (r as PromiseRejectedResult).reason?.statusCode
-      return code === 410 || code === 404
-    })
-    .map(({ endpoint }) => endpoint)
+  // Analizar resultados y limpiar suscripciones inválidas
+  const expiredEndpoints: string[] = []
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") return
+    const reason = (r as PromiseRejectedResult).reason
+    const code = reason?.statusCode ?? reason?.status
+    console.warn(`[v0] push/notify: fallo en sub[${i}] endpoint=...${subs[i].endpoint.slice(-20)} code=${code} msg=${reason?.message ?? ""}`)
+    // 404/410 → suscripción definitivamente expirada
+    // 400 → suscripción inválida (ej. claves cambiadas, VAPID incorrecto para este sub)
+    if (code === 410 || code === 404 || code === 400) {
+      expiredEndpoints.push(subs[i].endpoint)
+    }
+  })
 
   if (expiredEndpoints.length > 0) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase as any).from("push_subscriptions").delete().in("endpoint", expiredEndpoints)
-    console.log(`[v0] push/notify: limpiadas ${expiredEndpoints.length} suscripciones expiradas`)
+    console.log(`[v0] push/notify: eliminadas ${expiredEndpoints.length} suscripciones inválidas (404/410/400)`)
   }
 
   const sent = results.filter((r) => r.status === "fulfilled").length
-  console.log(`[v0] push/notify: enviado a ${sent}/${subs.length} suscripciones`)
+  console.log(`[v0] push/notify: enviado a ${sent}/${subs.length} suscripciones (rol=${targetRol ?? "gerencia"}, user_id=${user_id ?? "-"})`)
   return NextResponse.json({ sent })
 }
