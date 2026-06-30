@@ -1,8 +1,25 @@
 // Service Worker — Feelpay Web Push
 
+// Tomar control inmediatamente al instalarse o actualizarse.
+// Sin esto, cuando sw.js cambia el SW viejo sigue activo hasta que
+// el usuario cierre todas las pestañas — el nuevo queda en "waiting"
+// y el browser NO lo despierta para push en segundo plano.
+self.addEventListener("install", (event) => {
+  event.waitUntil(self.skipWaiting());
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(clients.claim());
+});
+
 self.addEventListener("push", (event) => {
   if (!event.data) return;
-  const data = event.data.json();
+  let data;
+  try {
+    data = event.data.json();
+  } catch {
+    data = { title: "Nuevo reporte", body: event.data.text() };
+  }
   event.waitUntil(
     self.registration.showNotification(data.title ?? "Nuevo reporte", {
       body: data.body ?? "",
@@ -34,9 +51,8 @@ self.addEventListener("notificationclick", (event) => {
   );
 });
 
-// Cuando el browser rota el endpoint push (renovación automática de suscripción),
-// notificar al servidor para que actualice la DB. Sin esto, el endpoint viejo
-// queda en la DB y las notificaciones dejan de llegar.
+// Cuando el browser rota el endpoint push (renovación automática),
+// notificar al servidor para que actualice la DB sin perder user_id/rol.
 self.addEventListener("pushsubscriptionchange", (event) => {
   const newSub = event.newSubscription;
   const oldEndpoint = event.oldSubscription?.endpoint;
@@ -47,8 +63,6 @@ self.addEventListener("pushsubscriptionchange", (event) => {
   const authBuffer = newSub.getKey("auth");
   if (!p256dhBuffer || !authBuffer) return;
 
-  // Convertir ArrayBuffer a base64 estándar (no URL-safe) para coincidir con
-  // el formato que llega por toJSON() desde el cliente
   const toBase64 = (buf) =>
     btoa(String.fromCharCode(...new Uint8Array(buf)));
 
