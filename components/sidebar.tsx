@@ -99,22 +99,33 @@ export function Sidebar({
 
   // ── PWA install prompt ────────────────────────────────────────────────────
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
+  // true cuando la app ya corre como PWA instalada (standalone)
+  const [isStandalone, setIsStandalone] = useState(false)
+  // muestra las instrucciones manuales (iOS / browsers sin beforeinstallprompt)
+  const [showInstallInfo, setShowInstallInfo] = useState(false)
 
   useEffect(() => {
+    setIsStandalone(
+      window.matchMedia("(display-mode: standalone)").matches ||
+      !!(window.navigator as unknown as { standalone?: boolean }).standalone
+    )
     const handler = (e: Event) => {
       e.preventDefault()
       setInstallPrompt(e as BeforeInstallPromptEvent)
     }
     window.addEventListener("beforeinstallprompt", handler)
-    window.addEventListener("appinstalled", () => setInstallPrompt(null))
+    window.addEventListener("appinstalled", () => { setInstallPrompt(null); setIsStandalone(true) })
     return () => window.removeEventListener("beforeinstallprompt", handler)
   }, [])
 
   const handleInstall = async () => {
-    if (!installPrompt) return
-    await installPrompt.prompt()
-    const { outcome } = await installPrompt.userChoice
-    if (outcome === "accepted") setInstallPrompt(null)
+    if (installPrompt) {
+      await installPrompt.prompt()
+      const { outcome } = await installPrompt.userChoice
+      if (outcome === "accepted") setInstallPrompt(null)
+    } else {
+      setShowInstallInfo((p) => !p)
+    }
   }
 
   // Filtrar grupos de navegación según el rol del usuario
@@ -285,18 +296,28 @@ export function Sidebar({
             </div>
           </div>
 
-          {/* Instalar app — móvil */}
-          {installPrompt && (
-            <Button
-              type="button"
-              onClick={handleInstall}
-              variant="outline"
-              size="sm"
-              className="mt-3 w-full gap-2 border-white/30 bg-white/10 text-sidebar-foreground hover:bg-white/20 hover:text-sidebar-foreground"
-            >
-              <Download className="h-4 w-4" />
-              Instalar app
-            </Button>
+          {/* Instalar app — móvil: siempre visible mientras no esté instalada */}
+          {!isStandalone && (
+            <div className="mt-3 space-y-1.5">
+              <Button
+                type="button"
+                onClick={handleInstall}
+                variant="outline"
+                size="sm"
+                className="w-full gap-2 border-white/30 bg-white/15 text-sidebar-foreground hover:bg-white/25 hover:text-sidebar-foreground font-semibold"
+              >
+                <Download className="h-4 w-4 shrink-0" />
+                Instalar aplicación
+              </Button>
+              {/* Instrucciones para iOS / browsers sin beforeinstallprompt */}
+              {showInstallInfo && !installPrompt && (
+                <div className="rounded-lg border border-white/20 bg-white/10 px-3 py-2.5 text-[11px] text-sidebar-foreground/90 space-y-1">
+                  <p className="font-semibold text-sidebar-foreground">Cómo instalar:</p>
+                  <p><span className="font-medium">Android:</span> menú del navegador → &quot;Añadir a pantalla de inicio&quot;</p>
+                  <p><span className="font-medium">iPhone:</span> botón compartir → &quot;Agregar a pantalla de inicio&quot;</p>
+                </div>
+              )}
+            </div>
           )}
 
           {onLogout && (
