@@ -71,6 +71,18 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
+    group: "Gerencia",
+    items: [
+      { id: "secretary-reports", label: "Reportes", icon: FileText, colorClass: "sidebar-item-secretary" },
+    ],
+  },
+  {
+    group: "Liquidador",
+    items: [
+      { id: "admin-reportes", label: "Rep. diarios", icon: FileText, colorClass: "sidebar-item-secretary" },
+    ],
+  },
+  {
     group: "Socio Administrador",
     items: [
       { id: "socio-admin-reportes", label: "Reportes", icon: FileText, colorClass: "sidebar-item-secretary" },
@@ -134,8 +146,12 @@ export function Sidebar({
       return navGroups.filter((g) => g.group === "Asesor")
     if (["admin", "administrador"].includes(rol))
       return navGroups.filter((g) => g.group === "Administrador")
-    if (["secretaria", "secretario", "gerencia"].includes(rol))
+    if (["secretaria", "secretario"].includes(rol))
       return navGroups.filter((g) => g.group === "Secretaria")
+    if (rol === "gerencia")
+      return navGroups.filter((g) => g.group === "Gerencia")
+    if (rol === "liquidador")
+      return navGroups.filter((g) => g.group === "Liquidador")
     if (rol === "socioadmin")
       return navGroups.filter((g) => g.group === "Socio Administrador")
     return navGroups

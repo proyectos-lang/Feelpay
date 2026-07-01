@@ -33,21 +33,32 @@ const ADMIN_ITEMS: NavItem[] = [
 ]
 
 const SECRETARIA_ITEMS: NavItem[] = [
-  { id: "secretary-authorizations", icon: CheckCircle, label: "Autoriz.",  colorClass: "nav-item-payment"  },
-  { id: "payment-control",          icon: ListChecks,  label: "Control",   colorClass: "nav-item-summary"  },
-  { id: "secretary-reports",        icon: FileText,    label: "Reportes",  colorClass: "nav-item-home"     },
-  { id: "user-route-management",    icon: Link2,       label: "Gestión",   colorClass: "nav-item-expense"  },
+  { id: "secretary-authorizations",  icon: CheckCircle, label: "Autoriz.",  colorClass: "nav-item-payment"  },
+  { id: "payment-control",           icon: ListChecks,  label: "Control",   colorClass: "nav-item-summary"  },
+  { id: "secretary-reports",         icon: FileText,    label: "Reportes",  colorClass: "nav-item-home"     },
+  { id: "secretary-admin-reportes",  icon: FileText,    label: "Rep. Admin",colorClass: "nav-item-expense"  },
+  { id: "user-route-management",     icon: Link2,       label: "Gestión",   colorClass: "nav-item-sale"     },
 ]
 
-const COLS: Record<number, string> = { 3: "grid-cols-3", 4: "grid-cols-4", 5: "grid-cols-5" }
+const GERENCIA_ITEMS: NavItem[] = [
+  { id: "secretary-reports", icon: FileText, label: "Reportes", colorClass: "nav-item-home" },
+]
+
+const LIQUIDADOR_ITEMS: NavItem[] = [
+  { id: "admin-reportes", icon: FileText, label: "Rep. diarios", colorClass: "nav-item-home" },
+]
+
+const COLS: Record<number, string> = { 1: "grid-cols-1", 3: "grid-cols-3", 4: "grid-cols-4", 5: "grid-cols-5" }
 
 export function MobileBottomNav({ currentView, onViewChange, currentUser }: MobileBottomNavProps) {
   const rol = (currentUser?.rol ?? "").toLowerCase()
 
   const navItems =
-    ["admin", "administrador"].includes(rol)              ? ADMIN_ITEMS :
-    ["secretaria", "secretario", "gerencia"].includes(rol)? SECRETARIA_ITEMS :
-                                                            VENDEDOR_ITEMS
+    ["admin", "administrador"].includes(rol)   ? ADMIN_ITEMS :
+    ["secretaria", "secretario"].includes(rol) ? SECRETARIA_ITEMS :
+    rol === "gerencia"                         ? GERENCIA_ITEMS :
+    rol === "liquidador"                       ? LIQUIDADOR_ITEMS :
+                                                 VENDEDOR_ITEMS
 
   const colsClass = COLS[navItems.length] ?? "grid-cols-5"
 

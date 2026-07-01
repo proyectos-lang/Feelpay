@@ -98,6 +98,8 @@ export default function Page() {
               const rol = (parsedUser.rol ?? "").toLowerCase()
               if (parsedRuta.id === 0 && ["admin", "administrador"].includes(rol)) {
                 setCurrentView("admin-dashboard")
+              } else if (rol === "liquidador") {
+                setCurrentView("admin-reportes")
               } else if (["gerencia", "secretaria", "secretario"].includes(rol)) {
                 setCurrentView("secretary-reports")
               } else if (rol === "socioadmin") {
@@ -305,12 +307,20 @@ export default function Page() {
 
     const isAdmin = ADMIN_ROLES.has((user.rol ?? "").toLowerCase())
     if (isAdmin) {
-      // Admins: ruta virtual "todas" → dashboard de administrador
       try {
         localStorage.setItem(RUTA_STORAGE_KEY, JSON.stringify(ADMIN_VIRTUAL_RUTA))
       } catch {}
       setSelectedRuta(ADMIN_VIRTUAL_RUTA)
       setCurrentView("admin-dashboard")
+      return
+    }
+
+    if ((user.rol ?? "").toLowerCase() === "liquidador") {
+      try {
+        localStorage.setItem(RUTA_STORAGE_KEY, JSON.stringify(ADMIN_VIRTUAL_RUTA))
+      } catch {}
+      setSelectedRuta(ADMIN_VIRTUAL_RUTA)
+      setCurrentView("admin-reportes")
       return
     }
 

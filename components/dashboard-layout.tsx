@@ -4,6 +4,7 @@ import { type ReactNode, useState } from "react"
 import { Sidebar } from "./sidebar"
 import { Header } from "./header"
 import { MobileBottomNav } from "./mobile-bottom-nav"
+import { PushPermissionPrompt } from "./push-permission-prompt"
 import type { SelectedRuta } from "./route-selector"
 import type { AuthenticatedUser } from "./views/login-view"
 
@@ -112,6 +113,7 @@ export function DashboardLayout({
         <main className="flex-1 overflow-y-auto p-3 md:p-6 pb-16 md:pb-6">{children}</main>
         <MobileBottomNav currentView={currentView} onViewChange={onViewChange} currentUser={currentUser} />
       </div>
+      {currentUser && <PushPermissionPrompt currentUser={currentUser} />}
     </div>
   )
 }
