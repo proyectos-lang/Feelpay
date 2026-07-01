@@ -21,10 +21,13 @@ import {
   ClipboardList,
   FileText,
   Download,
+  Share2,
+  MoreVertical,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import type { AuthenticatedUser } from "./views/login-view"
 
 // Tipo para el evento de instalación PWA (no está en los tipos estándar de TS)
@@ -111,15 +114,18 @@ export function Sidebar({
 
   // ── PWA install prompt ────────────────────────────────────────────────────
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
-  // true cuando la app ya corre como PWA instalada (standalone)
   const [isStandalone, setIsStandalone] = useState(false)
-  // muestra las instrucciones manuales (iOS / browsers sin beforeinstallprompt)
-  const [showInstallInfo, setShowInstallInfo] = useState(false)
+  const [isIOS, setIsIOS] = useState(false)
+  const [showInstallModal, setShowInstallModal] = useState(false)
 
   useEffect(() => {
     setIsStandalone(
       window.matchMedia("(display-mode: standalone)").matches ||
       !!(window.navigator as unknown as { standalone?: boolean }).standalone
+    )
+    setIsIOS(
+      /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
     )
     const handler = (e: Event) => {
       e.preventDefault()
@@ -136,7 +142,7 @@ export function Sidebar({
       const { outcome } = await installPrompt.userChoice
       if (outcome === "accepted") setInstallPrompt(null)
     } else {
-      setShowInstallInfo((p) => !p)
+      setShowInstallModal(true)
     }
   }
 
@@ -168,6 +174,7 @@ export function Sidebar({
     : ""
 
   return (
+    <>
     <aside
       className={cn(
         "h-full border-r border-sidebar-border bg-sidebar-gradient relative transition-all duration-300 flex flex-col",
@@ -314,7 +321,7 @@ export function Sidebar({
 
           {/* Instalar app — móvil: siempre visible mientras no esté instalada */}
           {!isStandalone && (
-            <div className="mt-3 space-y-1.5">
+            <div className="mt-3">
               <Button
                 type="button"
                 onClick={handleInstall}
@@ -325,14 +332,6 @@ export function Sidebar({
                 <Download className="h-4 w-4 shrink-0" />
                 Instalar aplicación
               </Button>
-              {/* Instrucciones para iOS / browsers sin beforeinstallprompt */}
-              {showInstallInfo && !installPrompt && (
-                <div className="rounded-lg border border-white/20 bg-white/10 px-3 py-2.5 text-[11px] text-sidebar-foreground/90 space-y-1">
-                  <p className="font-semibold text-sidebar-foreground">Cómo instalar:</p>
-                  <p><span className="font-medium">Android:</span> menú del navegador → &quot;Añadir a pantalla de inicio&quot;</p>
-                  <p><span className="font-medium">iPhone:</span> botón compartir → &quot;Agregar a pantalla de inicio&quot;</p>
-                </div>
-              )}
             </div>
           )}
 
@@ -351,5 +350,74 @@ export function Sidebar({
         </div>
       )}
     </aside>
+
+    {/* Modal de instalación — solo se abre cuando beforeinstallprompt no está disponible */}
+    <Dialog open={showInstallModal} onOpenChange={setShowInstallModal}>
+      <DialogContent className="max-w-xs sm:max-w-sm rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Download className="h-4 w-4 text-primary" />
+            Instalar aplicación
+          </DialogTitle>
+        </DialogHeader>
+
+        {isIOS ? (
+          <div className="space-y-4 pt-1">
+            <div className="flex items-start gap-3">
+              <span className="shrink-0 flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">1</span>
+              <div>
+                <p className="text-sm font-semibold leading-tight">Toca el botón compartir</p>
+                <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                  El ícono <Share2 className="inline h-3.5 w-3.5 shrink-0" /> en la barra inferior del navegador
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="shrink-0 flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">2</span>
+              <div>
+                <p className="text-sm font-semibold leading-tight">Selecciona &quot;Agregar a pantalla de inicio&quot;</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Desplázate hacia abajo en el menú de opciones</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="shrink-0 flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">3</span>
+              <div>
+                <p className="text-sm font-semibold leading-tight">Toca &quot;Agregar&quot;</p>
+                <p className="text-xs text-muted-foreground mt-0.5">La app quedará disponible en tu pantalla de inicio</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4 pt-1">
+            <div className="flex items-start gap-3">
+              <span className="shrink-0 flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">1</span>
+              <div>
+                <p className="text-sm font-semibold leading-tight">Abre el menú del navegador</p>
+                <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                  Toca el ícono <MoreVertical className="inline h-3.5 w-3.5 shrink-0" /> en la esquina superior derecha
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="shrink-0 flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">2</span>
+              <div>
+                <p className="text-sm font-semibold leading-tight">Toca &quot;Instalar aplicación&quot;</p>
+                <p className="text-xs text-muted-foreground mt-0.5">O &quot;Añadir a pantalla de inicio&quot; según tu navegador</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <Button
+          type="button"
+          size="sm"
+          className="w-full mt-2"
+          onClick={() => setShowInstallModal(false)}
+        >
+          Entendido
+        </Button>
+      </DialogContent>
+    </Dialog>
+    </>
   )
 }
