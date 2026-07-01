@@ -17,6 +17,8 @@ import {
   X,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   CalendarDays,
   FileText,
   ShieldOff,
@@ -173,7 +175,7 @@ function SecretariaView({
   const [editNombre, setEditNombre] = useState("")
   const [editNotas, setEditNotas] = useState("")
   const [savingEdit, setSavingEdit] = useState(false)
-  const [lightbox, setLightbox] = useState<string | null>(null)
+  const [lightbox, setLightbox] = useState<{ urls: string[]; idx: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [destinatario, setDestinatario] = useState<"gerencia" | "socioadmin">("gerencia")
   const [socioadminId, setSocioadminId] = useState<number | null>(null)
@@ -638,11 +640,11 @@ function SecretariaView({
                 </div>
                 {inf.informe_imagenes.filter((a) => a.tipo !== "archivo").length > 0 && (
                   <div className="grid grid-cols-3 gap-2 pt-1">
-                    {inf.informe_imagenes.filter((a) => a.tipo !== "archivo").map((img) => (
+                    {inf.informe_imagenes.filter((a) => a.tipo !== "archivo").map((img, imgIdx, imgArr) => (
                       <button
                         key={img.id}
                         type="button"
-                        onClick={() => setLightbox(img.url_imagen)}
+                        onClick={() => setLightbox({ urls: imgArr.map((a) => a.url_imagen), idx: imgIdx })}
                         className="relative aspect-square rounded-md overflow-hidden border hover:opacity-90 transition-opacity group"
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -736,8 +738,28 @@ function SecretariaView({
       <Dialog open={!!lightbox} onOpenChange={(open) => { if (!open) setLightbox(null) }}>
         <DialogContent className="max-w-[95vw] md:max-w-3xl p-2 bg-black/95 border-0">
           {lightbox && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={lightbox} alt="Imagen ampliada" className="w-full h-auto max-h-[85vh] object-contain rounded" />
+            <div className="relative flex items-center justify-center select-none">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={lightbox.urls[lightbox.idx]} alt="Imagen ampliada" className="w-full h-auto max-h-[85vh] object-contain rounded" />
+              {lightbox.urls.length > 1 && (
+                <>
+                  <button type="button" onClick={() => setLightbox({ urls: lightbox.urls, idx: (lightbox.idx - 1 + lightbox.urls.length) % lightbox.urls.length })}
+                    className="absolute left-1 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/90 transition-colors">
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+                  <button type="button" onClick={() => setLightbox({ urls: lightbox.urls, idx: (lightbox.idx + 1) % lightbox.urls.length })}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/90 transition-colors">
+                    <ChevronRight className="h-5 w-5" />
+                  </button>
+                  <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-1.5">
+                    {lightbox.urls.map((_, i) => (
+                      <button key={i} type="button" onClick={() => setLightbox({ urls: lightbox.urls, idx: i })}
+                        className={`h-1.5 rounded-full transition-all ${i === lightbox.idx ? "w-4 bg-white" : "w-1.5 bg-white/40"}`} />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </DialogContent>
       </Dialog>
@@ -769,7 +791,7 @@ function GerenciaView() {
   const [grupos, setGrupos] = useState<AgrupacionSecretaria[]>([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
-  const [lightbox, setLightbox] = useState<string | null>(null)
+  const [lightbox, setLightbox] = useState<{ urls: string[]; idx: number } | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const [tab, setTab] = useState<"reportes" | "bi">("reportes")
 
@@ -882,6 +904,16 @@ function GerenciaView() {
       if (bannerTimer.current) clearTimeout(bannerTimer.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (!lightbox || lightbox.urls.length <= 1) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft")  setLightbox(p => p ? { urls: p.urls, idx: (p.idx - 1 + p.urls.length) % p.urls.length } : null)
+      if (e.key === "ArrowRight") setLightbox(p => p ? { urls: p.urls, idx: (p.idx + 1) % p.urls.length } : null)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [lightbox])
 
   const toggle = (id: number) =>
     setExpanded(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
@@ -1101,11 +1133,11 @@ function GerenciaView() {
                             )}
                             {inf.informe_imagenes.filter((a) => a.tipo !== "archivo").length > 0 && (
                               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                {inf.informe_imagenes.filter((a) => a.tipo !== "archivo").map((img) => (
+                                {inf.informe_imagenes.filter((a) => a.tipo !== "archivo").map((img, imgIdx, imgArr) => (
                                   <button
                                     key={img.id}
                                     type="button"
-                                    onClick={(e) => { e.stopPropagation(); setLightbox(img.url_imagen) }}
+                                    onClick={(e) => { e.stopPropagation(); setLightbox({ urls: imgArr.map((a) => a.url_imagen), idx: imgIdx }) }}
                                     className="relative aspect-square rounded-lg overflow-hidden border hover:opacity-90 transition-opacity group"
                                   >
                                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1161,8 +1193,28 @@ function GerenciaView() {
       <Dialog open={!!lightbox} onOpenChange={(open) => { if (!open) setLightbox(null) }}>
         <DialogContent className="max-w-[95vw] md:max-w-3xl p-2 bg-black/95 border-0">
           {lightbox && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={lightbox} alt="Imagen ampliada" className="w-full h-auto max-h-[85vh] object-contain rounded" />
+            <div className="relative flex items-center justify-center select-none">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={lightbox.urls[lightbox.idx]} alt="Imagen ampliada" className="w-full h-auto max-h-[85vh] object-contain rounded" />
+              {lightbox.urls.length > 1 && (
+                <>
+                  <button type="button" onClick={() => setLightbox({ urls: lightbox.urls, idx: (lightbox.idx - 1 + lightbox.urls.length) % lightbox.urls.length })}
+                    className="absolute left-1 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/90 transition-colors">
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+                  <button type="button" onClick={() => setLightbox({ urls: lightbox.urls, idx: (lightbox.idx + 1) % lightbox.urls.length })}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/90 transition-colors">
+                    <ChevronRight className="h-5 w-5" />
+                  </button>
+                  <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-1.5">
+                    {lightbox.urls.map((_, i) => (
+                      <button key={i} type="button" onClick={() => setLightbox({ urls: lightbox.urls, idx: i })}
+                        className={`h-1.5 rounded-full transition-all ${i === lightbox.idx ? "w-4 bg-white" : "w-1.5 bg-white/40"}`} />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </DialogContent>
       </Dialog>
