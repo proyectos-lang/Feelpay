@@ -56,6 +56,12 @@ function fechaColombiaHoy(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date())
 }
 
+function fechaColombiaAyer(): string {
+  const d = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }))
+  d.setDate(d.getDate() - 1)
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(d)
+}
+
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4)
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/")
@@ -130,11 +136,13 @@ function HistorialRevisiones({ revisiones }: { revisiones: AdminInformeRevision[
 
 export function AdminReportes({ currentUser }: { currentUser: AuthenticatedUser }) {
   const hoy = fechaColombiaHoy()
+  const ayer = fechaColombiaAyer()
   const [selectedDate, setSelectedDate] = useState(hoy)
   const [informes, setInformes] = useState<AdminInforme[]>([])
   const [loading, setLoading] = useState(true)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const uid = String(currentUser.id)
+  const initialCheckRef = useRef(false)
 
   // Notificaciones
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | "unsupported">("default")
@@ -167,7 +175,7 @@ export function AdminReportes({ currentUser }: { currentUser: AuthenticatedUser 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Fetch reportes por fecha
+  // Fetch reportes por fecha; en el primer load, si hoy no tiene reportes → mostrar ayer
   useEffect(() => {
     setLoading(true)
     const supabase = createClient()
@@ -179,9 +187,17 @@ export function AdminReportes({ currentUser }: { currentUser: AuthenticatedUser 
       .order("created_at", { ascending: false })
       .then(({ data, error }) => {
         if (error) console.error("[v0] AdminReportes fetch error:", error)
-        setInformes((data as AdminInforme[]) ?? [])
-        setLoading(false)
+        const rows = (data as AdminInforme[]) ?? []
+        if (!initialCheckRef.current && selectedDate === hoy && rows.length === 0) {
+          initialCheckRef.current = true
+          setSelectedDate(ayer)
+        } else {
+          initialCheckRef.current = true
+          setInformes(rows)
+          setLoading(false)
+        }
       })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate, uid])
 
   // Realtime: UPDATE en admin_informes (estado cambió)

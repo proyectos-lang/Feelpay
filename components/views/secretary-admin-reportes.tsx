@@ -56,6 +56,12 @@ function fechaColombiaHoy(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date())
 }
 
+function fechaColombiaAyer(): string {
+  const d = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }))
+  d.setDate(d.getDate() - 1)
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(d)
+}
+
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4)
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/")
@@ -85,9 +91,11 @@ function EstadoBadge({ estado }: { estado: "pendiente" | "aprobado" | "rechazado
 
 export function SecretaryAdminReportes({ currentUser }: { currentUser: AuthenticatedUser }) {
   const hoy = fechaColombiaHoy()
+  const ayer = fechaColombiaAyer()
   const [selectedDate, setSelectedDate] = useState(hoy)
   const selectedDateRef = useRef(hoy)
   useEffect(() => { selectedDateRef.current = selectedDate }, [selectedDate])
+  const initialCheckRef = useRef(false)
 
   const [informes, setInformes] = useState<AdminInforme[]>([])
   const [loading, setLoading] = useState(true)
@@ -144,7 +152,7 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
   }
 
   // Fetch por fecha
-  const fetchInformes = async (fecha: string) => {
+  const fetchInformes = async (fecha: string): Promise<AdminInforme[]> => {
     const supabase = createClient()
     const { data, error } = await supabase
       .from("admin_informes")
@@ -155,13 +163,22 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
     if (error) console.error("[v0] SecretaryAdminReportes fetch error:", error)
     const result = (data as AdminInforme[]) ?? []
     setInformes(result)
-    const grupos = new Set(result.map((i) => i.admin_nombre))
-    setOpenGroups(grupos)
+    setOpenGroups(new Set(result.map((i) => i.admin_nombre)))
+    return result
   }
 
+  // En el primer load, si hoy no tiene reportes → mostrar ayer automáticamente
   useEffect(() => {
     setLoading(true)
-    fetchInformes(selectedDate).finally(() => setLoading(false))
+    fetchInformes(selectedDate).then((rows) => {
+      if (!initialCheckRef.current && selectedDate === hoy && rows.length === 0) {
+        initialCheckRef.current = true
+        setSelectedDate(ayer)
+      } else {
+        initialCheckRef.current = true
+        setLoading(false)
+      }
+    }).catch(() => setLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate])
 
@@ -172,6 +189,11 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
       .channel("secretary-admin-informes-rt")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "admin_informes" }, (payload) => {
         const raw = payload.new as AdminInforme
+        // Si el nuevo reporte es de hoy y se está viendo ayer → saltar a hoy
+        if (raw.fecha === hoy && selectedDateRef.current === ayer) {
+          setSelectedDate(hoy)
+          return
+        }
         if (raw.fecha !== selectedDateRef.current) return
         setInformes((prev) => {
           if (prev.find((i) => i.id === raw.id)) return prev
