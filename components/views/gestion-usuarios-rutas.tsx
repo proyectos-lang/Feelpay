@@ -11,7 +11,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox"
 import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { Switch } from "@/components/ui/switch"
 import { ALL_MODULES, MODULE_GROUPS, getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
 import type { ModuleDefinition } from "@/lib/modules-catalog"
 
@@ -996,11 +995,24 @@ function PermisosTab() {
                                 <p className="text-[10px] text-muted-foreground truncate">{row.description}</p>
                               </div>
                               <div className="flex justify-center">
-                                <Switch
-                                  checked={row.enabled}
-                                  onCheckedChange={() => toggleEnabled(row.viewId)}
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={row.enabled}
                                   aria-label={`Acceso a ${row.label}`}
-                                />
+                                  onClick={() => toggleEnabled(row.viewId)}
+                                  className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full border-2 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
+                                    row.enabled
+                                      ? "border-brand bg-brand focus-visible:ring-brand"
+                                      : "border-border bg-muted focus-visible:ring-border"
+                                  }`}
+                                >
+                                  <span
+                                    className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-md ring-0 transition-transform ${
+                                      row.enabled ? "translate-x-5" : "translate-x-0.5"
+                                    }`}
+                                  />
+                                </button>
                               </div>
                               <div className="flex justify-center">
                                 <Checkbox
