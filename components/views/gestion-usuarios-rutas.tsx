@@ -12,7 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Switch } from "@/components/ui/switch"
-import { getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
+import { ALL_MODULES, MODULE_GROUPS, getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
 import type { ModuleDefinition } from "@/lib/modules-catalog"
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
@@ -734,18 +734,24 @@ type PermRow = {
   viewId: string
   label: string
   description: string
+  group: string
   enabled: boolean
   inMobileNav: boolean
 }
 
-function buildDefaultRows(modules: ModuleDefinition[], rol: string): PermRow[] {
-  return modules.map((m) => ({
-    viewId: m.viewId,
-    label: m.label,
-    description: m.description,
-    enabled: true,
-    inMobileNav: isDefaultMobileNav(m, rol),
-  }))
+function buildDefaultRows(rol: string): PermRow[] {
+  const defaultViewIds = new Set(getDefaultModulesForRole(rol).map((m) => m.viewId))
+  return ALL_MODULES.map((m) => {
+    const inDefault = defaultViewIds.has(m.viewId)
+    return {
+      viewId: m.viewId,
+      label: m.label,
+      description: m.description,
+      group: m.group,
+      enabled: inDefault,
+      inMobileNav: inDefault && isDefaultMobileNav(m, rol),
+    }
+  })
 }
 
 function PermisosTab() {
@@ -779,11 +785,7 @@ function PermisosTab() {
   useEffect(() => { fetchUsuarios() }, [fetchUsuarios])
 
   const loadPermissions = useCallback(async (userId: number, rol: string) => {
-    const modules = getDefaultModulesForRole(rol)
-    if (modules.length === 0) {
-      setPermRows([])
-      return
-    }
+    const defaults = buildDefaultRows(rol)
     try {
       const supabase = createClient()
       const { data, error } = await supabase
@@ -793,23 +795,21 @@ function PermisosTab() {
       if (error) throw error
 
       if (!data || data.length === 0) {
-        setPermRows(buildDefaultRows(modules, rol))
+        setPermRows(defaults)
         return
       }
 
       const dbMap: Record<string, { enabled: boolean; inMobileNav: boolean }> = {}
       data.forEach((row) => { dbMap[row.view_id] = { enabled: row.enabled, inMobileNav: row.in_mobile_nav } })
 
-      setPermRows(modules.map((m) => ({
-        viewId: m.viewId,
-        label: m.label,
-        description: m.description,
-        enabled: dbMap[m.viewId]?.enabled ?? true,
-        inMobileNav: dbMap[m.viewId]?.inMobileNav ?? isDefaultMobileNav(m, rol),
-      })))
+      setPermRows(defaults.map((r) =>
+        dbMap[r.viewId] !== undefined
+          ? { ...r, enabled: dbMap[r.viewId].enabled, inMobileNav: dbMap[r.viewId].inMobileNav }
+          : r,
+      ))
     } catch (err) {
       console.error("[v0] Error loading permissions:", err)
-      setPermRows(buildDefaultRows(modules, rol))
+      setPermRows(defaults)
     }
   }, [])
 
@@ -876,7 +876,7 @@ function PermisosTab() {
     try {
       const supabase = createClient()
       await supabase.from("user_permissions").delete().eq("user_id", selectedUserId)
-      setPermRows(buildDefaultRows(getDefaultModulesForRole(u.rol), u.rol))
+      setPermRows(buildDefaultRows(u.rol))
       setDirty(false)
       toast({ title: "Permisos restablecidos", description: "Se volvieron a los valores por defecto del rol." })
     } catch (err: any) {
@@ -949,18 +949,13 @@ function PermisosTab() {
               <Shield className="h-8 w-8 opacity-30" />
               <p className="text-sm">Selecciona un usuario para gestionar sus permisos</p>
             </div>
-          ) : permRows.length === 0 ? (
-            <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border text-muted-foreground">
-              <Info className="h-6 w-6 opacity-30" />
-              <p className="text-sm">Este rol no tiene módulos configurables</p>
-            </div>
           ) : (
             <>
               {/* Cabecera usuario + contador móvil */}
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div>
                   <p className="font-semibold text-sm">{usuarioSeleccionado?.nombre}</p>
-                  <p className="text-xs text-muted-foreground">{ROL_LABELS[usuarioSeleccionado?.rol ?? ""] ?? usuarioSeleccionado?.rol} · {permRows.length} módulo{permRows.length !== 1 ? "s" : ""}</p>
+                  <p className="text-xs text-muted-foreground">{ROL_LABELS[usuarioSeleccionado?.rol ?? ""] ?? usuarioSeleccionado?.rol} · {permRows.filter(r => r.enabled).length} de {permRows.length} módulos activos</p>
                 </div>
                 <div className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold ${
                   mobileCount >= 5
@@ -972,44 +967,57 @@ function PermisosTab() {
                 </div>
               </div>
 
-              {/* Tabla de módulos */}
-              <div className="rounded-xl border border-border overflow-hidden">
-                {/* Header */}
-                <div className="grid grid-cols-[1fr_80px_100px] gap-2 px-3 py-2 bg-muted/40 border-b border-border">
+              {/* Módulos agrupados */}
+              <div className="space-y-3">
+                {/* Cabecera de columnas fija */}
+                <div className="grid grid-cols-[1fr_80px_100px] gap-2 px-3">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Módulo</p>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground text-center">Acceso</p>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground text-center">Acceso directo</p>
                 </div>
-                {/* Rows */}
-                <div className="divide-y divide-border">
-                  {permRows.map((row) => {
-                    const mobileDisabled = !row.enabled || (mobileCount >= 5 && !row.inMobileNav)
-                    return (
-                      <div key={row.viewId} className={`grid grid-cols-[1fr_80px_100px] gap-2 items-center px-3 py-2.5 transition-colors ${!row.enabled ? "opacity-50" : ""}`}>
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium truncate leading-tight">{row.label}</p>
-                          <p className="text-[10px] text-muted-foreground truncate">{row.description}</p>
-                        </div>
-                        <div className="flex justify-center">
-                          <Switch
-                            checked={row.enabled}
-                            onCheckedChange={() => toggleEnabled(row.viewId)}
-                            aria-label={`Acceso a ${row.label}`}
-                          />
-                        </div>
-                        <div className="flex justify-center">
-                          <Checkbox
-                            checked={row.inMobileNav}
-                            disabled={mobileDisabled}
-                            onCheckedChange={() => toggleMobileNav(row.viewId)}
-                            aria-label={`Acceso directo a ${row.label}`}
-                            className="h-4 w-4"
-                          />
-                        </div>
+                {MODULE_GROUPS.map((group) => {
+                  const groupRows = permRows.filter((r) => r.group === group)
+                  if (groupRows.length === 0) return null
+                  return (
+                    <div key={group} className="rounded-xl border border-border overflow-hidden">
+                      <div className="px-3 py-1.5 bg-muted/60 border-b border-border">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{group}</p>
                       </div>
-                    )
-                  })}
-                </div>
+                      <div className="divide-y divide-border">
+                        {groupRows.map((row) => {
+                          const mobileDisabled = !row.enabled || (mobileCount >= 5 && !row.inMobileNav)
+                          return (
+                            <div
+                              key={row.viewId}
+                              className={`grid grid-cols-[1fr_80px_100px] gap-2 items-center px-3 py-2.5 transition-colors ${!row.enabled ? "opacity-40" : ""}`}
+                            >
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium truncate leading-tight">{row.label}</p>
+                                <p className="text-[10px] text-muted-foreground truncate">{row.description}</p>
+                              </div>
+                              <div className="flex justify-center">
+                                <Switch
+                                  checked={row.enabled}
+                                  onCheckedChange={() => toggleEnabled(row.viewId)}
+                                  aria-label={`Acceso a ${row.label}`}
+                                />
+                              </div>
+                              <div className="flex justify-center">
+                                <Checkbox
+                                  checked={row.inMobileNav}
+                                  disabled={mobileDisabled}
+                                  onCheckedChange={() => toggleMobileNav(row.viewId)}
+                                  aria-label={`Acceso directo a ${row.label}`}
+                                  className="h-4 w-4"
+                                />
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
 
               {/* Botones */}

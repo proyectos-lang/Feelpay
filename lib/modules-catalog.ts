@@ -6,6 +6,7 @@ export interface ModuleDefinition {
   defaultRoles: string[]
   defaultMobileNavRoles: string[]
   iconName: string
+  group: string
 }
 
 // PermissionsMap: null = usar defaults de rol; objeto = configuración explícita
@@ -21,6 +22,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["vendedor", "asesor"],
     defaultMobileNavRoles: ["vendedor", "asesor"],
     iconName: "BarChart3",
+    group: "Asesor",
   },
   {
     viewId: "register-payment",
@@ -30,6 +32,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["vendedor", "asesor"],
     defaultMobileNavRoles: ["vendedor", "asesor"],
     iconName: "DollarSign",
+    group: "Asesor",
   },
   {
     viewId: "new-loan",
@@ -39,6 +42,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["vendedor", "asesor"],
     defaultMobileNavRoles: ["vendedor", "asesor"],
     iconName: "Plus",
+    group: "Asesor",
   },
   {
     viewId: "view-clients",
@@ -48,6 +52,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["vendedor", "asesor"],
     defaultMobileNavRoles: ["vendedor", "asesor"],
     iconName: "Users",
+    group: "Asesor",
   },
   {
     viewId: "register-transaction",
@@ -57,6 +62,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["vendedor", "asesor"],
     defaultMobileNavRoles: ["vendedor", "asesor"],
     iconName: "TrendingUp",
+    group: "Asesor",
   },
   {
     viewId: "view-expenses-income",
@@ -66,6 +72,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["vendedor", "asesor"],
     defaultMobileNavRoles: [],
     iconName: "Eye",
+    group: "Asesor",
   },
   {
     viewId: "view-loans",
@@ -75,6 +82,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["vendedor", "asesor"],
     defaultMobileNavRoles: [],
     iconName: "ShoppingBag",
+    group: "Asesor",
   },
   // --- ADMINISTRADOR ---
   {
@@ -85,6 +93,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["admin", "administrador"],
     defaultMobileNavRoles: ["admin", "administrador"],
     iconName: "LayoutDashboard",
+    group: "Administrador",
   },
   {
     viewId: "admin-route-detail",
@@ -94,6 +103,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["admin", "administrador"],
     defaultMobileNavRoles: ["admin", "administrador"],
     iconName: "ClipboardList",
+    group: "Administrador",
   },
   {
     viewId: "pending-authorizations",
@@ -103,6 +113,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["admin", "administrador"],
     defaultMobileNavRoles: ["admin", "administrador"],
     iconName: "CheckCircle",
+    group: "Administrador",
   },
   {
     viewId: "admin-route-monitor",
@@ -112,6 +123,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["admin", "administrador"],
     defaultMobileNavRoles: ["admin", "administrador"],
     iconName: "Route",
+    group: "Administrador",
   },
   {
     viewId: "configure-route",
@@ -121,15 +133,17 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["admin", "administrador"],
     defaultMobileNavRoles: ["admin", "administrador"],
     iconName: "MapPin",
+    group: "Administrador",
   },
   {
     viewId: "admin-reportes",
-    label: "Reportes Diarios",
-    mobileLabel: "Reportes",
+    label: "Reportes Diarios Admin",
+    mobileLabel: "Rep. Admin",
     description: "Enviar y revisar reportes diarios del administrador",
     defaultRoles: ["admin", "administrador", "liquidador"],
     defaultMobileNavRoles: [],
     iconName: "FileText",
+    group: "Administrador",
   },
   // --- SECRETARIA ---
   {
@@ -140,6 +154,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["secretaria", "secretario"],
     defaultMobileNavRoles: ["secretaria", "secretario"],
     iconName: "CheckCircle",
+    group: "Secretaria",
   },
   {
     viewId: "payment-control",
@@ -149,6 +164,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["secretaria", "secretario"],
     defaultMobileNavRoles: ["secretaria", "secretario"],
     iconName: "ListChecks",
+    group: "Secretaria",
   },
   {
     viewId: "secretary-reports",
@@ -158,6 +174,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["secretaria", "secretario", "gerencia"],
     defaultMobileNavRoles: ["secretaria", "secretario", "gerencia"],
     iconName: "FileText",
+    group: "Secretaria",
   },
   {
     viewId: "secretary-admin-reportes",
@@ -167,6 +184,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["secretaria", "secretario"],
     defaultMobileNavRoles: ["secretaria", "secretario"],
     iconName: "FileText",
+    group: "Secretaria",
   },
   {
     viewId: "user-route-management",
@@ -176,6 +194,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["secretaria", "secretario"],
     defaultMobileNavRoles: ["secretaria", "secretario"],
     iconName: "Users",
+    group: "Secretaria",
   },
   // --- SOCIOADMIN ---
   {
@@ -186,8 +205,12 @@ export const ALL_MODULES: ModuleDefinition[] = [
     defaultRoles: ["socioadmin"],
     defaultMobileNavRoles: ["socioadmin"],
     iconName: "FileText",
+    group: "Socio Administrador",
   },
 ]
+
+/** Grupos únicos de módulos en orden de presentación */
+export const MODULE_GROUPS = ["Asesor", "Administrador", "Secretaria", "Socio Administrador"] as const
 
 /** Módulos accesibles para un rol dado (según defaults) */
 export function getDefaultModulesForRole(rol: string): ModuleDefinition[] {

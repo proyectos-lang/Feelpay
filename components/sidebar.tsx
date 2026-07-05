@@ -151,30 +151,30 @@ export function Sidebar({
 
   // Filtrar grupos de navegación según el rol del usuario (y permisos individuales si aplica)
   const visibleGroups = (() => {
-    let groups: NavGroup[]
+    // Con permisos explícitos: mostrar todos los módulos habilitados de cualquier grupo
+    if (userPermissions) {
+      return navGroups
+        .map((g) => ({
+          ...g,
+          items: g.items.filter((item) => userPermissions[item.id]?.enabled === true),
+        }))
+        .filter((g) => g.items.length > 0)
+    }
+
+    // Sin permisos: comportamiento por rol (defaults)
     if (["vendedor", "asesor"].includes(rol))
-      groups = navGroups.filter((g) => g.group === "Asesor")
-    else if (["admin", "administrador"].includes(rol))
-      groups = navGroups.filter((g) => g.group === "Administrador")
-    else if (["secretaria", "secretario"].includes(rol))
-      groups = navGroups.filter((g) => g.group === "Secretaria")
-    else if (rol === "gerencia")
-      groups = navGroups.filter((g) => g.group === "Gerencia")
-    else if (rol === "liquidador")
-      groups = navGroups.filter((g) => g.group === "Liquidador")
-    else if (rol === "socioadmin")
-      groups = navGroups.filter((g) => g.group === "Socio Administrador")
-    else
-      groups = navGroups
-
-    if (!userPermissions) return groups
-
-    return groups
-      .map((g) => ({
-        ...g,
-        items: g.items.filter((item) => userPermissions[item.id]?.enabled !== false),
-      }))
-      .filter((g) => g.items.length > 0)
+      return navGroups.filter((g) => g.group === "Asesor")
+    if (["admin", "administrador"].includes(rol))
+      return navGroups.filter((g) => g.group === "Administrador")
+    if (["secretaria", "secretario"].includes(rol))
+      return navGroups.filter((g) => g.group === "Secretaria")
+    if (rol === "gerencia")
+      return navGroups.filter((g) => g.group === "Gerencia")
+    if (rol === "liquidador")
+      return navGroups.filter((g) => g.group === "Liquidador")
+    if (rol === "socioadmin")
+      return navGroups.filter((g) => g.group === "Socio Administrador")
+    return navGroups
   })()
 
   const initials = currentUser?.nombre
