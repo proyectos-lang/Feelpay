@@ -9,7 +9,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info } from "lucide-react"
+import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info, MessageSquare } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { ALL_MODULES, MODULE_GROUPS, getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
 import type { ModuleDefinition } from "@/lib/modules-catalog"
@@ -799,7 +799,7 @@ function PermisosTab() {
       }
 
       const dbMap: Record<string, { enabled: boolean; inMobileNav: boolean }> = {}
-      data.forEach((row) => { dbMap[row.view_id] = { enabled: row.enabled, inMobileNav: row.in_mobile_nav } })
+      data.forEach((row: { view_id: string; enabled: boolean; in_mobile_nav: boolean }) => { dbMap[row.view_id] = { enabled: row.enabled, inMobileNav: row.in_mobile_nav } })
 
       setPermRows(defaults.map((r) =>
         dbMap[r.viewId] !== undefined
@@ -1062,6 +1062,196 @@ function PermisosTab() {
   )
 }
 
+// ─── Tab Contactos Chat ───────────────────────────────────────────────────────
+
+function ContactosChatTab() {
+  const { toast } = useToast()
+  const [usuarios, setUsuarios] = useState<Usuario[]>([])
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
+  const [allowedIds, setAllowedIds] = useState<Set<number>>(new Set())
+  const [hasRestrictions, setHasRestrictions] = useState(false)
+  const [loadingUsers, setLoadingUsers] = useState(true)
+  const [loadingContacts, setLoadingContacts] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [dirty, setDirty] = useState(false)
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase
+      .from("usuarios")
+      .select("id, usuario, nombre, rol, activo")
+      .eq("activo", true)
+      .order("nombre")
+      .then(({ data }: { data: Usuario[] | null }) => { setUsuarios((data ?? [])); setLoadingUsers(false) })
+  }, [])
+
+  const loadContacts = useCallback(async (userId: number) => {
+    setLoadingContacts(true)
+    setDirty(false)
+    try {
+      const supabase = createClient()
+      const { data } = await supabase
+        .from("chat_allowed_contacts")
+        .select("allowed_user_id")
+        .eq("user_id", userId)
+      if (!data || data.length === 0) {
+        setHasRestrictions(false)
+        setAllowedIds(new Set())
+      } else {
+        setHasRestrictions(true)
+        setAllowedIds(new Set(data.map((r: { allowed_user_id: number }) => r.allowed_user_id)))
+      }
+    } finally {
+      setLoadingContacts(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (selectedUserId) loadContacts(selectedUserId)
+  }, [selectedUserId, loadContacts])
+
+  const toggleContact = (uid: number) => {
+    setAllowedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(uid)) next.delete(uid)
+      else next.add(uid)
+      return next
+    })
+    setHasRestrictions(true)
+    setDirty(true)
+  }
+
+  const handleRestablecer = async () => {
+    if (!selectedUserId) return
+    try {
+      setSaving(true)
+      const supabase = createClient()
+      await supabase.from("chat_allowed_contacts").delete().eq("user_id", selectedUserId)
+      setHasRestrictions(false)
+      setAllowedIds(new Set())
+      setDirty(false)
+      toast({ title: "Restablecido", description: "El usuario puede ver a todos los contactos." })
+    } catch {
+      toast({ title: "Error", description: "No se pudo restablecer.", variant: "destructive" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleGuardar = async () => {
+    if (!selectedUserId) return
+    try {
+      setSaving(true)
+      const supabase = createClient()
+      await supabase.from("chat_allowed_contacts").delete().eq("user_id", selectedUserId)
+      if (allowedIds.size > 0) {
+        await supabase.from("chat_allowed_contacts").insert(
+          [...allowedIds].map((uid) => ({ user_id: selectedUserId, allowed_user_id: uid }))
+        )
+      }
+      setDirty(false)
+      toast({ title: "Guardado", description: hasRestrictions && allowedIds.size === 0 ? "El usuario no puede ver ningún contacto." : "Contactos permitidos actualizados." })
+    } catch {
+      toast({ title: "Error", description: "No se pudo guardar.", variant: "destructive" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const selectedUser = usuarios.find((u) => u.id === selectedUserId)
+  const otherUsers = usuarios.filter((u) => u.id !== selectedUserId)
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-4">
+      {/* Panel selector de usuario */}
+      <div className="space-y-1">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-1 mb-2">Usuarios</p>
+        {loadingUsers ? (
+          <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+        ) : (
+          <div className="space-y-1 max-h-[60vh] overflow-y-auto pr-1">
+            {usuarios.map((u) => (
+              <button
+                key={u.id}
+                type="button"
+                onClick={() => { setSelectedUserId(u.id); setDirty(false) }}
+                className={`w-full text-left rounded-lg border px-3 py-2 text-sm transition-all ${
+                  selectedUserId === u.id
+                    ? "border-brand bg-brand/10 font-semibold"
+                    : "border-transparent hover:border-border hover:bg-muted/50"
+                }`}
+              >
+                <p className="font-medium leading-tight">{u.nombre}</p>
+                <p className={`text-[10px] mt-0.5 px-1.5 rounded-full inline-block ${ROL_BADGE[u.rol] ?? ""}`}>{ROL_LABELS[u.rol] ?? u.rol}</p>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Panel de contactos permitidos */}
+      <div className="rounded-xl border bg-card p-4 space-y-3">
+        {!selectedUser ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground gap-2">
+            <MessageSquare className="h-8 w-8 opacity-30" />
+            <p className="text-sm">Selecciona un usuario para configurar<br />sus contactos de chat visibles</p>
+          </div>
+        ) : loadingContacts ? (
+          <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="font-semibold text-sm">{selectedUser.nombre}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {!hasRestrictions
+                    ? "Sin restricciones — ve a todos los usuarios"
+                    : allowedIds.size === 0
+                    ? "No puede ver ningún contacto"
+                    : `Puede ver ${allowedIds.size} usuario${allowedIds.size !== 1 ? "s" : ""}`}
+                </p>
+              </div>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${!hasRestrictions ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>
+                {!hasRestrictions ? "Ver todos" : "Restringido"}
+              </span>
+            </div>
+
+            <div className="divide-y divide-border rounded-lg border overflow-hidden max-h-[50vh] overflow-y-auto">
+              {otherUsers.map((u) => {
+                const checked = !hasRestrictions || allowedIds.has(u.id)
+                return (
+                  <label key={u.id} className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-muted/40 transition-colors">
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={() => toggleContact(u.id)}
+                      className="h-4 w-4 shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium leading-tight">{u.nombre}</p>
+                      <p className={`text-[10px] mt-0.5 px-1.5 rounded-full inline-block ${ROL_BADGE[u.rol] ?? ""}`}>{ROL_LABELS[u.rol] ?? u.rol}</p>
+                    </div>
+                  </label>
+                )
+              })}
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <Button variant="outline" size="sm" onClick={handleRestablecer} disabled={saving || !hasRestrictions} className="gap-1.5 h-8 text-xs">
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                Restablecer (ver todos)
+              </Button>
+              <Button size="sm" onClick={handleGuardar} disabled={saving || !dirty} className="gap-1.5 h-8 text-xs">
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                Guardar
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export function GestionUsuariosRutas() {
@@ -1080,7 +1270,7 @@ export function GestionUsuariosRutas() {
       </div>
 
       <Tabs defaultValue="usuarios" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4 h-9">
+        <TabsList className="grid w-full grid-cols-5 h-9">
           <TabsTrigger value="usuarios" className="gap-1 text-xs">
             <Users className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Usuarios</span>
@@ -1097,6 +1287,10 @@ export function GestionUsuariosRutas() {
             <Shield className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Permisos</span>
           </TabsTrigger>
+          <TabsTrigger value="contactos-chat" className="gap-1 text-xs">
+            <MessageSquare className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Chat</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="usuarios">
@@ -1110,6 +1304,9 @@ export function GestionUsuariosRutas() {
         </TabsContent>
         <TabsContent value="permisos">
           <PermisosTab />
+        </TabsContent>
+        <TabsContent value="contactos-chat">
+          <ContactosChatTab />
         </TabsContent>
       </Tabs>
     </div>

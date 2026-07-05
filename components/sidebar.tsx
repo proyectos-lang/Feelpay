@@ -23,6 +23,7 @@ import {
   Download,
   Share2,
   MoreVertical,
+  MessageSquare,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -92,6 +93,12 @@ const navGroups: NavGroup[] = [
       { id: "socio-admin-reportes", label: "Reportes", icon: FileText, colorClass: "sidebar-item-secretary" },
     ],
   },
+  {
+    group: "General",
+    items: [
+      { id: "chat", label: "Chat", icon: MessageSquare, colorClass: "sidebar-item-summary" },
+    ],
+  },
 ]
 
 interface SidebarProps {
@@ -149,32 +156,38 @@ export function Sidebar({
     }
   }
 
+  const generalGroup = navGroups.find((g) => g.group === "General")!
+
   // Filtrar grupos de navegación según el rol del usuario (y permisos individuales si aplica)
   const visibleGroups = (() => {
     // Con permisos explícitos: mostrar todos los módulos habilitados de cualquier grupo
     if (userPermissions) {
-      return navGroups
+      const filtered = navGroups
         .map((g) => ({
           ...g,
-          items: g.items.filter((item) => userPermissions[item.id]?.enabled === true),
+          items: g.items.filter((item) =>
+            g.group === "General" ? true : userPermissions[item.id]?.enabled === true
+          ),
         }))
         .filter((g) => g.items.length > 0)
+      // Asegurar que General siempre esté al final
+      return [
+        ...filtered.filter((g) => g.group !== "General"),
+        generalGroup,
+      ]
     }
 
-    // Sin permisos: comportamiento por rol (defaults)
-    if (["vendedor", "asesor"].includes(rol))
-      return navGroups.filter((g) => g.group === "Asesor")
-    if (["admin", "administrador"].includes(rol))
-      return navGroups.filter((g) => g.group === "Administrador")
-    if (["secretaria", "secretario"].includes(rol))
-      return navGroups.filter((g) => g.group === "Secretaria")
-    if (rol === "gerencia")
-      return navGroups.filter((g) => g.group === "Gerencia")
-    if (rol === "liquidador")
-      return navGroups.filter((g) => g.group === "Liquidador")
-    if (rol === "socioadmin")
-      return navGroups.filter((g) => g.group === "Socio Administrador")
-    return navGroups
+    // Sin permisos: comportamiento por rol (defaults) + siempre el grupo General
+    const roleGroup = (
+      ["vendedor", "asesor"].includes(rol)      ? navGroups.filter((g) => g.group === "Asesor") :
+      ["admin", "administrador"].includes(rol)  ? navGroups.filter((g) => g.group === "Administrador") :
+      ["secretaria", "secretario"].includes(rol)? navGroups.filter((g) => g.group === "Secretaria") :
+      rol === "gerencia"                         ? navGroups.filter((g) => g.group === "Gerencia") :
+      rol === "liquidador"                       ? navGroups.filter((g) => g.group === "Liquidador") :
+      rol === "socioadmin"                       ? navGroups.filter((g) => g.group === "Socio Administrador") :
+      navGroups
+    )
+    return [...roleGroup.filter((g) => g.group !== "General"), generalGroup]
   })()
 
   const initials = currentUser?.nombre

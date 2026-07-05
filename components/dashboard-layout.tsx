@@ -63,6 +63,7 @@ export function DashboardLayout({
       "admin-route-detail": "Detalle de Rutas",
       "secretary-reports": "Reportes",
       "user-route-management": "Gestión de Usuarios y Rutas",
+      "chat": "Chat Interno",
     }
     return titleMap[view] || "Panel Principal"
   }

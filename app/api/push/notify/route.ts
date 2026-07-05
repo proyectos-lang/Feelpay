@@ -16,12 +16,13 @@ export async function POST(req: NextRequest) {
     process.env.VAPID_PRIVATE_KEY
   )
 
-  const { title, body, tag, url, user_id, rol: targetRol } = await req.json() as {
+  const { title, body, tag, url, user_id, user_ids, rol: targetRol } = await req.json() as {
     title: string
     body: string
     tag?: string
     url?: string
     user_id?: string | number
+    user_ids?: (string | number)[]
     rol?: string
   }
 
@@ -29,7 +30,9 @@ export async function POST(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const baseQuery = (supabase as any).from("push_subscriptions").select("endpoint, p256dh, auth")
   const { data, error } = await (
-    user_id ? baseQuery.eq("user_id", String(user_id)) : baseQuery.eq("rol", targetRol ?? "gerencia")
+    user_ids?.length ? baseQuery.in("user_id", user_ids.map(String)) :
+    user_id          ? baseQuery.eq("user_id", String(user_id)) :
+                       baseQuery.eq("rol", targetRol ?? "gerencia")
   )
 
   if (error) {

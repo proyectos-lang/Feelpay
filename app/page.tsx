@@ -15,6 +15,7 @@ import { SocioAdminReportes } from "@/components/views/socio-admin-reportes"
 import { AdminReportes } from "@/components/views/admin-reportes"
 import { SecretaryAdminReportes } from "@/components/views/secretary-admin-reportes"
 import { GestionUsuariosRutas } from "@/components/views/gestion-usuarios-rutas"
+import { ChatView } from "@/components/views/chat-view"
 import { DailyRoute } from "@/components/views/daily-route"
 import { RegisterPayment } from "@/components/views/register-payment"
 import { PaymentControl } from "@/components/views/payment-control"
@@ -547,6 +548,8 @@ export default function Page() {
         return <SecretaryAdminReportes currentUser={currentUser!} />
       case "user-route-management":
         return <GestionUsuariosRutas />
+      case "chat":
+        return <ChatView currentUser={currentUser!} />
       default:
         return <MainDashboard onViewChange={handleViewChange} />
     }

@@ -207,10 +207,21 @@ export const ALL_MODULES: ModuleDefinition[] = [
     iconName: "FileText",
     group: "Socio Administrador",
   },
+  // --- GENERAL ---
+  {
+    viewId: "chat",
+    label: "Chat",
+    mobileLabel: "Chat",
+    description: "Mensajería interna entre usuarios",
+    defaultRoles: ["vendedor", "asesor", "admin", "administrador", "secretaria", "secretario", "gerencia", "liquidador", "socioadmin"],
+    defaultMobileNavRoles: [],
+    iconName: "MessageSquare",
+    group: "General",
+  },
 ]
 
 /** Grupos únicos de módulos en orden de presentación */
-export const MODULE_GROUPS = ["Asesor", "Administrador", "Secretaria", "Socio Administrador"] as const
+export const MODULE_GROUPS = ["Asesor", "Administrador", "Secretaria", "Socio Administrador", "General"] as const
 
 /** Módulos accesibles para un rol dado (según defaults) */
 export function getDefaultModulesForRole(rol: string): ModuleDefinition[] {
