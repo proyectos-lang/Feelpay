@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import type { AuthenticatedUser } from "./views/login-view"
+import type { PermissionsMap } from "@/lib/modules-catalog"
 
 // Tipo para el evento de instalación PWA (no está en los tipos estándar de TS)
 interface BeforeInstallPromptEvent extends Event {
@@ -100,6 +101,7 @@ interface SidebarProps {
   onToggleCollapse?: () => void
   currentUser?: AuthenticatedUser | null
   onLogout?: () => void
+  userPermissions?: PermissionsMap | null
 }
 
 export function Sidebar({
@@ -109,6 +111,7 @@ export function Sidebar({
   onToggleCollapse,
   currentUser,
   onLogout,
+  userPermissions,
 }: SidebarProps) {
   const rol = (currentUser?.rol ?? "").toLowerCase()
 
@@ -146,21 +149,32 @@ export function Sidebar({
     }
   }
 
-  // Filtrar grupos de navegación según el rol del usuario
+  // Filtrar grupos de navegación según el rol del usuario (y permisos individuales si aplica)
   const visibleGroups = (() => {
+    let groups: NavGroup[]
     if (["vendedor", "asesor"].includes(rol))
-      return navGroups.filter((g) => g.group === "Asesor")
-    if (["admin", "administrador"].includes(rol))
-      return navGroups.filter((g) => g.group === "Administrador")
-    if (["secretaria", "secretario"].includes(rol))
-      return navGroups.filter((g) => g.group === "Secretaria")
-    if (rol === "gerencia")
-      return navGroups.filter((g) => g.group === "Gerencia")
-    if (rol === "liquidador")
-      return navGroups.filter((g) => g.group === "Liquidador")
-    if (rol === "socioadmin")
-      return navGroups.filter((g) => g.group === "Socio Administrador")
-    return navGroups
+      groups = navGroups.filter((g) => g.group === "Asesor")
+    else if (["admin", "administrador"].includes(rol))
+      groups = navGroups.filter((g) => g.group === "Administrador")
+    else if (["secretaria", "secretario"].includes(rol))
+      groups = navGroups.filter((g) => g.group === "Secretaria")
+    else if (rol === "gerencia")
+      groups = navGroups.filter((g) => g.group === "Gerencia")
+    else if (rol === "liquidador")
+      groups = navGroups.filter((g) => g.group === "Liquidador")
+    else if (rol === "socioadmin")
+      groups = navGroups.filter((g) => g.group === "Socio Administrador")
+    else
+      groups = navGroups
+
+    if (!userPermissions) return groups
+
+    return groups
+      .map((g) => ({
+        ...g,
+        items: g.items.filter((item) => userPermissions[item.id]?.enabled !== false),
+      }))
+      .filter((g) => g.items.length > 0)
   })()
 
   const initials = currentUser?.nombre

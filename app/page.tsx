@@ -38,8 +38,26 @@ import { LoginView, type AuthenticatedUser } from "@/components/views/login-view
 import { LoginSplash } from "@/components/login-splash"
 import { SESSION_LOST_EVENT, getSupabaseSafe } from "@/lib/api-helper"
 import { createClient } from "@/lib/supabase/client"
+import type { PermissionsMap } from "@/lib/modules-catalog"
 import { Button } from "@/components/ui/button"
 import { Loader2, ShieldAlert, RefreshCw } from "lucide-react"
+
+async function loadUserPermissions(userId: number): Promise<PermissionsMap | null> {
+  try {
+    const { data } = await createClient()
+      .from("user_permissions")
+      .select("view_id, enabled, in_mobile_nav")
+      .eq("user_id", userId)
+    if (!data || data.length === 0) return null
+    const map: PermissionsMap = {}
+    data.forEach((row) => {
+      map[row.view_id] = { enabled: row.enabled, inMobileNav: row.in_mobile_nav }
+    })
+    return map
+  } catch {
+    return null
+  }
+}
 
 const RUTA_STORAGE_KEY = "selectedRuta"
 const USER_STORAGE_KEY = "currentUser"
@@ -75,6 +93,7 @@ export default function Page() {
   // Splash de transicion tras un login fresco (no se muestra al recargar la pagina)
   const [showSplash, setShowSplash] = useState(false)
   const [showRutaSelector, setShowRutaSelector] = useState(false)
+  const [userPermissions, setUserPermissions] = useState<PermissionsMap | null>(null)
 
   // Hydrate user + ruta from localStorage on mount
   useEffect(() => {
@@ -83,7 +102,10 @@ export default function Page() {
         const rawUser = localStorage.getItem(USER_STORAGE_KEY)
         if (rawUser) {
           const parsed = JSON.parse(rawUser) as AuthenticatedUser
-          if (parsed && parsed.id) setCurrentUser(parsed)
+          if (parsed && parsed.id) {
+            setCurrentUser(parsed)
+            loadUserPermissions(parsed.id).then(setUserPermissions).catch(() => {})
+          }
         }
         const rawRuta = localStorage.getItem(RUTA_STORAGE_KEY)
         let hydratedRutaId: number | null = null
@@ -304,6 +326,7 @@ export default function Page() {
     }
     setCurrentUser(user)
     setShowSplash(true)
+    loadUserPermissions(user.id).then(setUserPermissions).catch(() => {})
 
     const isAdmin = ADMIN_ROLES.has((user.rol ?? "").toLowerCase())
     if (isAdmin) {
@@ -380,6 +403,7 @@ export default function Page() {
     setSelectedRuta(null)
     setSessionPhase("idle")
     setShowSplash(false)
+    setUserPermissions(null)
   }, [])
 
   const handleSelectRuta = useCallback((ruta: SelectedRuta) => {
@@ -598,6 +622,7 @@ export default function Page() {
         onChangeRuta={canChangeRuta ? handleChangeRuta : undefined}
         currentUser={currentUser}
         onLogout={handleLogout}
+        userPermissions={userPermissions}
       >
         {renderView()}
       </DashboardLayout>

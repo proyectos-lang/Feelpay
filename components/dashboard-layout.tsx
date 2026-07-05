@@ -7,6 +7,7 @@ import { MobileBottomNav } from "./mobile-bottom-nav"
 import { PushPermissionPrompt } from "./push-permission-prompt"
 import type { SelectedRuta } from "./route-selector"
 import type { AuthenticatedUser } from "./views/login-view"
+import type { PermissionsMap } from "@/lib/modules-catalog"
 
 interface DashboardLayoutProps {
   children: ReactNode
@@ -16,6 +17,7 @@ interface DashboardLayoutProps {
   onChangeRuta?: () => void
   currentUser?: AuthenticatedUser | null
   onLogout?: () => void
+  userPermissions?: PermissionsMap | null
 }
 
 export function DashboardLayout({
@@ -26,6 +28,7 @@ export function DashboardLayout({
   onChangeRuta,
   currentUser,
   onLogout,
+  userPermissions,
 }: DashboardLayoutProps) {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(false)
@@ -79,6 +82,7 @@ export function DashboardLayout({
           onToggleCollapse={() => setIsDesktopSidebarOpen(!isDesktopSidebarOpen)}
           currentUser={currentUser}
           onLogout={onLogout}
+          userPermissions={userPermissions}
         />
       </div>
 
@@ -96,6 +100,7 @@ export function DashboardLayout({
           onViewChange={handleViewChange}
           currentUser={currentUser}
           onLogout={onLogout}
+          userPermissions={userPermissions}
         />
       </div>
 
@@ -111,7 +116,7 @@ export function DashboardLayout({
           onLogout={onLogout}
         />
         <main className="flex-1 overflow-y-auto p-3 md:p-6 pb-16 md:pb-6">{children}</main>
-        <MobileBottomNav currentView={currentView} onViewChange={onViewChange} currentUser={currentUser} />
+        <MobileBottomNav currentView={currentView} onViewChange={onViewChange} currentUser={currentUser} userPermissions={userPermissions} />
       </div>
       {currentUser && <PushPermissionPrompt currentUser={currentUser} />}
     </div>

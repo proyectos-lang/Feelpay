@@ -9,8 +9,11 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2 } from "lucide-react"
+import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { Switch } from "@/components/ui/switch"
+import { getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
+import type { ModuleDefinition } from "@/lib/modules-catalog"
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -725,6 +728,320 @@ function AsignacionesTab() {
   )
 }
 
+// ─── Tab Permisos ─────────────────────────────────────────────────────────────
+
+type PermRow = {
+  viewId: string
+  label: string
+  description: string
+  enabled: boolean
+  inMobileNav: boolean
+}
+
+function buildDefaultRows(modules: ModuleDefinition[], rol: string): PermRow[] {
+  return modules.map((m) => ({
+    viewId: m.viewId,
+    label: m.label,
+    description: m.description,
+    enabled: true,
+    inMobileNav: isDefaultMobileNav(m, rol),
+  }))
+}
+
+function PermisosTab() {
+  const { toast } = useToast()
+  const [usuarios, setUsuarios] = useState<Usuario[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
+  const [permRows, setPermRows] = useState<PermRow[]>([])
+  const [saving, setSaving] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [dirty, setDirty] = useState(false)
+
+  const fetchUsuarios = useCallback(async () => {
+    setLoading(true)
+    try {
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from("usuarios")
+        .select("id, usuario, nombre, rol, activo, acceso_modulo_reporte")
+        .order("nombre")
+      if (error) throw error
+      setUsuarios(data ?? [])
+    } catch (err) {
+      console.error("[v0] Error fetching usuarios (permisos):", err)
+      toast({ title: "Error", description: "No se pudieron cargar los usuarios", variant: "destructive" })
+    } finally {
+      setLoading(false)
+    }
+  }, [toast])
+
+  useEffect(() => { fetchUsuarios() }, [fetchUsuarios])
+
+  const loadPermissions = useCallback(async (userId: number, rol: string) => {
+    const modules = getDefaultModulesForRole(rol)
+    if (modules.length === 0) {
+      setPermRows([])
+      return
+    }
+    try {
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from("user_permissions")
+        .select("view_id, enabled, in_mobile_nav")
+        .eq("user_id", userId)
+      if (error) throw error
+
+      if (!data || data.length === 0) {
+        setPermRows(buildDefaultRows(modules, rol))
+        return
+      }
+
+      const dbMap: Record<string, { enabled: boolean; inMobileNav: boolean }> = {}
+      data.forEach((row) => { dbMap[row.view_id] = { enabled: row.enabled, inMobileNav: row.in_mobile_nav } })
+
+      setPermRows(modules.map((m) => ({
+        viewId: m.viewId,
+        label: m.label,
+        description: m.description,
+        enabled: dbMap[m.viewId]?.enabled ?? true,
+        inMobileNav: dbMap[m.viewId]?.inMobileNav ?? isDefaultMobileNav(m, rol),
+      })))
+    } catch (err) {
+      console.error("[v0] Error loading permissions:", err)
+      setPermRows(buildDefaultRows(modules, rol))
+    }
+  }, [])
+
+  const handleSelectUser = (userId: number) => {
+    const u = usuarios.find((u) => u.id === userId)
+    if (!u) return
+    setSelectedUserId(userId)
+    setDirty(false)
+    loadPermissions(userId, u.rol)
+  }
+
+  const toggleEnabled = (viewId: string) => {
+    setPermRows((prev) =>
+      prev.map((r) =>
+        r.viewId === viewId
+          ? { ...r, enabled: !r.enabled, inMobileNav: r.enabled ? false : r.inMobileNav }
+          : r,
+      ),
+    )
+    setDirty(true)
+  }
+
+  const toggleMobileNav = (viewId: string) => {
+    setPermRows((prev) =>
+      prev.map((r) => (r.viewId === viewId ? { ...r, inMobileNav: !r.inMobileNav } : r)),
+    )
+    setDirty(true)
+  }
+
+  const mobileCount = permRows.filter((r) => r.enabled && r.inMobileNav).length
+
+  const handleGuardar = async () => {
+    if (selectedUserId === null) return
+    setSaving(true)
+    try {
+      const supabase = createClient()
+      await supabase.from("user_permissions").delete().eq("user_id", selectedUserId)
+      if (permRows.length > 0) {
+        const { error } = await supabase.from("user_permissions").insert(
+          permRows.map((r) => ({
+            user_id: selectedUserId,
+            view_id: r.viewId,
+            enabled: r.enabled,
+            in_mobile_nav: r.inMobileNav,
+          })),
+        )
+        if (error) throw error
+      }
+      setDirty(false)
+      toast({ title: "Permisos guardados", description: "Los cambios se aplicarán en el próximo inicio de sesión del usuario." })
+    } catch (err: any) {
+      console.error("[v0] Error saving permissions:", err)
+      toast({ title: "Error", description: err?.message ?? "No se pudieron guardar los permisos", variant: "destructive" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRestablecer = async () => {
+    if (selectedUserId === null) return
+    const u = usuarios.find((u) => u.id === selectedUserId)
+    if (!u) return
+    setResetting(true)
+    try {
+      const supabase = createClient()
+      await supabase.from("user_permissions").delete().eq("user_id", selectedUserId)
+      setPermRows(buildDefaultRows(getDefaultModulesForRole(u.rol), u.rol))
+      setDirty(false)
+      toast({ title: "Permisos restablecidos", description: "Se volvieron a los valores por defecto del rol." })
+    } catch (err: any) {
+      console.error("[v0] Error resetting permissions:", err)
+      toast({ title: "Error", description: err?.message ?? "Error al restablecer", variant: "destructive" })
+    } finally {
+      setResetting(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex h-40 items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  const usuarioSeleccionado = usuarios.find((u) => u.id === selectedUserId)
+
+  return (
+    <div className="space-y-4">
+      {/* Banner informativo */}
+      <div className="flex gap-2.5 rounded-xl border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40 p-3 text-sm text-blue-800 dark:text-blue-300">
+        <Info className="h-4 w-4 mt-0.5 shrink-0" />
+        <div className="space-y-0.5">
+          <p className="font-semibold text-xs">¿Qué puedes gestionar aquí?</p>
+          <p className="text-xs text-blue-700 dark:text-blue-400">
+            Activa o desactiva el acceso de cada usuario a módulos de su rol. Marca cuáles aparecen como acceso directo en la barra inferior del celular (máx. 5).
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-[260px_1fr]">
+        {/* Panel izquierdo: lista de usuarios */}
+        <div className="space-y-1.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-1 mb-2">
+            Seleccionar usuario
+          </p>
+          <div className="rounded-xl border border-border overflow-hidden max-h-[420px] overflow-y-auto">
+            {usuarios.map((u) => {
+              const isSelected = u.id === selectedUserId
+              return (
+                <button
+                  key={u.id}
+                  type="button"
+                  onClick={() => handleSelectUser(u.id)}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left border-b border-border last:border-0 transition-colors ${
+                    isSelected ? "bg-brand/10 text-brand" : "hover:bg-muted/40"
+                  }`}
+                >
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground text-xs font-bold">
+                    {u.nombre.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-sm font-medium truncate leading-tight ${isSelected ? "text-brand" : ""}`}>{u.nombre}</p>
+                    <p className="text-[10px] text-muted-foreground">{ROL_LABELS[u.rol] ?? u.rol}</p>
+                  </div>
+                  {isSelected && <CheckCircle2 className="h-4 w-4 shrink-0 text-brand" />}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Panel derecho: módulos del usuario */}
+        <div className="space-y-3">
+          {selectedUserId === null ? (
+            <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border text-muted-foreground">
+              <Shield className="h-8 w-8 opacity-30" />
+              <p className="text-sm">Selecciona un usuario para gestionar sus permisos</p>
+            </div>
+          ) : permRows.length === 0 ? (
+            <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border text-muted-foreground">
+              <Info className="h-6 w-6 opacity-30" />
+              <p className="text-sm">Este rol no tiene módulos configurables</p>
+            </div>
+          ) : (
+            <>
+              {/* Cabecera usuario + contador móvil */}
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <p className="font-semibold text-sm">{usuarioSeleccionado?.nombre}</p>
+                  <p className="text-xs text-muted-foreground">{ROL_LABELS[usuarioSeleccionado?.rol ?? ""] ?? usuarioSeleccionado?.rol} · {permRows.length} módulo{permRows.length !== 1 ? "s" : ""}</p>
+                </div>
+                <div className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold ${
+                  mobileCount >= 5
+                    ? "border-destructive/40 bg-destructive/5 text-destructive"
+                    : "border-border bg-muted/30 text-muted-foreground"
+                }`}>
+                  <Smartphone className="h-3.5 w-3.5" />
+                  {mobileCount}/5 accesos directos
+                </div>
+              </div>
+
+              {/* Tabla de módulos */}
+              <div className="rounded-xl border border-border overflow-hidden">
+                {/* Header */}
+                <div className="grid grid-cols-[1fr_80px_100px] gap-2 px-3 py-2 bg-muted/40 border-b border-border">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Módulo</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground text-center">Acceso</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground text-center">Acceso directo</p>
+                </div>
+                {/* Rows */}
+                <div className="divide-y divide-border">
+                  {permRows.map((row) => {
+                    const mobileDisabled = !row.enabled || (mobileCount >= 5 && !row.inMobileNav)
+                    return (
+                      <div key={row.viewId} className={`grid grid-cols-[1fr_80px_100px] gap-2 items-center px-3 py-2.5 transition-colors ${!row.enabled ? "opacity-50" : ""}`}>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate leading-tight">{row.label}</p>
+                          <p className="text-[10px] text-muted-foreground truncate">{row.description}</p>
+                        </div>
+                        <div className="flex justify-center">
+                          <Switch
+                            checked={row.enabled}
+                            onCheckedChange={() => toggleEnabled(row.viewId)}
+                            aria-label={`Acceso a ${row.label}`}
+                          />
+                        </div>
+                        <div className="flex justify-center">
+                          <Checkbox
+                            checked={row.inMobileNav}
+                            disabled={mobileDisabled}
+                            onCheckedChange={() => toggleMobileNav(row.viewId)}
+                            aria-label={`Acceso directo a ${row.label}`}
+                            className="h-4 w-4"
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Botones */}
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRestablecer}
+                  disabled={resetting || saving}
+                  className="gap-1.5 h-8 text-xs"
+                >
+                  {resetting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                  Restablecer defaults
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleGuardar}
+                  disabled={saving || resetting || !dirty}
+                  className="gap-1.5 h-8 text-xs"
+                >
+                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  Guardar permisos
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export function GestionUsuariosRutas() {
@@ -743,18 +1060,22 @@ export function GestionUsuariosRutas() {
       </div>
 
       <Tabs defaultValue="usuarios" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-3 h-9">
-          <TabsTrigger value="usuarios" className="gap-1.5 text-xs md:text-sm">
+        <TabsList className="grid w-full grid-cols-4 h-9">
+          <TabsTrigger value="usuarios" className="gap-1 text-xs">
             <Users className="h-3.5 w-3.5" />
-            <span>Usuarios</span>
+            <span className="hidden sm:inline">Usuarios</span>
           </TabsTrigger>
-          <TabsTrigger value="rutas" className="gap-1.5 text-xs md:text-sm">
+          <TabsTrigger value="rutas" className="gap-1 text-xs">
             <RouteIcon className="h-3.5 w-3.5" />
-            <span>Rutas</span>
+            <span className="hidden sm:inline">Rutas</span>
           </TabsTrigger>
-          <TabsTrigger value="asignaciones" className="gap-1.5 text-xs md:text-sm">
+          <TabsTrigger value="asignaciones" className="gap-1 text-xs">
             <Link2 className="h-3.5 w-3.5" />
-            <span>Asignaciones</span>
+            <span className="hidden sm:inline">Asignaciones</span>
+          </TabsTrigger>
+          <TabsTrigger value="permisos" className="gap-1 text-xs">
+            <Shield className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Permisos</span>
           </TabsTrigger>
         </TabsList>
 
@@ -766,6 +1087,9 @@ export function GestionUsuariosRutas() {
         </TabsContent>
         <TabsContent value="asignaciones">
           <AsignacionesTab />
+        </TabsContent>
+        <TabsContent value="permisos">
+          <PermisosTab />
         </TabsContent>
       </Tabs>
     </div>

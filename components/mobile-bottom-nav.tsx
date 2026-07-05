@@ -7,6 +7,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { AuthenticatedUser } from "./views/login-view"
+import type { PermissionsMap } from "@/lib/modules-catalog"
 
 type NavItem = { id: string; icon: React.ElementType; label: string; colorClass: string }
 
@@ -14,6 +15,7 @@ interface MobileBottomNavProps {
   currentView: string
   onViewChange: (view: string) => void
   currentUser?: AuthenticatedUser | null
+  userPermissions?: PermissionsMap | null
 }
 
 const VENDEDOR_ITEMS: NavItem[] = [
@@ -50,15 +52,24 @@ const LIQUIDADOR_ITEMS: NavItem[] = [
 
 const COLS: Record<number, string> = { 1: "grid-cols-1", 3: "grid-cols-3", 4: "grid-cols-4", 5: "grid-cols-5" }
 
-export function MobileBottomNav({ currentView, onViewChange, currentUser }: MobileBottomNavProps) {
+export function MobileBottomNav({ currentView, onViewChange, currentUser, userPermissions }: MobileBottomNavProps) {
   const rol = (currentUser?.rol ?? "").toLowerCase()
 
-  const navItems =
-    ["admin", "administrador"].includes(rol)   ? ADMIN_ITEMS :
-    ["secretaria", "secretario"].includes(rol) ? SECRETARIA_ITEMS :
-    rol === "gerencia"                         ? GERENCIA_ITEMS :
-    rol === "liquidador"                       ? LIQUIDADOR_ITEMS :
-                                                 VENDEDOR_ITEMS
+  const navItems = (() => {
+    const roleItems =
+      ["admin", "administrador"].includes(rol)   ? ADMIN_ITEMS :
+      ["secretaria", "secretario"].includes(rol) ? SECRETARIA_ITEMS :
+      rol === "gerencia"                         ? GERENCIA_ITEMS :
+      rol === "liquidador"                       ? LIQUIDADOR_ITEMS :
+                                                   VENDEDOR_ITEMS
+
+    if (!userPermissions) return roleItems
+
+    return roleItems
+      .filter((item) => userPermissions[item.id]?.enabled !== false)
+      .filter((item) => userPermissions[item.id]?.inMobileNav === true)
+      .slice(0, 5)
+  })()
 
   const colsClass = COLS[navItems.length] ?? "grid-cols-5"
 
