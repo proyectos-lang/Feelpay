@@ -989,9 +989,9 @@ function PermisosTab() {
                           return (
                             <div
                               key={row.viewId}
-                              className={`grid grid-cols-[1fr_80px_100px] gap-2 items-center px-3 py-2.5 transition-colors ${!row.enabled ? "opacity-40" : ""}`}
+                              className="grid grid-cols-[1fr_80px_100px] gap-2 items-center px-3 py-2.5 transition-colors"
                             >
-                              <div className="min-w-0">
+                              <div className={`min-w-0 transition-opacity ${!row.enabled ? "opacity-40" : ""}`}>
                                 <p className="text-sm font-medium truncate leading-tight">{row.label}</p>
                                 <p className="text-[10px] text-muted-foreground truncate">{row.description}</p>
                               </div>
