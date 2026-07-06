@@ -64,7 +64,6 @@ const navGroups: NavGroup[] = [
       { id: "admin-route-monitor",    label: "Monitoreo Rutas",    icon: Route,           colorClass: "sidebar-item-route"    },
       { id: "configure-route",        label: "Ordenar Ruta",       icon: MapPin,          colorClass: "sidebar-item-route"    },
       { id: "admin-reportes",         label: "Rep. diarios",       icon: FileText,        colorClass: "sidebar-item-secretary"},
-      { id: "reportes-bi",            label: "Power BI",           icon: BarChart2,       colorClass: "sidebar-item-summary"  },
     ],
   },
   {
@@ -82,21 +81,18 @@ const navGroups: NavGroup[] = [
     group: "Gerencia",
     items: [
       { id: "secretary-reports", label: "Reportes",  icon: FileText,  colorClass: "sidebar-item-secretary" },
-      { id: "reportes-bi",       label: "Power BI",  icon: BarChart2, colorClass: "sidebar-item-summary"   },
     ],
   },
   {
     group: "Liquidador",
     items: [
       { id: "admin-reportes", label: "Rep. diarios", icon: FileText,  colorClass: "sidebar-item-secretary" },
-      { id: "reportes-bi",    label: "Power BI",     icon: BarChart2, colorClass: "sidebar-item-summary"   },
     ],
   },
   {
     group: "Socio Administrador",
     items: [
       { id: "socio-admin-reportes", label: "Reportes", icon: FileText,  colorClass: "sidebar-item-secretary" },
-      { id: "reportes-bi",          label: "Power BI", icon: BarChart2, colorClass: "sidebar-item-summary"   },
     ],
   },
   {

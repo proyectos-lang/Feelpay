@@ -223,7 +223,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     label: "Reportes Power BI",
     mobileLabel: "Power BI",
     description: "Dashboards gerenciales en Power BI",
-    defaultRoles: ["admin", "administrador", "secretaria", "secretario", "gerencia", "socioadmin", "liquidador"],
+    defaultRoles: ["secretaria", "secretario"],
     defaultMobileNavRoles: [],
     iconName: "BarChart2",
     group: "General",
