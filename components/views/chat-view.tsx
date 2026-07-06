@@ -425,6 +425,11 @@ export function ChatView({ currentUser }: ChatViewProps) {
   }, [currentUser.id, markAsRead, toast])
 
   // ── Realtime: mensajes de la conversación activa ──────────────────────────
+  // Sin filter en postgres_changes: filtrar client-side evita el requisito
+  // de REPLICA IDENTITY FULL en la tabla para filtros por columna no-PK.
+
+  const activeConvIdRef = useRef<string | null>(null)
+  activeConvIdRef.current = activeConvId
 
   useEffect(() => {
     channelMsgsRef.current?.unsubscribe()
@@ -432,28 +437,24 @@ export function ChatView({ currentUser }: ChatViewProps) {
 
     const supabase = createClient()
     channelMsgsRef.current = supabase
-      .channel(`chat-msgs-${activeConvId}`)
+      .channel(`chat-global-msgs-${currentUser.id}`)
       .on(
         "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "chat_messages",
-          filter: `conversation_id=eq.${activeConvId}`,
-        },
-        (payload: { new: ChatMessage }) => {
+        { event: "INSERT", schema: "public", table: "chat_messages" },
+        (payload: { new: ChatMessage & { conversation_id: string } }) => {
+          // Solo procesar mensajes de la conversación activa en este momento
+          if (payload.new.conversation_id !== activeConvIdRef.current) return
           const msg = payload.new
           setMessages((prev) => {
             if (prev.some((m) => m.id === msg.id)) return prev
             return [...prev, msg]
           })
           if (msg.sender_id !== currentUser.id) {
-            markAsRead(activeConvId)
+            markAsRead(msg.conversation_id)
           }
-          // Actualizar preview en lista
           setConversations((prev) =>
             prev.map((c) =>
-              c.conversation_id === activeConvId
+              c.conversation_id === msg.conversation_id
                 ? { ...c, last_body: msg.body, last_sender: msg.sender_nombre, last_at: msg.created_at, unread_count: 0 }
                 : c
             )
@@ -465,7 +466,9 @@ export function ChatView({ currentUser }: ChatViewProps) {
     return () => {
       channelMsgsRef.current?.unsubscribe()
     }
-  }, [activeConvId, currentUser.id, markAsRead])
+  // El canal se crea una vez por usuario; activeConvId se lee via ref
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser.id, markAsRead])
 
   // ── Scroll al fondo cuando llegan mensajes ────────────────────────────────
 
@@ -503,15 +506,35 @@ export function ChatView({ currentUser }: ChatViewProps) {
         imageUrl = json.url
       }
 
-      const { error } = await createClient().from("chat_messages").insert({
-        conversation_id: activeConvId,
-        sender_id: currentUser.id,
-        sender_nombre: currentUser.nombre,
-        body: msgText.trim() || null,
-        image_url: imageUrl,
-      })
+      const { data: inserted, error } = await createClient()
+        .from("chat_messages")
+        .insert({
+          conversation_id: activeConvId,
+          sender_id: currentUser.id,
+          sender_nombre: currentUser.nombre,
+          body: msgText.trim() || null,
+          image_url: imageUrl,
+        })
+        .select("id, sender_id, sender_nombre, body, image_url, created_at")
+        .single()
 
       if (error) throw new Error(error.message)
+
+      // Append optimista: el sender ve su mensaje de inmediato sin esperar Realtime
+      if (inserted) {
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === (inserted as ChatMessage).id)) return prev
+          return [...prev, inserted as ChatMessage]
+        })
+        const now = (inserted as ChatMessage).created_at
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.conversation_id === activeConvId
+              ? { ...c, last_body: (inserted as ChatMessage).body, last_sender: currentUser.nombre, last_at: now }
+              : c
+          )
+        )
+      }
 
       const recipientIds = participants
         .filter((p) => p.user_id !== currentUser.id)
