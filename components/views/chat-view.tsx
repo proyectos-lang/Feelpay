@@ -274,17 +274,20 @@ function NewConversationDialog({ open, onClose, currentUser, onConversationSelec
             ) : (
               <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
                 {contacts.map((c) => (
-                  <label key={c.id} className="flex items-center gap-3 rounded-lg px-3 py-2 cursor-pointer hover:bg-muted/40">
+                  <div
+                    key={c.id}
+                    onClick={() => toggleGroupId(c.id)}
+                    className="flex items-center gap-3 rounded-lg px-3 py-2 cursor-pointer hover:bg-muted/40 select-none"
+                  >
                     <Checkbox
                       checked={selectedGroupIds.has(c.id)}
-                      onCheckedChange={() => toggleGroupId(c.id)}
-                      className="h-4 w-4"
+                      className="h-4 w-4 pointer-events-none"
                     />
                     <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand/15 text-brand text-[10px] font-bold">
                       {initials(c.nombre)}
                     </div>
                     <span className="text-sm">{c.nombre}</span>
-                  </label>
+                  </div>
                 ))}
               </div>
             )}

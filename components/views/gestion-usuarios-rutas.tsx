@@ -1220,17 +1220,20 @@ function ContactosChatTab() {
               {otherUsers.map((u) => {
                 const checked = !hasRestrictions || allowedIds.has(u.id)
                 return (
-                  <label key={u.id} className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-muted/40 transition-colors">
+                  <div
+                    key={u.id}
+                    onClick={() => toggleContact(u.id)}
+                    className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-muted/40 transition-colors select-none"
+                  >
                     <Checkbox
                       checked={checked}
-                      onCheckedChange={() => toggleContact(u.id)}
-                      className="h-4 w-4 shrink-0"
+                      className="h-4 w-4 shrink-0 pointer-events-none"
                     />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium leading-tight">{u.nombre}</p>
                       <p className={`text-[10px] mt-0.5 px-1.5 rounded-full inline-block ${ROL_BADGE[u.rol] ?? ""}`}>{ROL_LABELS[u.rol] ?? u.rol}</p>
                     </div>
-                  </label>
+                  </div>
                 )
               })}
             </div>
