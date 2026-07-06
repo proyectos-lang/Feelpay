@@ -794,6 +794,7 @@ function GerenciaView() {
   const [lightbox, setLightbox] = useState<{ urls: string[]; idx: number } | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const [tab, setTab] = useState<"reportes" | "bi">("reportes")
+  const [biTab, setBiTab] = useState<"recaudos" | "betty" | "betty2" | "kevin" | "mayela">("recaudos")
 
   // ── Notificaciones ────────────────────────────────────────────────────────
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | "unsupported">("default")
@@ -1169,23 +1170,81 @@ function GerenciaView() {
 
       {/* ── Pestaña: Reportes BI ──────────────────────────────────────────── */}
       {tab === "bi" && (
-        <div className="space-y-4">
-          {/* Reporte de Recaudos */}
-          <div className="rounded-xl border bg-card overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 border-b">
-              <BarChart2 className="h-4 w-4 text-muted-foreground shrink-0" />
-              <span className="font-semibold text-sm">Reporte de Recaudos</span>
-            </div>
-            <div className="relative w-full" style={{ paddingBottom: "62.5%" }}>
-              <iframe
-                title="Reporte de Recaudos"
-                src="https://app.powerbi.com/view?r=eyJrIjoiOWQzMGE0OWYtMmM0NS00ODQ0LTkyODUtMDcwYzczNDc4ZDliIiwidCI6Ijk2YWMwMjE3LTc4OTEtNGNmYy05MjExLTM5MTEyNThjMmMwMyIsImMiOjR9"
-                className="absolute inset-0 w-full h-full"
-                frameBorder={0}
-                allowFullScreen
-              />
-            </div>
+        <div className="space-y-3">
+          {/* Sub-pestañas BI */}
+          <div className="flex gap-1 overflow-x-auto pb-px scrollbar-none border-b">
+            {(
+              [
+                { id: "recaudos", label: "Recaudos"  },
+                { id: "betty",    label: "Betty"     },
+                { id: "betty2",   label: "Betty 2"   },
+                { id: "kevin",    label: "Kevin"     },
+                { id: "mayela",   label: "Mayela"    },
+              ] as const
+            ).map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setBiTab(id)}
+                className={`shrink-0 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
+                  biTab === id
+                    ? "border-brand text-brand"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
+
+          {/* Iframe activo */}
+          {(
+            [
+              {
+                id: "recaudos",
+                title: "Reporte de Recaudos",
+                src: "https://app.powerbi.com/view?r=eyJrIjoiOWQzMGE0OWYtMmM0NS00ODQ0LTkyODUtMDcwYzczNDc4ZDliIiwidCI6Ijk2YWMwMjE3LTc4OTEtNGNmYy05MjExLTM5MTEyNThjMmMwMyIsImMiOjR9",
+              },
+              {
+                id: "betty",
+                title: "INFORME INVERTRAI GERENCIAL BETTY",
+                src: "https://app.powerbi.com/view?r=eyJrIjoiZGE3YmZjODQtMDE5MS00MTUxLWE1YzctYTQ4MjFmMGI4OGJmIiwidCI6Ijk2YWMwMjE3LTc4OTEtNGNmYy05MjExLTM5MTEyNThjMmMwMyIsImMiOjR9",
+              },
+              {
+                id: "betty2",
+                title: "INFORME INVERTRAI GERENCIAL BETTY2",
+                src: "https://app.powerbi.com/view?r=eyJrIjoiODUxMDUzYzgtYzZmMy00MzdmLTliMjAtNDBhODQ3NTVhNzg5IiwidCI6Ijk2YWMwMjE3LTc4OTEtNGNmYy05MjExLTM5MTEyNThjMmMwMyIsImMiOjR9",
+              },
+              {
+                id: "kevin",
+                title: "INFORME INVERTRAI KEVIN",
+                src: "https://app.powerbi.com/view?r=eyJrIjoiMTcyMDQ3ZDQtZjI4YS00MDhjLWE4N2MtMDJmMjgzOGZkOTVhIiwidCI6Ijk2YWMwMjE3LTc4OTEtNGNmYy05MjExLTM5MTEyNThjMmMwMyIsImMiOjR9",
+              },
+              {
+                id: "mayela",
+                title: "INFORME INVERTRAI MAYELA",
+                src: "https://app.powerbi.com/view?r=eyJrIjoiMTcyMDQ3ZDQtZjI4YS00MDhjLWE4N2MtMDJmMjgzOGZkOTVhIiwidCI6Ijk2YWMwMjE3LTc4OTEtNGNmYy05MjExLTM5MTEyNThjMmMwMyIsImMiOjR9",
+              },
+            ] as const
+          )
+            .filter(({ id }) => id === biTab)
+            .map(({ id, title, src }) => (
+              <div key={id} className="rounded-xl border bg-card overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-3 border-b">
+                  <BarChart2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="font-semibold text-sm">{title}</span>
+                </div>
+                <div className="relative w-full" style={{ paddingBottom: "62.5%" }}>
+                  <iframe
+                    title={title}
+                    src={src}
+                    className="absolute inset-0 w-full h-full"
+                    frameBorder={0}
+                    allowFullScreen
+                  />
+                </div>
+              </div>
+            ))}
         </div>
       )}
 
