@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { MainDashboard } from "@/components/views/main-dashboard"
 import { ViewClients } from "@/components/views/view-clients"
@@ -41,6 +41,7 @@ import { SESSION_LOST_EVENT, getSupabaseSafe } from "@/lib/api-helper"
 import { createClient } from "@/lib/supabase/client"
 import type { PermissionsMap } from "@/lib/modules-catalog"
 import { Button } from "@/components/ui/button"
+import { useToast } from "@/hooks/use-toast"
 import { Loader2, ShieldAlert, RefreshCw } from "lucide-react"
 
 async function loadUserPermissions(userId: number): Promise<PermissionsMap | null> {
@@ -75,6 +76,7 @@ type RutaActivaCache = {
 }
 
 export default function Page() {
+  const { toast } = useToast()
   const [currentView, setCurrentView] = useState("register-payment")
   const [viewData, setViewData] = useState<any>(null)
   const [rutaActivaEstado, setRutaActivaEstado] = useState<"abierta" | "cerrada" | null>(null)
@@ -95,6 +97,14 @@ export default function Page() {
   const [showSplash, setShowSplash] = useState(false)
   const [showRutaSelector, setShowRutaSelector] = useState(false)
   const [userPermissions, setUserPermissions] = useState<PermissionsMap | null>(null)
+
+  // ── Chat: conteo global de mensajes no leídos ──────────────────────────────
+  const [chatUnreadCount, setChatUnreadCount] = useState(0)
+  // IDs de conversaciones donde participa el usuario (para filtrar mensajes ajenos)
+  const myConvIdsRef = useRef<Set<string>>(new Set())
+  // Ref del currentView para leer en handlers sin closure stale
+  const currentViewRef = useRef(currentView)
+  currentViewRef.current = currentView
 
   // Hydrate user + ruta from localStorage on mount
   useEffect(() => {
@@ -405,7 +415,61 @@ export default function Page() {
     setSessionPhase("idle")
     setShowSplash(false)
     setUserPermissions(null)
+    setChatUnreadCount(0)
+    myConvIdsRef.current = new Set()
   }, [])
+
+  // ── Suscripción global de notificaciones de chat ───────────────────────────
+  // Se mantiene activa durante toda la sesión, independientemente de la vista.
+  useEffect(() => {
+    if (!currentUser) return
+
+    // Cargar IDs de conversaciones propias para filtrar mensajes ajenos
+    createClient()
+      .from("chat_participants")
+      .select("conversation_id")
+      .eq("user_id", currentUser.id)
+      .then(({ data }: { data: { conversation_id: string }[] | null }) => {
+        if (data) myConvIdsRef.current = new Set(data.map((r) => r.conversation_id))
+      })
+      .catch(() => {})
+
+    const supabase = createClient()
+    const channel = supabase
+      .channel(`notif-chat-${currentUser.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "chat_messages" },
+        (payload: { new: { sender_id: number; sender_nombre: string; body: string | null; conversation_id: string } }) => {
+          const msg = payload.new
+          if (msg.sender_id === currentUser.id) return
+          if (!myConvIdsRef.current.has(msg.conversation_id)) return
+          // Solo notificar si el usuario NO está ya en el módulo de chat
+          if (currentViewRef.current !== "chat") {
+            setChatUnreadCount((prev) => prev + 1)
+            toast({
+              title: `💬 ${msg.sender_nombre}`,
+              description: msg.body ?? "📷 Imagen",
+            })
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "chat_participants" },
+        (payload: { new: { user_id: number; conversation_id: string } }) => {
+          // Registrar nuevas conversaciones donde me agregan
+          if (payload.new.user_id === currentUser.id) {
+            myConvIdsRef.current.add(payload.new.conversation_id)
+          }
+        }
+      )
+      .subscribe()
+
+    return () => { channel.unsubscribe() }
+  // Solo se recrea al cambiar de usuario (login/logout)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id])
 
   const handleSelectRuta = useCallback((ruta: SelectedRuta) => {
     try {
@@ -457,6 +521,7 @@ export default function Page() {
   const handleViewChange = (view: string, data?: any) => {
     setCurrentView(view)
     setViewData(data)
+    if (view === "chat") setChatUnreadCount(0)
   }
 
   const rutaId = selectedRuta?.id ?? 0
@@ -626,6 +691,7 @@ export default function Page() {
         currentUser={currentUser}
         onLogout={handleLogout}
         userPermissions={userPermissions}
+        chatUnreadCount={chatUnreadCount}
       >
         {renderView()}
       </DashboardLayout>

@@ -109,6 +109,7 @@ interface SidebarProps {
   currentUser?: AuthenticatedUser | null
   onLogout?: () => void
   userPermissions?: PermissionsMap | null
+  chatUnreadCount?: number
 }
 
 export function Sidebar({
@@ -119,6 +120,7 @@ export function Sidebar({
   currentUser,
   onLogout,
   userPermissions,
+  chatUnreadCount,
 }: SidebarProps) {
   const rol = (currentUser?.rol ?? "").toLowerCase()
 
@@ -267,6 +269,8 @@ export function Sidebar({
                 {items.map((item) => {
                   const Icon = item.icon
                   const isActive = currentView === item.id
+                  const isChatItem = item.id === "chat"
+                  const unread = isChatItem && chatUnreadCount ? chatUnreadCount : 0
                   return (
                     <button
                       key={item.id}
@@ -274,7 +278,7 @@ export function Sidebar({
                       onClick={() => onViewChange(item.id)}
                       title={item.label}
                       className={cn(
-                        "flex flex-col items-center justify-center rounded-md transition-all active:scale-95",
+                        "relative flex flex-col items-center justify-center rounded-md transition-all active:scale-95",
                         isCollapsed ? "p-2 h-10" : "p-1.5 h-14 gap-1",
                         item.colorClass,
                         isActive
@@ -286,6 +290,11 @@ export function Sidebar({
                       {!isCollapsed && (
                         <span className="text-[8px] md:text-[9px] font-medium text-center leading-tight line-clamp-2">
                           {item.label}
+                        </span>
+                      )}
+                      {unread > 0 && (
+                        <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-white text-[9px] font-bold leading-none shadow">
+                          {unread > 9 ? "9+" : unread}
                         </span>
                       )}
                     </button>
