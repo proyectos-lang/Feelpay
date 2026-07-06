@@ -3,7 +3,7 @@
 import {
   DollarSign, Plus, TrendingUp, BarChart3, Users,
   LayoutDashboard, ClipboardList, CheckCircle, Route, MapPin,
-  ListChecks, FileText, Link2, Eye, ShoppingBag, MessageSquare,
+  ListChecks, FileText, Link2, Eye, ShoppingBag, MessageSquare, BarChart2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { AuthenticatedUser } from "./views/login-view"
@@ -77,7 +77,8 @@ const ALL_NAV_ITEMS: NavItem[] = [
   // Socio Admin
   { id: "socio-admin-reportes",    icon: FileText,     label: "Reportes",  colorClass: "nav-item-home"     },
   // General
-  { id: "chat",                    icon: MessageSquare, label: "Chat",     colorClass: "nav-item-summary"  },
+  { id: "chat",        icon: MessageSquare, label: "Chat",     colorClass: "nav-item-summary"  },
+  { id: "reportes-bi", icon: BarChart2,     label: "Power BI", colorClass: "nav-item-summary"  },
 ]
 
 const COLS: Record<number, string> = { 1: "grid-cols-1", 2: "grid-cols-2", 3: "grid-cols-3", 4: "grid-cols-4", 5: "grid-cols-5" }

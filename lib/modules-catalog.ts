@@ -218,6 +218,16 @@ export const ALL_MODULES: ModuleDefinition[] = [
     iconName: "MessageSquare",
     group: "General",
   },
+  {
+    viewId: "reportes-bi",
+    label: "Reportes Power BI",
+    mobileLabel: "Power BI",
+    description: "Dashboards gerenciales en Power BI",
+    defaultRoles: ["admin", "administrador", "secretaria", "secretario", "gerencia", "socioadmin", "liquidador"],
+    defaultMobileNavRoles: [],
+    iconName: "BarChart2",
+    group: "General",
+  },
 ]
 
 /** Grupos únicos de módulos en orden de presentación */

@@ -16,6 +16,7 @@ import { AdminReportes } from "@/components/views/admin-reportes"
 import { SecretaryAdminReportes } from "@/components/views/secretary-admin-reportes"
 import { GestionUsuariosRutas } from "@/components/views/gestion-usuarios-rutas"
 import { ChatView } from "@/components/views/chat-view"
+import { ReportesBi } from "@/components/views/reportes-bi"
 import { DailyRoute } from "@/components/views/daily-route"
 import { RegisterPayment } from "@/components/views/register-payment"
 import { PaymentControl } from "@/components/views/payment-control"
@@ -615,6 +616,8 @@ export default function Page() {
         return <GestionUsuariosRutas />
       case "chat":
         return <ChatView currentUser={currentUser!} />
+      case "reportes-bi":
+        return <ReportesBi />
       default:
         return <MainDashboard onViewChange={handleViewChange} />
     }

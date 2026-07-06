@@ -66,6 +66,7 @@ export function DashboardLayout({
       "secretary-reports": "Reportes",
       "user-route-management": "Gestión de Usuarios y Rutas",
       "chat": "Chat Interno",
+      "reportes-bi": "Reportes Power BI",
     }
     return titleMap[view] || "Panel Principal"
   }

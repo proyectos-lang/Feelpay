@@ -9,6 +9,7 @@ import {
   CheckCircle,
   TrendingUp,
   BarChart3,
+  BarChart2,
   Eye,
   MapPin,
   Users,
@@ -63,6 +64,7 @@ const navGroups: NavGroup[] = [
       { id: "admin-route-monitor",    label: "Monitoreo Rutas",    icon: Route,           colorClass: "sidebar-item-route"    },
       { id: "configure-route",        label: "Ordenar Ruta",       icon: MapPin,          colorClass: "sidebar-item-route"    },
       { id: "admin-reportes",         label: "Rep. diarios",       icon: FileText,        colorClass: "sidebar-item-secretary"},
+      { id: "reportes-bi",            label: "Power BI",           icon: BarChart2,       colorClass: "sidebar-item-summary"  },
     ],
   },
   {
@@ -73,24 +75,28 @@ const navGroups: NavGroup[] = [
       { id: "secretary-reports",         label: "Reportes",        icon: FileText,    colorClass: "sidebar-item-secretary" },
       { id: "secretary-admin-reportes",  label: "Rep. Admin",      icon: FileText,    colorClass: "sidebar-item-clients"   },
       { id: "user-route-management",     label: "Usuarios/Rutas",  icon: Users,       colorClass: "sidebar-item-clients"   },
+      { id: "reportes-bi",               label: "Power BI",        icon: BarChart2,   colorClass: "sidebar-item-summary"   },
     ],
   },
   {
     group: "Gerencia",
     items: [
-      { id: "secretary-reports", label: "Reportes", icon: FileText, colorClass: "sidebar-item-secretary" },
+      { id: "secretary-reports", label: "Reportes",  icon: FileText,  colorClass: "sidebar-item-secretary" },
+      { id: "reportes-bi",       label: "Power BI",  icon: BarChart2, colorClass: "sidebar-item-summary"   },
     ],
   },
   {
     group: "Liquidador",
     items: [
-      { id: "admin-reportes", label: "Rep. diarios", icon: FileText, colorClass: "sidebar-item-secretary" },
+      { id: "admin-reportes", label: "Rep. diarios", icon: FileText,  colorClass: "sidebar-item-secretary" },
+      { id: "reportes-bi",    label: "Power BI",     icon: BarChart2, colorClass: "sidebar-item-summary"   },
     ],
   },
   {
     group: "Socio Administrador",
     items: [
-      { id: "socio-admin-reportes", label: "Reportes", icon: FileText, colorClass: "sidebar-item-secretary" },
+      { id: "socio-admin-reportes", label: "Reportes", icon: FileText,  colorClass: "sidebar-item-secretary" },
+      { id: "reportes-bi",          label: "Power BI", icon: BarChart2, colorClass: "sidebar-item-summary"   },
     ],
   },
   {
