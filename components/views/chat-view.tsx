@@ -13,6 +13,32 @@ import { Loader2, Send, Paperclip, ArrowLeft, Plus, Users, User, X, Image as Ima
 import type { AuthenticatedUser } from "./login-view"
 import type { RealtimeChannel } from "@supabase/supabase-js"
 
+function formatMsgTime(iso: string) {
+  return new Date(iso).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })
+}
+
+function formatMsgDate(iso: string) {
+  const d = new Date(iso)
+  const today = new Date()
+  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1)
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  if (sameDay(d, today)) return `Hoy · ${formatMsgTime(iso)}`
+  if (sameDay(d, yesterday)) return `Ayer · ${formatMsgTime(iso)}`
+  return `${d.toLocaleDateString("es-CO", { day: "numeric", month: "short" })} · ${formatMsgTime(iso)}`
+}
+
+function dateSeparatorLabel(iso: string) {
+  const d = new Date(iso)
+  const today = new Date()
+  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1)
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  if (sameDay(d, today)) return "Hoy"
+  if (sameDay(d, yesterday)) return "Ayer"
+  return d.toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })
+}
+
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
 type Conversation = {
@@ -698,9 +724,22 @@ export function ChatView({ currentUser }: ChatViewProps) {
                   const isOwn = msg.sender_id === currentUser.id
                   const prevMsg = messages[i - 1]
                   const showSender = activeConv?.is_group && !isOwn && msg.sender_id !== prevMsg?.sender_id
+                  const prevDate = prevMsg ? new Date(prevMsg.created_at).toDateString() : null
+                  const thisDate = new Date(msg.created_at).toDateString()
+                  const showDateSep = prevDate !== thisDate
 
                   return (
-                    <div key={msg.id} className={`flex flex-col ${isOwn ? "items-end" : "items-start"} ${i > 0 && messages[i - 1].sender_id === msg.sender_id ? "mt-0.5" : "mt-3"}`}>
+                    <div key={msg.id}>
+                    {showDateSep && (
+                      <div className="flex items-center gap-2 my-3">
+                        <div className="flex-1 h-px bg-border" />
+                        <span className="text-[10px] text-muted-foreground font-medium capitalize px-1">
+                          {dateSeparatorLabel(msg.created_at)}
+                        </span>
+                        <div className="flex-1 h-px bg-border" />
+                      </div>
+                    )}
+                    <div className={`flex flex-col ${isOwn ? "items-end" : "items-start"} ${i > 0 && messages[i - 1].sender_id === msg.sender_id && !showDateSep ? "mt-0.5" : "mt-3"}`}>
                       {showSender && (
                         <p className="text-[10px] font-semibold text-muted-foreground px-1 mb-0.5">{msg.sender_nombre}</p>
                       )}
@@ -723,9 +762,10 @@ export function ChatView({ currentUser }: ChatViewProps) {
                         )}
                         {msg.body && <p className="text-sm leading-snug whitespace-pre-wrap break-words">{msg.body}</p>}
                         <p className={`text-[10px] mt-0.5 ${isOwn ? "text-white/60 text-right" : "text-muted-foreground text-right"}`}>
-                          {new Date(msg.created_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}
+                          {formatMsgDate(msg.created_at)}
                         </p>
                       </div>
+                    </div>
                     </div>
                   )
                 })}
