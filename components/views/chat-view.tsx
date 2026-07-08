@@ -705,7 +705,14 @@ export function ChatView({ currentUser }: ChatViewProps) {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold truncate">{activeConv?.name ?? "—"}</p>
                 {activeConv?.is_group && (
-                  <p className="text-[11px] text-muted-foreground">{activeConv.members_count} participantes</p>
+                  <p className="text-[11px] text-muted-foreground truncate">
+                    {participants.length > 0
+                      ? [
+                          ...participants.filter((p) => p.user_id === currentUser.id).map(() => "Tú"),
+                          ...participants.filter((p) => p.user_id !== currentUser.id).map((p) => p.user_nombre),
+                        ].join(", ")
+                      : `${activeConv.members_count} participantes`}
+                  </p>
                 )}
               </div>
             </div>
