@@ -56,12 +56,6 @@ function fechaColombiaHoy(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date())
 }
 
-function fechaColombiaAyer(): string {
-  const d = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }))
-  d.setDate(d.getDate() - 1)
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(d)
-}
-
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4)
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/")
@@ -91,7 +85,6 @@ function EstadoBadge({ estado }: { estado: "pendiente" | "aprobado" | "rechazado
 
 export function SecretaryAdminReportes({ currentUser }: { currentUser: AuthenticatedUser }) {
   const hoy = fechaColombiaHoy()
-  const ayer = fechaColombiaAyer()
   const [selectedDate, setSelectedDate] = useState(hoy)
   const selectedDateRef = useRef(hoy)
   useEffect(() => { selectedDateRef.current = selectedDate }, [selectedDate])
@@ -167,13 +160,28 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
     return result
   }
 
-  // En el primer load, si hoy no tiene reportes → mostrar ayer automáticamente
+  // En el primer load, si hoy no tiene reportes → buscar el último día con
+  // reportes (no asumir que fue ayer: puede haber días de por medio sin reporte)
   useEffect(() => {
     setLoading(true)
     fetchInformes(selectedDate).then((rows) => {
       if (!initialCheckRef.current && selectedDate === hoy && rows.length === 0) {
         initialCheckRef.current = true
-        setSelectedDate(ayer)
+        const supabase = createClient()
+        supabase
+          .from("admin_informes")
+          .select("fecha")
+          .lt("fecha", hoy)
+          .order("fecha", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+          .then(({ data: last }: { data: { fecha: string } | null }) => {
+            if (last?.fecha) {
+              setSelectedDate(last.fecha)
+            } else {
+              setLoading(false)
+            }
+          })
       } else {
         initialCheckRef.current = true
         setLoading(false)
@@ -189,8 +197,8 @@ export function SecretaryAdminReportes({ currentUser }: { currentUser: Authentic
       .channel("secretary-admin-informes-rt")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "admin_informes" }, (payload) => {
         const raw = payload.new as AdminInforme
-        // Si el nuevo reporte es de hoy y se está viendo ayer → saltar a hoy
-        if (raw.fecha === hoy && selectedDateRef.current === ayer) {
+        // Si el nuevo reporte es de hoy y se está viendo un día pasado → saltar a hoy
+        if (raw.fecha === hoy && selectedDateRef.current !== hoy) {
           setSelectedDate(hoy)
           return
         }

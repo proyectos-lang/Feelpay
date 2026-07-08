@@ -56,12 +56,6 @@ function fechaColombiaHoy(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date())
 }
 
-function fechaColombiaAyer(): string {
-  const d = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }))
-  d.setDate(d.getDate() - 1)
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(d)
-}
-
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4)
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/")
@@ -136,7 +130,6 @@ function HistorialRevisiones({ revisiones }: { revisiones: AdminInformeRevision[
 
 export function AdminReportes({ currentUser }: { currentUser: AuthenticatedUser }) {
   const hoy = fechaColombiaHoy()
-  const ayer = fechaColombiaAyer()
   const [selectedDate, setSelectedDate] = useState(hoy)
   const [informes, setInformes] = useState<AdminInforme[]>([])
   const [loading, setLoading] = useState(true)
@@ -175,7 +168,9 @@ export function AdminReportes({ currentUser }: { currentUser: AuthenticatedUser 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Fetch reportes por fecha; en el primer load, si hoy no tiene reportes → mostrar ayer
+  // Fetch reportes por fecha; en el primer load, si hoy no tiene reportes → buscar
+  // el último día con reportes (no asumir que fue ayer: puede haber fines de
+  // semana o días sin reporte de por medio).
   useEffect(() => {
     setLoading(true)
     const supabase = createClient()
@@ -190,7 +185,22 @@ export function AdminReportes({ currentUser }: { currentUser: AuthenticatedUser 
         const rows = (data as AdminInforme[]) ?? []
         if (!initialCheckRef.current && selectedDate === hoy && rows.length === 0) {
           initialCheckRef.current = true
-          setSelectedDate(ayer)
+          supabase
+            .from("admin_informes")
+            .select("fecha")
+            .eq("admin_id", Number(uid))
+            .lt("fecha", hoy)
+            .order("fecha", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+            .then(({ data: last }: { data: { fecha: string } | null }) => {
+              if (last?.fecha) {
+                setSelectedDate(last.fecha)
+              } else {
+                setInformes([])
+                setLoading(false)
+              }
+            })
         } else {
           initialCheckRef.current = true
           setInformes(rows)
