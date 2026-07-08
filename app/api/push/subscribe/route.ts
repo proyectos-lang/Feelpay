@@ -34,18 +34,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  // Eliminar endpoints huérfanos del mismo usuario (endpoint diferente al actual).
-  // Garantiza que cada usuario tenga exactamente una suscripción activa y evita
-  // que endpoints caducos acumulen errores silenciosos en /notify.
-  const { error: cleanupError } = await sb
-    .from("push_subscriptions")
-    .delete()
-    .eq("user_id", String(user_id))
-    .neq("endpoint", subscription.endpoint)
-
-  if (cleanupError) {
-    console.warn("[v0] push/subscribe cleanup error:", cleanupError.message)
-  }
+  // NO borrar los demás endpoints del usuario: un usuario puede tener varios
+  // dispositivos (celular + PC) y cada uno necesita su propia suscripción.
+  // Los endpoints caducos se limpian en /notify cuando responden 404/410/400.
 
   return NextResponse.json({ ok: true })
 }

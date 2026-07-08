@@ -18,7 +18,9 @@ function getPushRol(userRol: string): string | null {
   if (["secretaria", "secretario"].includes(r)) return "secretaria"
   if (r === "gerencia") return "gerencia"
   if (r === "socioadmin") return "socioadmin"
-  return null // vendedor/asesor no necesita push
+  // Vendedor/asesor: no reciben push de reportes, pero sí de chat
+  // (el chat notifica por user_ids, no por rol)
+  return "asesor"
 }
 
 async function subscribeUser(userId: string, pushRol: string) {
@@ -116,7 +118,7 @@ export function PushPermissionPrompt({ currentUser }: Props) {
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-foreground leading-tight">Activar notificaciones</p>
           <p className="text-xs text-muted-foreground leading-snug mt-0.5">
-            Recibe alertas cuando lleguen nuevos reportes
+            Recibe alertas de nuevos reportes y mensajes de chat
           </p>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
