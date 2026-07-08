@@ -26,7 +26,7 @@ const BI_REPORTS = [
     id: "mayela",
     label: "OPAD- Luisa",
     title: "INFORME INVERTRAI OPAD- LUISA",
-    src: "https://app.powerbi.com/view?r=eyJrIjoiMTcyMDQ3ZDQtZjI4YS00MDhjLWE4N2MtMDJmMjgzOGZkOTVhIiwidCI6Ijk2YWMwMjE3LTc4OTEtNGNmYy05MjExLTM5MTEyNThjMmMwMyIsImMiOjR9",
+    src: "https://app.powerbi.com/view?r=eyJrIjoiMjkyZTcyMjAtYmJlYy00MzE3LWI1OTItMDNlNTMzYzcwODcxIiwidCI6Ijk2YWMwMjE3LTc4OTEtNGNmYy05MjExLTM5MTEyNThjMmMwMyIsImMiOjR9",
   },
 ] as const
 
