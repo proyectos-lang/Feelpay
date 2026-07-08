@@ -461,9 +461,6 @@ export function ChatView({ currentUser }: ChatViewProps) {
   activeConvIdRef.current = activeConvId
 
   useEffect(() => {
-    channelMsgsRef.current?.unsubscribe()
-    if (!activeConvId) return
-
     const supabase = createClient()
     channelMsgsRef.current = supabase
       .channel(`chat-global-msgs-${currentUser.id}`)
@@ -471,20 +468,28 @@ export function ChatView({ currentUser }: ChatViewProps) {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "chat_messages" },
         (payload: { new: ChatMessage & { conversation_id: string } }) => {
-          // Solo procesar mensajes de la conversación activa en este momento
-          if (payload.new.conversation_id !== activeConvIdRef.current) return
           const msg = payload.new
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === msg.id)) return prev
-            return [...prev, msg]
-          })
-          if (msg.sender_id !== currentUser.id) {
-            markAsRead(msg.conversation_id)
+          const isActive = msg.conversation_id === activeConvIdRef.current
+          const isOwn = msg.sender_id === currentUser.id
+
+          if (isActive) {
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === msg.id)) return prev
+              return [...prev, msg]
+            })
+            if (!isOwn) markAsRead(msg.conversation_id)
           }
+
           setConversations((prev) =>
             prev.map((c) =>
               c.conversation_id === msg.conversation_id
-                ? { ...c, last_body: msg.body, last_sender: msg.sender_nombre, last_at: msg.created_at, unread_count: 0 }
+                ? {
+                    ...c,
+                    last_body: msg.body,
+                    last_sender: msg.sender_nombre,
+                    last_at: msg.created_at,
+                    unread_count: isActive || isOwn ? 0 : c.unread_count + 1,
+                  }
                 : c
             )
           )
@@ -492,11 +497,11 @@ export function ChatView({ currentUser }: ChatViewProps) {
       )
       .subscribe()
 
+    // Canal persistente por el ciclo de vida del componente; activeConvId
+    // se lee via ref para no tener que resuscribir en cada cambio de conversación.
     return () => {
       channelMsgsRef.current?.unsubscribe()
     }
-  // El canal se crea una vez por usuario; activeConvId se lee via ref
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser.id, markAsRead])
 
   // ── Scroll al fondo cuando llegan mensajes ────────────────────────────────
