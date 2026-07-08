@@ -17,21 +17,15 @@ const BI_REPORTS = [
     src: "https://app.powerbi.com/view?r=eyJrIjoiZGE3YmZjODQtMDE5MS00MTUxLWE1YzctYTQ4MjFmMGI4OGJmIiwidCI6Ijk2YWMwMjE3LTc4OTEtNGNmYy05MjExLTM5MTEyNThjMmMwMyIsImMiOjR9",
   },
   {
-    id: "betty2",
-    label: "Betty 2",
-    title: "INFORME INVERTRAI GERENCIAL BETTY2",
-    src: "https://app.powerbi.com/view?r=eyJrIjoiODUxMDUzYzgtYzZmMy00MzdmLTliMjAtNDBhODQ3NTVhNzg5IiwidCI6Ijk2YWMwMjE3LTc4OTEtNGNmYy05MjExLTM5MTEyNThjMmMwMyIsImMiOjR9",
-  },
-  {
     id: "kevin",
-    label: "Kevin",
-    title: "INFORME INVERTRAI KEVIN",
+    label: "Richard",
+    title: "INFORME INVERTRAI RICHARD",
     src: "https://app.powerbi.com/view?r=eyJrIjoiMTcyMDQ3ZDQtZjI4YS00MDhjLWE4N2MtMDJmMjgzOGZkOTVhIiwidCI6Ijk2YWMwMjE3LTc4OTEtNGNmYy05MjExLTM5MTEyNThjMmMwMyIsImMiOjR9",
   },
   {
     id: "mayela",
-    label: "Mayela",
-    title: "INFORME INVERTRAI MAYELA",
+    label: "OPAD- Luisa",
+    title: "INFORME INVERTRAI OPAD- LUISA",
     src: "https://app.powerbi.com/view?r=eyJrIjoiMTcyMDQ3ZDQtZjI4YS00MDhjLWE4N2MtMDJmMjgzOGZkOTVhIiwidCI6Ijk2YWMwMjE3LTc4OTEtNGNmYy05MjExLTM5MTEyNThjMmMwMyIsImMiOjR9",
   },
 ] as const
