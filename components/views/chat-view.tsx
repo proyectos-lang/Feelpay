@@ -9,7 +9,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/use-toast"
-import { Loader2, Send, Paperclip, ArrowLeft, Plus, Users, User, X, Image as ImageIcon, MessageSquare } from "lucide-react"
+import {
+  Loader2, Send, Paperclip, ArrowLeft, Plus, Users, User, X, Image as ImageIcon, MessageSquare,
+  Search, ChevronUp, ChevronDown, Pencil,
+} from "lucide-react"
 import type { AuthenticatedUser } from "./login-view"
 import type { RealtimeChannel } from "@supabase/supabase-js"
 
@@ -89,6 +92,21 @@ function initials(nombre: string): string {
     .map((p) => p[0])
     .join("")
     .toUpperCase()
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function highlightMatch(text: string, query: string): React.ReactNode {
+  const q = query.trim()
+  if (!q) return text
+  const parts = text.split(new RegExp(`(${escapeRegExp(q)})`, "gi"))
+  return parts.map((part, i) =>
+    part.toLowerCase() === q.toLowerCase()
+      ? <mark key={i} className="bg-yellow-300 text-black rounded-sm px-0.5">{part}</mark>
+      : <span key={i}>{part}</span>
+  )
 }
 
 // ─── NewConversationDialog ────────────────────────────────────────────────────
@@ -332,6 +350,219 @@ function NewConversationDialog({ open, onClose, currentUser, onConversationSelec
   )
 }
 
+// ─── EditGroupDialog ──────────────────────────────────────────────────────────
+
+interface EditGroupProps {
+  open: boolean
+  onClose: () => void
+  currentUser: AuthenticatedUser
+  conversationId: string
+  currentName: string
+  participants: { user_id: number; user_nombre: string }[]
+  onChanged: () => void
+}
+
+function EditGroupDialog({ open, onClose, currentUser, conversationId, currentName, participants, onChanged }: EditGroupProps) {
+  const { toast } = useToast()
+  const [name, setName] = useState(currentName)
+  const [savingName, setSavingName] = useState(false)
+  const [removingId, setRemovingId] = useState<number | null>(null)
+  const [contacts, setContacts] = useState<ContactUser[]>([])
+  const [loadingContacts, setLoadingContacts] = useState(false)
+  const [selectedAddIds, setSelectedAddIds] = useState<Set<number>>(new Set())
+  const [adding, setAdding] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    setName(currentName)
+    setSelectedAddIds(new Set())
+    setLoadingContacts(true)
+
+    const memberIds = new Set(participants.map((p) => p.user_id))
+    const supabase = createClient()
+    supabase
+      .from("chat_allowed_contacts")
+      .select("allowed_user_id")
+      .eq("user_id", currentUser.id)
+      .then(async ({ data: restrictionRows }: { data: { allowed_user_id: number }[] | null }) => {
+        let query = supabase
+          .from("usuarios")
+          .select("id, nombre, rol")
+          .eq("activo", true)
+          .neq("id", currentUser.id)
+          .order("nombre")
+
+        if (restrictionRows && restrictionRows.length > 0) {
+          const allowedIds = restrictionRows.map((r: { allowed_user_id: number }) => r.allowed_user_id)
+          query = query.in("id", allowedIds)
+        }
+
+        const { data } = await query
+        const available = ((data ?? []) as ContactUser[]).filter((c) => !memberIds.has(c.id))
+        setContacts(available)
+        setLoadingContacts(false)
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, conversationId])
+
+  const handleSaveName = async () => {
+    const trimmed = name.trim()
+    if (!trimmed || trimmed === currentName) return
+    setSavingName(true)
+    try {
+      const { error } = await createClient()
+        .from("chat_conversations")
+        .update({ name: trimmed })
+        .eq("id", conversationId)
+      if (error) throw new Error(error.message)
+      onChanged()
+    } catch (err) {
+      toast({ title: "Error", description: String(err), variant: "destructive" })
+    } finally {
+      setSavingName(false)
+    }
+  }
+
+  const handleRemove = async (userId: number) => {
+    setRemovingId(userId)
+    try {
+      const { error } = await createClient()
+        .from("chat_participants")
+        .delete()
+        .eq("conversation_id", conversationId)
+        .eq("user_id", userId)
+      if (error) throw new Error(error.message)
+      onChanged()
+    } catch (err) {
+      toast({ title: "Error", description: String(err), variant: "destructive" })
+    } finally {
+      setRemovingId(null)
+    }
+  }
+
+  const toggleAddId = (uid: number) => {
+    setSelectedAddIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(uid)) next.delete(uid)
+      else next.add(uid)
+      return next
+    })
+  }
+
+  const handleAddMembers = async () => {
+    if (selectedAddIds.size === 0) return
+    setAdding(true)
+    try {
+      const rows = [...selectedAddIds].map((uid) => {
+        const u = contacts.find((c) => c.id === uid)!
+        return { conversation_id: conversationId, user_id: uid, user_nombre: u.nombre }
+      })
+      const { error } = await createClient().from("chat_participants").insert(rows)
+      if (error) throw new Error(error.message)
+      setContacts((prev) => prev.filter((c) => !selectedAddIds.has(c.id)))
+      setSelectedAddIds(new Set())
+      onChanged()
+    } catch (err) {
+      toast({ title: "Error", description: String(err), variant: "destructive" })
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
+      <DialogContent className="max-w-sm rounded-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Editar grupo</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {/* Nombre */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Nombre del grupo</label>
+            <div className="flex gap-2">
+              <Input value={name} onChange={(e) => setName(e.target.value)} className="h-8 text-sm flex-1" />
+              <Button
+                size="sm"
+                className="h-8 shrink-0"
+                onClick={handleSaveName}
+                disabled={savingName || !name.trim() || name.trim() === currentName}
+              >
+                {savingName ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Guardar"}
+              </Button>
+            </div>
+          </div>
+
+          {/* Miembros actuales */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Miembros ({participants.length})</label>
+            <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+              {participants.map((p) => (
+                <div key={p.user_id} className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 hover:bg-muted/40">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand/15 text-brand text-[10px] font-bold">
+                    {initials(p.user_nombre)}
+                  </div>
+                  <span className="text-sm flex-1 truncate">
+                    {p.user_id === currentUser.id ? "Tú" : p.user_nombre}
+                  </span>
+                  {p.user_id !== currentUser.id && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemove(p.user_id)}
+                      disabled={removingId === p.user_id}
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/15 hover:text-destructive transition-colors"
+                      title="Quitar del grupo"
+                    >
+                      {removingId === p.user_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Agregar miembros */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Agregar personas</label>
+            {loadingContacts ? (
+              <div className="flex justify-center py-4"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>
+            ) : contacts.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-2">No hay más contactos disponibles</p>
+            ) : (
+              <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+                {contacts.map((c) => (
+                  <div
+                    key={c.id}
+                    onClick={() => toggleAddId(c.id)}
+                    className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 cursor-pointer hover:bg-muted/40 select-none"
+                  >
+                    <Checkbox checked={selectedAddIds.has(c.id)} className="h-4 w-4 pointer-events-none" />
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand/15 text-brand text-[10px] font-bold">
+                      {initials(c.nombre)}
+                    </div>
+                    <span className="text-sm">{c.nombre}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {contacts.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full"
+                onClick={handleAddMembers}
+                disabled={selectedAddIds.size === 0 || adding}
+              >
+                {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : `Agregar (${selectedAddIds.size})`}
+              </Button>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── ChatView ─────────────────────────────────────────────────────────────────
 
 interface ChatViewProps {
@@ -357,12 +588,18 @@ export function ChatView({ currentUser }: ChatViewProps) {
 
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
   const [showNewConv, setShowNewConv] = useState(false)
+  const [showEditGroup, setShowEditGroup] = useState(false)
+
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [matchIndex, setMatchIndex] = useState(0)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const channelMsgsRef = useRef<RealtimeChannel | null>(null)
   const channelInvitesRef = useRef<RealtimeChannel | null>(null)
+  const msgRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
   // ── Cargar conversaciones ─────────────────────────────────────────────────
 
@@ -453,6 +690,14 @@ export function ChatView({ currentUser }: ChatViewProps) {
     }
   }, [currentUser.id, markAsRead, toast])
 
+  const refreshParticipants = useCallback(async (convId: string) => {
+    const { data: parts } = await createClient()
+      .from("chat_participants")
+      .select("user_id, user_nombre")
+      .eq("conversation_id", convId)
+    setParticipants((parts ?? []) as { user_id: number; user_nombre: string }[])
+  }, [])
+
   // ── Realtime: mensajes de la conversación activa ──────────────────────────
   // Sin filter en postgres_changes: filtrar client-side evita el requisito
   // de REPLICA IDENTITY FULL en la tabla para filtros por columna no-PK.
@@ -495,6 +740,54 @@ export function ChatView({ currentUser }: ChatViewProps) {
           )
         }
       )
+      // Grupo renombrado (por otro participante) → reflejar el nuevo nombre
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "chat_conversations" },
+        (payload: { new: { id: string; name: string | null } }) => {
+          const { id, name } = payload.new
+          setConversations((prev) => prev.map((c) => (c.conversation_id === id ? { ...c, name } : c)))
+        }
+      )
+      // Alguien agregado a un grupo donde ya participo
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "chat_participants" },
+        (payload: { new: { conversation_id: string; user_id: number; user_nombre: string } }) => {
+          const p = payload.new
+          setConversations((prev) =>
+            prev.map((c) => (c.conversation_id === p.conversation_id ? { ...c, members_count: c.members_count + 1 } : c))
+          )
+          if (p.conversation_id === activeConvIdRef.current && p.user_id !== currentUser.id) {
+            setParticipants((prev) =>
+              prev.some((x) => x.user_id === p.user_id) ? prev : [...prev, { user_id: p.user_id, user_nombre: p.user_nombre }]
+            )
+          }
+        }
+      )
+      // Alguien removido de un grupo donde participo (o yo mismo)
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "chat_participants" },
+        (payload: { old: { conversation_id: string; user_id: number } }) => {
+          const p = payload.old
+          if (p.user_id === currentUser.id) {
+            setConversations((prev) => prev.filter((c) => c.conversation_id !== p.conversation_id))
+            if (activeConvIdRef.current === p.conversation_id) {
+              setActiveConvId(null)
+              setShowThread(false)
+              toast({ title: "Fuiste removido del grupo", description: "Ya no eres parte de esta conversación." })
+            }
+            return
+          }
+          setConversations((prev) =>
+            prev.map((c) => (c.conversation_id === p.conversation_id ? { ...c, members_count: Math.max(1, c.members_count - 1) } : c))
+          )
+          if (p.conversation_id === activeConvIdRef.current) {
+            setParticipants((prev) => prev.filter((x) => x.user_id !== p.user_id))
+          }
+        }
+      )
       .subscribe()
 
     // Canal persistente por el ciclo de vida del componente; activeConvId
@@ -502,6 +795,8 @@ export function ChatView({ currentUser }: ChatViewProps) {
     return () => {
       channelMsgsRef.current?.unsubscribe()
     }
+  // toast (de useToast) es estable entre renders; no hace falta listarlo
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser.id, markAsRead])
 
   // ── Scroll al fondo cuando llegan mensajes ────────────────────────────────
@@ -515,6 +810,8 @@ export function ChatView({ currentUser }: ChatViewProps) {
   const selectConversation = (convId: string) => {
     setActiveConvId(convId)
     setShowThread(true)
+    setSearchOpen(false)
+    setSearchQuery("")
     loadMessages(convId)
   }
 
@@ -616,6 +913,44 @@ export function ChatView({ currentUser }: ChatViewProps) {
   }
 
   const activeConv = conversations.find((c) => c.conversation_id === activeConvId)
+
+  // ── Búsqueda dentro de la conversación ────────────────────────────────────
+
+  const matchIds = searchQuery.trim()
+    ? messages.filter((m) => m.body?.toLowerCase().includes(searchQuery.trim().toLowerCase())).map((m) => m.id)
+    : []
+
+  const scrollToMatch = (id: string) => {
+    msgRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "center" })
+  }
+
+  useEffect(() => {
+    setMatchIndex(0)
+    if (searchQuery.trim() && matchIds.length > 0) {
+      scrollToMatch(matchIds[0])
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery])
+
+  const goToPrevMatch = () => {
+    if (matchIds.length === 0) return
+    const prev = (matchIndex - 1 + matchIds.length) % matchIds.length
+    setMatchIndex(prev)
+    scrollToMatch(matchIds[prev])
+  }
+
+  const goToNextMatch = () => {
+    if (matchIds.length === 0) return
+    const next = (matchIndex + 1) % matchIds.length
+    setMatchIndex(next)
+    scrollToMatch(matchIds[next])
+  }
+
+  const closeSearch = () => {
+    setSearchOpen(false)
+    setSearchQuery("")
+    setMatchIndex(0)
+  }
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -720,7 +1055,59 @@ export function ChatView({ currentUser }: ChatViewProps) {
                   </p>
                 )}
               </div>
+              {activeConv?.is_group && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 shrink-0"
+                  onClick={() => setShowEditGroup(true)}
+                  title="Editar grupo"
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+              )}
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 shrink-0"
+                onClick={() => setSearchOpen((v) => !v)}
+                title="Buscar en la conversación"
+              >
+                <Search className="h-4 w-4" />
+              </Button>
             </div>
+
+            {/* Barra de búsqueda */}
+            {searchOpen && (
+              <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/30">
+                <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+                <Input
+                  autoFocus
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.preventDefault(); e.shiftKey ? goToPrevMatch() : goToNextMatch() }
+                    if (e.key === "Escape") closeSearch()
+                  }}
+                  placeholder="Buscar en la conversación..."
+                  className="h-8 text-sm flex-1"
+                />
+                {searchQuery.trim() && (
+                  <span className="text-xs text-muted-foreground shrink-0 whitespace-nowrap">
+                    {matchIds.length > 0 ? `${matchIndex + 1}/${matchIds.length}` : "0/0"}
+                  </span>
+                )}
+                <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" disabled={matchIds.length === 0} onClick={goToPrevMatch} title="Anterior">
+                  <ChevronUp className="h-4 w-4" />
+                </Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" disabled={matchIds.length === 0} onClick={goToNextMatch} title="Siguiente">
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={closeSearch} title="Cerrar búsqueda">
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
 
             {/* Mensajes */}
             {loadingMsgs ? (
@@ -740,8 +1127,10 @@ export function ChatView({ currentUser }: ChatViewProps) {
                   const thisDate = new Date(msg.created_at).toDateString()
                   const showDateSep = prevDate !== thisDate
 
+                  const isCurrentMatch = searchQuery.trim() !== "" && matchIds[matchIndex] === msg.id
+
                   return (
-                    <div key={msg.id}>
+                    <div key={msg.id} ref={(el) => { if (el) msgRefs.current.set(msg.id, el); else msgRefs.current.delete(msg.id) }}>
                     {showDateSep && (
                       <div className="flex items-center gap-2 my-3">
                         <div className="flex-1 h-px bg-border" />
@@ -760,7 +1149,7 @@ export function ChatView({ currentUser }: ChatViewProps) {
                           isOwn
                             ? "bg-brand text-white rounded-tr-sm"
                             : "bg-muted text-foreground rounded-tl-sm"
-                        }`}
+                        } ${isCurrentMatch ? "ring-2 ring-yellow-400" : ""}`}
                       >
                         {msg.image_url && (
                           <button type="button" onClick={() => setLightboxUrl(msg.image_url!)} className="block mb-1">
@@ -772,7 +1161,11 @@ export function ChatView({ currentUser }: ChatViewProps) {
                             />
                           </button>
                         )}
-                        {msg.body && <p className="text-sm leading-snug whitespace-pre-wrap break-words">{msg.body}</p>}
+                        {msg.body && (
+                          <p className="text-sm leading-snug whitespace-pre-wrap break-words">
+                            {searchQuery.trim() ? highlightMatch(msg.body, searchQuery) : msg.body}
+                          </p>
+                        )}
                         <p className={`text-[10px] mt-0.5 ${isOwn ? "text-white/60 text-right" : "text-muted-foreground text-right"}`}>
                           {formatMsgDate(msg.created_at)}
                         </p>
@@ -875,6 +1268,19 @@ export function ChatView({ currentUser }: ChatViewProps) {
         currentUser={currentUser}
         onConversationSelected={handleNewConversationSelected}
       />
+
+      {/* Dialog editar grupo */}
+      {activeConvId && activeConv?.is_group && (
+        <EditGroupDialog
+          open={showEditGroup}
+          onClose={() => setShowEditGroup(false)}
+          currentUser={currentUser}
+          conversationId={activeConvId}
+          currentName={activeConv?.name ?? ""}
+          participants={participants}
+          onChanged={() => { loadConversations(); refreshParticipants(activeConvId) }}
+        />
+      )}
     </div>
   )
 }
