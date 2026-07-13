@@ -9,7 +9,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info, MessageSquare } from "lucide-react"
+import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info, MessageSquare, BarChart2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { ALL_MODULES, MODULE_GROUPS, getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
 import type { ModuleDefinition } from "@/lib/modules-catalog"
@@ -1255,6 +1255,272 @@ function ContactosChatTab() {
   )
 }
 
+// ─── Tab Reportes BI ──────────────────────────────────────────────────────────
+
+type BiReporte = { id: string; nombre: string; url: string; created_at: string }
+
+function ReportesBiTab() {
+  const { toast } = useToast()
+  const [usuarios, setUsuarios] = useState<Usuario[]>([])
+  const [loadingUsers, setLoadingUsers] = useState(true)
+
+  const [reportes, setReportes] = useState<BiReporte[]>([])
+  const [loadingReportes, setLoadingReportes] = useState(true)
+  const [selectedId, setSelectedId] = useState<string | "new" | null>(null)
+
+  const [formNombre, setFormNombre] = useState("")
+  const [formUrl, setFormUrl] = useState("")
+  const [savingForm, setSavingForm] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  const [allowedIds, setAllowedIds] = useState<Set<number>>(new Set())
+  const [loadingPermisos, setLoadingPermisos] = useState(false)
+  const [savingPermisos, setSavingPermisos] = useState(false)
+  const [dirtyPermisos, setDirtyPermisos] = useState(false)
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase
+      .from("usuarios")
+      .select("id, usuario, nombre, rol, activo")
+      .eq("activo", true)
+      .order("nombre")
+      .then(({ data }: { data: Usuario[] | null }) => { setUsuarios(data ?? []); setLoadingUsers(false) })
+  }, [])
+
+  const loadReportes = useCallback(async () => {
+    setLoadingReportes(true)
+    const { data } = await createClient()
+      .from("bi_reportes")
+      .select("id, nombre, url, created_at")
+      .order("created_at", { ascending: true })
+    setReportes((data ?? []) as BiReporte[])
+    setLoadingReportes(false)
+  }, [])
+
+  useEffect(() => { loadReportes() }, [loadReportes])
+
+  const loadPermisos = useCallback(async (reporteId: string) => {
+    setLoadingPermisos(true)
+    setDirtyPermisos(false)
+    const { data } = await createClient()
+      .from("bi_reporte_permisos")
+      .select("user_id")
+      .eq("reporte_id", reporteId)
+    setAllowedIds(new Set((data ?? []).map((r: { user_id: number }) => r.user_id)))
+    setLoadingPermisos(false)
+  }, [])
+
+  useEffect(() => {
+    if (selectedId && selectedId !== "new") {
+      const r = reportes.find((x) => x.id === selectedId)
+      if (r) { setFormNombre(r.nombre); setFormUrl(r.url) }
+      loadPermisos(selectedId)
+    } else if (selectedId === "new") {
+      setFormNombre("")
+      setFormUrl("")
+      setAllowedIds(new Set())
+      setDirtyPermisos(false)
+    }
+  }, [selectedId, reportes, loadPermisos])
+
+  const isNew = selectedId === "new"
+  const selectedReporte = reportes.find((r) => r.id === selectedId)
+  const formUnchanged = !isNew && formNombre === selectedReporte?.nombre && formUrl === selectedReporte?.url
+
+  const handleGuardarReporte = async () => {
+    if (!formNombre.trim() || !formUrl.trim()) return
+    setSavingForm(true)
+    try {
+      const supabase = createClient()
+      if (isNew) {
+        const { data, error } = await supabase
+          .from("bi_reportes")
+          .insert({ nombre: formNombre.trim(), url: formUrl.trim() })
+          .select("id")
+          .single()
+        if (error || !data) throw new Error(error?.message ?? "Error al crear el reporte")
+        await loadReportes()
+        setSelectedId(data.id)
+        toast({ title: "Reporte creado", description: "Ahora asigna quién puede verlo." })
+      } else if (selectedId) {
+        const { error } = await supabase
+          .from("bi_reportes")
+          .update({ nombre: formNombre.trim(), url: formUrl.trim() })
+          .eq("id", selectedId)
+        if (error) throw new Error(error.message)
+        await loadReportes()
+        toast({ title: "Reporte actualizado" })
+      }
+    } catch (err) {
+      toast({ title: "Error", description: String(err), variant: "destructive" })
+    } finally {
+      setSavingForm(false)
+    }
+  }
+
+  const handleEliminar = async () => {
+    if (!selectedId || isNew) return
+    setDeleting(true)
+    try {
+      const { error } = await createClient().from("bi_reportes").delete().eq("id", selectedId)
+      if (error) throw new Error(error.message)
+      setSelectedId(null)
+      await loadReportes()
+      toast({ title: "Reporte eliminado" })
+    } catch (err) {
+      toast({ title: "Error", description: String(err), variant: "destructive" })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const togglePermiso = (uid: number) => {
+    setAllowedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(uid)) next.delete(uid)
+      else next.add(uid)
+      return next
+    })
+    setDirtyPermisos(true)
+  }
+
+  const handleGuardarPermisos = async () => {
+    if (!selectedId || isNew) return
+    setSavingPermisos(true)
+    try {
+      const supabase = createClient()
+      await supabase.from("bi_reporte_permisos").delete().eq("reporte_id", selectedId)
+      if (allowedIds.size > 0) {
+        await supabase.from("bi_reporte_permisos").insert(
+          [...allowedIds].map((uid) => ({ reporte_id: selectedId, user_id: uid }))
+        )
+      }
+      setDirtyPermisos(false)
+      toast({ title: "Permisos guardados" })
+    } catch {
+      toast({ title: "Error", description: "No se pudo guardar.", variant: "destructive" })
+    } finally {
+      setSavingPermisos(false)
+    }
+  }
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-4">
+      {/* Panel selector de reporte */}
+      <div className="space-y-1">
+        <div className="flex items-center justify-between px-1 mb-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Reportes</p>
+          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setSelectedId("new")} title="Nuevo reporte">
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+        {loadingReportes ? (
+          <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+        ) : (
+          <div className="space-y-1 max-h-[60vh] overflow-y-auto pr-1">
+            {reportes.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => setSelectedId(r.id)}
+                className={`w-full text-left rounded-lg border px-3 py-2 text-sm truncate transition-all ${
+                  selectedId === r.id
+                    ? "border-brand bg-brand/10 font-semibold"
+                    : "border-transparent hover:border-border hover:bg-muted/50"
+                }`}
+              >
+                {r.nombre}
+              </button>
+            ))}
+            {reportes.length === 0 && <p className="text-xs text-muted-foreground px-1 py-2">Sin reportes aún</p>}
+          </div>
+        )}
+      </div>
+
+      {/* Panel de edición + permisos */}
+      <div className="rounded-xl border bg-card p-4 space-y-4">
+        {!selectedId ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground gap-2">
+            <BarChart2 className="h-8 w-8 opacity-30" />
+            <p className="text-sm">Selecciona un reporte o crea uno nuevo<br />para gestionar quién puede verlo</p>
+          </div>
+        ) : (
+          <>
+            {/* Nombre + link */}
+            <div className="space-y-2">
+              <div className="space-y-1">
+                <Label className="text-xs">Nombre del reporte</Label>
+                <Input value={formNombre} onChange={(e) => setFormNombre(e.target.value)} placeholder="Ej: Recaudos" className="h-8 text-sm" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Link de Power BI</Label>
+                <Input value={formUrl} onChange={(e) => setFormUrl(e.target.value)} placeholder="https://app.powerbi.com/view?r=..." className="h-8 text-sm" />
+              </div>
+              <div className="flex items-center justify-between gap-2 pt-1">
+                {!isNew ? (
+                  <Button variant="outline" size="sm" onClick={handleEliminar} disabled={deleting} className="gap-1.5 h-8 text-xs text-destructive hover:text-destructive">
+                    {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                    Eliminar
+                  </Button>
+                ) : <span />}
+                <Button
+                  size="sm"
+                  onClick={handleGuardarReporte}
+                  disabled={savingForm || !formNombre.trim() || !formUrl.trim() || formUnchanged}
+                  className="gap-1.5 h-8 text-xs"
+                >
+                  {savingForm ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  {isNew ? "Crear reporte" : "Guardar cambios"}
+                </Button>
+              </div>
+            </div>
+
+            {/* Permisos de visibilidad */}
+            {!isNew && (
+              <div className="space-y-2 pt-2 border-t">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold">Quién puede ver este reporte</p>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+                    {allowedIds.size} usuario{allowedIds.size !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                {loadingUsers || loadingPermisos ? (
+                  <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+                ) : (
+                  <>
+                    <div className="divide-y divide-border rounded-lg border overflow-hidden max-h-[40vh] overflow-y-auto">
+                      {usuarios.map((u) => (
+                        <div
+                          key={u.id}
+                          onClick={() => togglePermiso(u.id)}
+                          className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-muted/40 transition-colors select-none"
+                        >
+                          <Checkbox checked={allowedIds.has(u.id)} className="h-4 w-4 shrink-0 pointer-events-none" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium leading-tight">{u.nombre}</p>
+                            <p className={`text-[10px] mt-0.5 px-1.5 rounded-full inline-block ${ROL_BADGE[u.rol] ?? ""}`}>{ROL_LABELS[u.rol] ?? u.rol}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex justify-end pt-1">
+                      <Button size="sm" onClick={handleGuardarPermisos} disabled={savingPermisos || !dirtyPermisos} className="gap-1.5 h-8 text-xs">
+                        {savingPermisos ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                        Guardar permisos
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export function GestionUsuariosRutas() {
@@ -1273,7 +1539,7 @@ export function GestionUsuariosRutas() {
       </div>
 
       <Tabs defaultValue="usuarios" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-5 h-9">
+        <TabsList className="grid w-full grid-cols-6 h-9">
           <TabsTrigger value="usuarios" className="gap-1 text-xs">
             <Users className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Usuarios</span>
@@ -1294,6 +1560,10 @@ export function GestionUsuariosRutas() {
             <MessageSquare className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Chat</span>
           </TabsTrigger>
+          <TabsTrigger value="reportes-bi" className="gap-1 text-xs">
+            <BarChart2 className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Power BI</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="usuarios">
@@ -1310,6 +1580,9 @@ export function GestionUsuariosRutas() {
         </TabsContent>
         <TabsContent value="contactos-chat">
           <ContactosChatTab />
+        </TabsContent>
+        <TabsContent value="reportes-bi">
+          <ReportesBiTab />
         </TabsContent>
       </Tabs>
     </div>

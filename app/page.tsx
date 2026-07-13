@@ -617,7 +617,7 @@ export default function Page() {
       case "chat":
         return <ChatView currentUser={currentUser!} />
       case "reportes-bi":
-        return <ReportesBi />
+        return <ReportesBi currentUser={currentUser!} />
       default:
         return <MainDashboard onViewChange={handleViewChange} />
     }
