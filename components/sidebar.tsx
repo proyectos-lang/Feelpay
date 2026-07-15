@@ -25,6 +25,7 @@ import {
   Share2,
   MoreVertical,
   MessageSquare,
+  ShieldCheck,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -70,6 +71,7 @@ const navGroups: NavGroup[] = [
     group: "Secretaria",
     items: [
       { id: "secretary-authorizations",  label: "Autor. Secret.",  icon: CheckCircle, colorClass: "sidebar-item-secretary" },
+      { id: "movimientos-revision",      label: "Movim. Revisión", icon: ShieldCheck, colorClass: "sidebar-item-payment"   },
       { id: "payment-control",           label: "Control Pagos",   icon: ListChecks,  colorClass: "sidebar-item-payment"   },
       { id: "secretary-reports",         label: "Reportes",        icon: FileText,    colorClass: "sidebar-item-secretary" },
       { id: "secretary-admin-reportes",  label: "Rep. Admin",      icon: FileText,    colorClass: "sidebar-item-clients"   },

@@ -9,7 +9,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info, MessageSquare, BarChart2 } from "lucide-react"
+import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info, MessageSquare, BarChart2, Gauge } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { ALL_MODULES, MODULE_GROUPS, getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
 import type { ModuleDefinition } from "@/lib/modules-catalog"
@@ -1521,6 +1521,214 @@ function ReportesBiTab() {
   )
 }
 
+// ─── Tab Umbrales ─────────────────────────────────────────────────────────────
+
+type RutaUmbralRow = {
+  ruta_id: number
+  gasto_habilitado: boolean
+  gasto_umbral: number | null
+  venta_nueva_habilitado: boolean
+  venta_nueva_umbral: number | null
+  venta_renovacion_habilitado: boolean
+  venta_renovacion_umbral: number | null
+  abono_habilitado: boolean
+  abono_umbral: number | null
+}
+
+function UmbralesTab() {
+  const { toast } = useToast()
+  const [rutas, setRutas] = useState<Ruta[]>([])
+  const [configs, setConfigs] = useState<Map<number, RutaUmbralRow>>(new Map())
+  const [selectedRutaId, setSelectedRutaId] = useState<number | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  const [fGastoHab, setFGastoHab] = useState(false)
+  const [fGastoUmbral, setFGastoUmbral] = useState("")
+  const [fVentaNuevaHab, setFVentaNuevaHab] = useState(false)
+  const [fVentaNuevaUmbral, setFVentaNuevaUmbral] = useState("")
+  const [fVentaRenovacionHab, setFVentaRenovacionHab] = useState(false)
+  const [fVentaRenovacionUmbral, setFVentaRenovacionUmbral] = useState("")
+  const [fAbonoHab, setFAbonoHab] = useState(false)
+  const [fAbonoUmbral, setFAbonoUmbral] = useState("")
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true)
+    try {
+      const supabase = createClient()
+      const [{ data: rutasData }, { data: configsData }] = await Promise.all([
+        supabase.from("rutas").select("id, nombre, ciudad, pais").order("id"),
+        supabase.from("ruta_config_umbrales").select("*"),
+      ])
+      setRutas((rutasData as Ruta[]) ?? [])
+      setConfigs(new Map(((configsData as RutaUmbralRow[]) ?? []).map((c) => [c.ruta_id, c])))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchAll() }, [fetchAll])
+
+  const selectRuta = (id: number) => {
+    setSelectedRutaId(id)
+    const c = configs.get(id)
+    setFGastoHab(c?.gasto_habilitado ?? false)
+    setFGastoUmbral(c?.gasto_umbral?.toString() ?? "")
+    setFVentaNuevaHab(c?.venta_nueva_habilitado ?? false)
+    setFVentaNuevaUmbral(c?.venta_nueva_umbral?.toString() ?? "")
+    setFVentaRenovacionHab(c?.venta_renovacion_habilitado ?? false)
+    setFVentaRenovacionUmbral(c?.venta_renovacion_umbral?.toString() ?? "")
+    setFAbonoHab(c?.abono_habilitado ?? false)
+    setFAbonoUmbral(c?.abono_umbral?.toString() ?? "")
+  }
+
+  const handleGuardar = async () => {
+    if (selectedRutaId === null) return
+    setSaving(true)
+    try {
+      const supabase = createClient()
+      const payload = {
+        ruta_id: selectedRutaId,
+        gasto_habilitado: fGastoHab,
+        gasto_umbral: fGastoUmbral ? Number.parseFloat(fGastoUmbral) : null,
+        venta_nueva_habilitado: fVentaNuevaHab,
+        venta_nueva_umbral: fVentaNuevaUmbral ? Number.parseFloat(fVentaNuevaUmbral) : null,
+        venta_renovacion_habilitado: fVentaRenovacionHab,
+        venta_renovacion_umbral: fVentaRenovacionUmbral ? Number.parseFloat(fVentaRenovacionUmbral) : null,
+        abono_habilitado: fAbonoHab,
+        abono_umbral: fAbonoUmbral ? Number.parseFloat(fAbonoUmbral) : null,
+        updated_at: new Date().toISOString(),
+      }
+      const { error } = await supabase.from("ruta_config_umbrales").upsert(payload, { onConflict: "ruta_id" })
+      if (error) throw error
+      toast({ title: "Umbrales guardados" })
+      await fetchAll()
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Error desconocido", variant: "destructive" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const selectedRuta = rutas.find((r) => r.id === selectedRutaId)
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-4">
+      {/* Panel selector de ruta */}
+      <div className="space-y-1">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-1 mb-2">Rutas</p>
+        {loading ? (
+          <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+        ) : (
+          <div className="space-y-1 max-h-[60vh] overflow-y-auto pr-1">
+            {rutas.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => selectRuta(r.id)}
+                className={`w-full text-left rounded-lg border px-3 py-2 text-sm transition-all truncate ${
+                  selectedRutaId === r.id
+                    ? "border-brand bg-brand/10 font-semibold"
+                    : "border-transparent hover:border-border hover:bg-muted/50"
+                }`}
+              >
+                {r.nombre}
+              </button>
+            ))}
+            {rutas.length === 0 && <p className="text-xs text-muted-foreground px-1 py-2">Sin rutas registradas</p>}
+          </div>
+        )}
+      </div>
+
+      {/* Panel de configuración */}
+      <div className="rounded-xl border bg-card p-4 space-y-4">
+        {!selectedRuta ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground gap-2">
+            <Gauge className="h-8 w-8 opacity-30" />
+            <p className="text-sm">Selecciona una ruta para configurar<br />sus umbrales de aprobación</p>
+          </div>
+        ) : (
+          <>
+            <p className="font-semibold text-sm">{selectedRuta.nombre}</p>
+
+            {/* Gastos/Ingresos/Retiros */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm">Gastos, Ingresos y Retiros</Label>
+                <Checkbox checked={fGastoHab} onCheckedChange={(v) => setFGastoHab(!!v)} />
+              </div>
+              <Input
+                type="number"
+                disabled={!fGastoHab}
+                value={fGastoUmbral}
+                onChange={(e) => setFGastoUmbral(e.target.value)}
+                placeholder="Umbral en $ (ej. 200000)"
+                className="h-9 text-sm"
+              />
+            </div>
+
+            {/* Ventas: nueva + renovación */}
+            <div className="space-y-2 pt-1 border-t">
+              <p className="text-xs font-semibold text-muted-foreground pt-2">Ventas</p>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm">Ventas nuevas</Label>
+                  <Checkbox checked={fVentaNuevaHab} onCheckedChange={(v) => setFVentaNuevaHab(!!v)} />
+                </div>
+                <Input
+                  type="number"
+                  disabled={!fVentaNuevaHab}
+                  value={fVentaNuevaUmbral}
+                  onChange={(e) => setFVentaNuevaUmbral(e.target.value)}
+                  placeholder="Umbral en $ (ej. 1000000)"
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm">Renovaciones</Label>
+                  <Checkbox checked={fVentaRenovacionHab} onCheckedChange={(v) => setFVentaRenovacionHab(!!v)} />
+                </div>
+                <Input
+                  type="number"
+                  disabled={!fVentaRenovacionHab}
+                  value={fVentaRenovacionUmbral}
+                  onChange={(e) => setFVentaRenovacionUmbral(e.target.value)}
+                  placeholder="Umbral en $ (ej. 1000000)"
+                  className="h-9 text-sm"
+                />
+              </div>
+            </div>
+
+            {/* Abonos */}
+            <div className="space-y-1.5 pt-1 border-t pt-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm">Abonos</Label>
+                <Checkbox checked={fAbonoHab} onCheckedChange={(v) => setFAbonoHab(!!v)} />
+              </div>
+              <Input
+                type="number"
+                disabled={!fAbonoHab}
+                value={fAbonoUmbral}
+                onChange={(e) => setFAbonoUmbral(e.target.value)}
+                placeholder="Umbral en $ (ej. 300000)"
+                className="h-9 text-sm"
+              />
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <Button size="sm" onClick={handleGuardar} disabled={saving} className="gap-1.5 h-8 text-xs">
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                Guardar
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export function GestionUsuariosRutas() {
@@ -1539,7 +1747,7 @@ export function GestionUsuariosRutas() {
       </div>
 
       <Tabs defaultValue="usuarios" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-6 h-9">
+        <TabsList className="grid w-full grid-cols-7 h-9">
           <TabsTrigger value="usuarios" className="gap-1 text-xs">
             <Users className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Usuarios</span>
@@ -1564,6 +1772,10 @@ export function GestionUsuariosRutas() {
             <BarChart2 className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Power BI</span>
           </TabsTrigger>
+          <TabsTrigger value="umbrales" className="gap-1 text-xs">
+            <Gauge className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Umbrales</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="usuarios">
@@ -1583,6 +1795,9 @@ export function GestionUsuariosRutas() {
         </TabsContent>
         <TabsContent value="reportes-bi">
           <ReportesBiTab />
+        </TabsContent>
+        <TabsContent value="umbrales">
+          <UmbralesTab />
         </TabsContent>
       </Tabs>
     </div>

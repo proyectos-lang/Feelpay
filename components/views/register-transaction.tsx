@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TrendingDown, TrendingUp, Wallet, Camera, X, AlertCircle } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { saveTransaction } from "@/lib/actions/save-transaction"
+import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre, type RutaUmbrales } from "@/lib/ruta-umbrales"
 import {
   Dialog,
   DialogContent,
@@ -27,7 +28,7 @@ type ItemOption = {
 }
 
 type PendingTransaction = {
-  type: string
+  type: "income" | "expense" | "withdrawal"
   amount: number
   limite?: number
 }
@@ -99,6 +100,16 @@ export function RegisterTransaction({
   const [showExpenseApprovalDialog, setShowExpenseApprovalDialog] = useState(false)
   const [showWithdrawalApprovalDialog, setShowWithdrawalApprovalDialog] = useState(false)
   const [pendingTransaction, setPendingTransaction] = useState<PendingTransaction | null>(null)
+
+  // Umbral de aprobacion por ruta (configurado por secretaria en Gestion de
+  // Usuarios y Rutas > Umbrales). Si un movimiento lo supera, se envia a
+  // revision en vez de aplicarse directamente.
+  const [umbrales, setUmbrales] = useState<RutaUmbrales | null>(null)
+  const [confirmingRevision, setConfirmingRevision] = useState(false)
+
+  useEffect(() => {
+    getRutaUmbrales(ruta).then(setUmbrales)
+  }, [ruta])
 
   useEffect(() => {
     const fetchItems = async () => {
@@ -208,6 +219,12 @@ export function RegisterTransaction({
       return
     }
 
+    if (excedeUmbral(umbrales?.gasto_habilitado ?? false, umbrales?.gasto_umbral ?? null, valor)) {
+      setPendingTransaction({ type: "income", amount: valor })
+      setShowIncomeApprovalDialog(true)
+      return
+    }
+
     setSaving(true)
     try {
       const requiresApproval = incomeLimite && valor > incomeLimite
@@ -253,6 +270,12 @@ export function RegisterTransaction({
 
     if (!selectedExpenseItem || !expenseAmount || !conceptoName) {
       alert("Por favor completa todos los campos requeridos")
+      return
+    }
+
+    if (excedeUmbral(umbrales?.gasto_habilitado ?? false, umbrales?.gasto_umbral ?? null, valor)) {
+      setPendingTransaction({ type: "expense", amount: valor })
+      setShowExpenseApprovalDialog(true)
       return
     }
 
@@ -304,6 +327,12 @@ export function RegisterTransaction({
       return
     }
 
+    if (excedeUmbral(umbrales?.gasto_habilitado ?? false, umbrales?.gasto_umbral ?? null, valor)) {
+      setPendingTransaction({ type: "withdrawal", amount: valor })
+      setShowWithdrawalApprovalDialog(true)
+      return
+    }
+
     setSaving(true)
     try {
       const requiresApproval = withdrawalLimite && valor > withdrawalLimite
@@ -340,6 +369,68 @@ export function RegisterTransaction({
       showToast("Error al guardar el retiro", "error")
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleCancelRevision = () => {
+    setPendingTransaction(null)
+    setShowIncomeApprovalDialog(false)
+    setShowExpenseApprovalDialog(false)
+    setShowWithdrawalApprovalDialog(false)
+  }
+
+  const handleConfirmRevision = async () => {
+    if (!pendingTransaction) return
+    const { type, amount } = pendingTransaction
+
+    const tipoTransaccion = type === "income" ? "Ingreso" : type === "expense" ? "Gasto" : "Retiro"
+    const concepto = getSelectedItemName(type)
+    const observacion = type === "income" ? incomeDescription : type === "expense" ? expenseDescription : withdrawalDescription
+    const foto = type === "income" ? incomePhoto : type === "expense" ? expensePhoto : withdrawalPhoto
+
+    setConfirmingRevision(true)
+    try {
+      const { error } = await createClient().from("solicitudes_revision").insert({
+        tipo: "gasto",
+        ruta_id: ruta,
+        solicitado_por: adminid,
+        solicitado_por_nombre: getSolicitanteNombre(),
+        monto: amount,
+        descripcion: `${tipoTransaccion}: ${concepto}`,
+        payload: { concepto, limite: null, valor: amount, observacion, foto, tipo: tipoTransaccion, ruta, adminid },
+      })
+      if (error) throw error
+
+      showToast(MENSAJE_REVISION)
+
+      if (type === "income") {
+        setIncomeAmount("")
+        setIncomeDescription("")
+        setIncomePhoto(null)
+        setSelectedIncomeItem("")
+        setIncomeLimite(null)
+        setShowIncomeWarning(false)
+      } else if (type === "expense") {
+        setExpenseAmount("")
+        setExpenseDescription("")
+        setExpensePhoto(null)
+        setSelectedExpenseItem("")
+        setExpenseLimite(null)
+        setShowExpenseWarning(false)
+      } else {
+        setWithdrawalAmount("")
+        setWithdrawalDescription("")
+        setWithdrawalPhoto(null)
+        setSelectedWithdrawalItem("")
+        setWithdrawalLimite(null)
+        setShowWithdrawalWarning(false)
+      }
+    } catch (error) {
+      console.error("[v0] Error creando solicitud de revision:", error)
+      showToast("Error al enviar a revisión", "error")
+    } finally {
+      setConfirmingRevision(false)
+      handleCancelRevision()
     }
   }
 
@@ -838,6 +929,32 @@ export function RegisterTransaction({
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Diálogo de confirmación: movimiento supera el umbral de ruta */}
+      <Dialog
+        open={showIncomeApprovalDialog || showExpenseApprovalDialog || showWithdrawalApprovalDialog}
+        onOpenChange={(open) => { if (!open) handleCancelRevision() }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <div className="flex items-center justify-center h-14 w-14 rounded-full bg-amber-100 mx-auto mb-4">
+              <AlertCircle className="h-8 w-8 text-amber-600" />
+            </div>
+            <DialogTitle className="text-xl md:text-2xl text-center">Movimiento supera el umbral de la ruta</DialogTitle>
+            <DialogDescription className="text-center text-base mt-4">
+              {MENSAJE_REVISION}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col-reverse sm:flex-row justify-center gap-2 pt-4">
+            <Button variant="outline" onClick={handleCancelRevision} disabled={confirmingRevision}>
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmRevision} disabled={confirmingRevision}>
+              {confirmingRevision ? "Enviando..." : "Continuar"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Income Success Dialog - Approval Required */}
       <Dialog open={showIncomeSuccessDialog} onOpenChange={setShowIncomeSuccessDialog}>

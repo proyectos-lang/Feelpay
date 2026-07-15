@@ -48,6 +48,7 @@ export function DashboardLayout({
       "new-loan": "Nuevo Préstamo",
       "pending-authorizations": "Autorizaciones Administrador",
       "secretary-authorizations": "Autorizaciones Secretaria",
+      "movimientos-revision": "Movimientos en Revisión",
       "daily-route": "Ruta Diaria",
       "configure-route": "Ordenar Ruta",
       "register-payment": "Registrar Pago",

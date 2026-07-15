@@ -2,7 +2,7 @@
 
 import React from "react"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -18,6 +18,7 @@ import { Barcode as BarCode, X, Loader2, UserPlus, AlertCircle, CheckCircle2 } f
 import { createClient } from "@/lib/supabase/client"
 import { todayColombia } from "@/lib/colombia-date"
 import { useToast } from "@/hooks/use-toast"
+import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre } from "@/lib/ruta-umbrales"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   Dialog,
@@ -193,6 +194,22 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   const showToastPill = (msg: string) => {
     setToastPill(msg)
     setTimeout(() => setToastPill(null), 3000)
+  }
+  // Dialog de confirmacion cuando la venta supera el umbral de la ruta
+  // (nueva o renovacion, configurado por secretaria). Se resuelve via
+  // Promise para poder "pausar" handleCreateVenta hasta que el usuario
+  // decida, sin duplicar toda la logica de construccion de p_cliente/p_loan.
+  const [showRevisionDialog, setShowRevisionDialog] = useState(false)
+  const revisionResolveRef = useRef<((v: boolean) => void) | null>(null)
+  const confirmRevision = () =>
+    new Promise<boolean>((resolve) => {
+      revisionResolveRef.current = resolve
+      setShowRevisionDialog(true)
+    })
+  const handleRevisionChoice = (confirmado: boolean) => {
+    setShowRevisionDialog(false)
+    revisionResolveRef.current?.(confirmado)
+    revisionResolveRef.current = null
   }
   // Helper: marca/desmarca un campo en formErrors. Permite que el onChange
   // de cada input limpie el resaltado tan pronto el usuario corrige.
@@ -884,6 +901,80 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         return
       }
 
+      // ── Umbral de aprobacion por ruta (venta nueva vs renovacion) ──────
+      // Si la venta supera el umbral configurado por secretaria para este
+      // tipo (nueva o renovacion, segun si viene de preSelectedClientId),
+      // se envia a revision en vez de llamar la RPC directamente. Nada se
+      // escribe en loans/payment_plan hasta que secretaria la apruebe.
+      const esRenovacion = !!preSelectedClientId
+      const umbrales = await getRutaUmbrales(p_ruta_id)
+      const ventaHabilitada = esRenovacion ? umbrales.venta_renovacion_habilitado : umbrales.venta_nueva_habilitado
+      const ventaUmbral = esRenovacion ? umbrales.venta_renovacion_umbral : umbrales.venta_nueva_umbral
+
+      if (excedeUmbral(ventaHabilitada, ventaUmbral, valorNum)) {
+        const confirmado = await confirmRevision()
+        if (!confirmado) return
+
+        const { error: insertError } = await createClient().from("solicitudes_revision").insert({
+          tipo: "venta",
+          subtipo: esRenovacion ? "renovacion" : "nueva",
+          ruta_id: p_ruta_id,
+          solicitado_por: p_user_id,
+          solicitado_por_nombre: getSolicitanteNombre(),
+          monto: valorNum,
+          descripcion: `${esRenovacion ? "Renovación" : "Venta nueva"} — ${apodo || nombreCompleto}`,
+          payload: { p_cliente, p_loan, p_payment_plan },
+        })
+
+        if (insertError) {
+          toast({ title: "Error", description: insertError.message, variant: "destructive" })
+          return
+        }
+
+        showToastPill(MENSAJE_REVISION)
+        setSuccessDialog({ open: true, msg: MENSAJE_REVISION })
+        setSuccessAlert(MENSAJE_REVISION)
+        setFormAlert(null)
+        setTimeout(() => setSuccessAlert(null), 6000)
+
+        // Reset form — mismo bloque que el camino de exito normal
+        setValor("")
+        setSaldo("")
+        setValorAPagar("")
+        setValorCuota("")
+        setTasaInteres("")
+        setDias("")
+        setTipoAmortizacion("")
+        setFrecuenciaPago("")
+        setDiaSemana("")
+        setEnrutarVenta("")
+        setAmortizacionTable([])
+        setShowAmortization(false)
+        setPagoAdelantado(false)
+        setNumeroCuotas(1)
+        setOtroValor(false)
+        setValorPago("")
+        setPrestamoEmpleado(false)
+        setSelectedClient("")
+        setClientSearch("")
+        setDocumento("")
+        setNombreCompleto("")
+        setApodo("")
+        setSector("")
+        setTelefono("")
+        setTelefono2("")
+        setTelefonoError("")
+        setTelefono2Error("")
+        setDireccion("")
+        setTipoComercio("")
+        setRef1Nombre("")
+        setRef1Telefono("")
+        setRef1Direccion("")
+        setFormErrors(new Set())
+        setCedulaImage(null)
+        return
+      }
+
       // ── Llamada UNICA a la RPC atomica ────────────────────────────────
       // Toda la creacion (cliente + loan + payment_plan) corre en una sola
       // transaccion en la base; si algo falla, se hace rollback completo
@@ -1094,6 +1185,29 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
               onClick={() => setSuccessDialog({ open: false, msg: "" })}
             >
               Aceptar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de confirmacion: la venta supera el umbral de la ruta */}
+      <Dialog open={showRevisionDialog} onOpenChange={(open) => { if (!open) handleRevisionChoice(false) }}>
+        <DialogContent className="max-w-sm text-center">
+          <DialogHeader className="items-center gap-2">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-100">
+              <AlertCircle className="h-6 w-6 text-amber-600" />
+            </div>
+            <DialogTitle className="text-base font-semibold">Venta supera el umbral de la ruta</DialogTitle>
+            <DialogDescription className="text-sm text-foreground/80">
+              {MENSAJE_REVISION}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-2 flex-col-reverse sm:flex-row gap-2">
+            <Button variant="outline" className="w-full" onClick={() => handleRevisionChoice(false)}>
+              Cancelar
+            </Button>
+            <Button className="w-full" onClick={() => handleRevisionChoice(true)}>
+              Continuar
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -10,6 +10,7 @@ import { ViewLoans } from "@/components/views/view-loans"
 import { NewLoan } from "@/components/views/new-loan"
 import { PendingAuthorizations } from "@/components/views/pending-authorizations"
 import { SecretaryAuthorizations } from "@/components/views/secretary-authorizations"
+import { MovimientosRevision } from "@/components/views/movimientos-revision"
 import { SecretaryReports } from "@/components/views/secretary-reports"
 import { SocioAdminReportes } from "@/components/views/socio-admin-reportes"
 import { AdminReportes } from "@/components/views/admin-reportes"
@@ -563,6 +564,8 @@ export default function Page() {
         return <PendingAuthorizations />
       case "secretary-authorizations":
         return <SecretaryAuthorizations />
+      case "movimientos-revision":
+        return <MovimientosRevision />
       case "daily-route":
         return <DailyRoute />
       case "configure-route":

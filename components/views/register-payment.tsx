@@ -24,13 +24,14 @@ import { useToast } from "@/hooks/use-toast"
 // `createClient` ya no se importa directamente: toda interaccion con
   // Supabase: RLS eliminado. `getSupabaseSafe` y `callRpcAtomic` se conservan
   // como atajos delgados sobre `createClient()`.
-  import { getSupabaseSafe, callRpcAtomic } from "@/lib/api-helper"
+  import { getSupabaseSafe, callRpcAtomic, getSessionIdentity } from "@/lib/api-helper"
 import { SalesTodayList } from "@/components/views/sales-today-list"
 // Helper que centraliza la carga del dashboard: prueba la RPC atomica
 // `obtener_dashboard_pagos` primero (inmune al patron PgBouncer) y si no
 // esta desplegada cae al modo legacy con multiples SELECTs paralelos.
 import { loadDashboardPagos } from "@/lib/dashboard-data"
 import { todayColombia } from "@/lib/colombia-date"
+import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre, type RutaUmbrales } from "@/lib/ruta-umbrales"
 
 // Types matching DB schema
 type LoanWithClient = {
@@ -277,6 +278,25 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   }, [extenderCuotas, selectedClient])
   const [showRenovationDialog, setShowRenovationDialog] = useState(false)
   const [clientForRenovation, setClientForRenovation] = useState<DisplayClient | null>(null)
+
+  // Umbral de aprobacion de abonos por ruta (secretaria). Si el monto lo
+  // supera, el pago se envia a revision en vez de aplicarse.
+  const [umbrales, setUmbrales] = useState<RutaUmbrales | null>(null)
+  useEffect(() => {
+    getRutaUmbrales(currentRutaId).then(setUmbrales)
+  }, [currentRutaId])
+  const [showRevisionDialog, setShowRevisionDialog] = useState(false)
+  const revisionResolveRef = useRef<((v: boolean) => void) | null>(null)
+  const confirmRevision = () =>
+    new Promise<boolean>((resolve) => {
+      revisionResolveRef.current = resolve
+      setShowRevisionDialog(true)
+    })
+  const handleRevisionChoice = (confirmado: boolean) => {
+    setShowRevisionDialog(false)
+    revisionResolveRef.current?.(confirmado)
+    revisionResolveRef.current = null
+  }
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [clientForShare, setClientForShare] = useState<DisplayClient | null>(null)
   const [sharingPdf, setSharingPdf] = useState(false)
@@ -922,6 +942,60 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       const fechaPago = `${parts.year}-${parts.month}-${parts.day}`
       const fechaPagoReal = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}-05:00`
       const { latitud, longitud } = coords
+
+      // -----------------------------------------------------------------
+      // ── Umbral de aprobacion de abonos por ruta ──────────────────────
+      // Si el monto supera el umbral configurado por secretaria, el pago
+      // se envia a revision ANTES de tocar cualquier tabla real (incluidos
+      // los pre-pasos de "pago extraordinario" y "extension de americano"
+      // de mas abajo, que tambien quedan en espera). payment_plan/loans
+      // no se modifican hasta que secretaria apruebe.
+      const tipoOperacionUmbral: "pago_normal" | "pago_parcial" | "cancelacion_total" =
+        isCanceladaSnap ? "cancelacion_total" : isPartialSnap ? "pago_parcial" : "pago_normal"
+
+      if (excedeUmbral(umbrales?.abono_habilitado ?? false, umbrales?.abono_umbral ?? null, monto)) {
+        const confirmado = await confirmRevision()
+        if (!confirmado) { setSaving(false); return }
+
+        try {
+          const identity = getSessionIdentity()
+          const supabase = await getSupabaseSafe()
+          const { error: insertError } = await supabase.from("solicitudes_revision").insert({
+            tipo: "abono",
+            ruta_id: currentRutaId,
+            solicitado_por: identity.user_id,
+            solicitado_por_nombre: getSolicitanteNombre(),
+            monto,
+            descripcion: `Abono — ${clientSnapshot.nombre} (cuota ${clientSnapshot.nextPaymentNumero})`,
+            payload: {
+              p_payload: {
+                tipo: tipoOperacionUmbral,
+                loan_id: clientSnapshot.loanId,
+                client_id: clientSnapshot.clientId,
+                monto,
+                num_cuotas: numCuotasSnap,
+                fecha_pago: fechaPago,
+                fecha_pago_real: fechaPagoReal,
+                latitud,
+                longitud,
+              },
+            },
+          })
+          if (insertError) throw insertError
+
+          toast({ title: "Enviado a revisión", description: MENSAJE_REVISION })
+          handleBack()
+        } catch (err) {
+          toast({
+            title: "Error",
+            description: err instanceof Error ? err.message : "No se pudo enviar a revisión",
+            variant: "destructive",
+          })
+        } finally {
+          setSaving(false)
+        }
+        return
+      }
 
       // -----------------------------------------------------------------
       // ── PAGO EXTRAORDINARIO desde "No Diarios" ───────────────────────
@@ -2749,6 +2823,25 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               Cancelar
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de confirmacion: el abono supera el umbral de la ruta */}
+      <Dialog open={showRevisionDialog} onOpenChange={(open) => { if (!open) handleRevisionChoice(false) }}>
+        <DialogContent className="p-4 md:p-6 max-w-[90vw] md:max-w-md">
+          <DialogHeader>
+            <div className="flex items-center justify-center h-12 w-12 rounded-full bg-amber-100 mx-auto mb-2">
+              <AlertCircle className="h-6 w-6 text-amber-600" />
+            </div>
+            <DialogTitle className="text-sm md:text-lg text-center">Abono supera el umbral de la ruta</DialogTitle>
+            <DialogDescription className="text-xs md:text-sm text-center">
+              {MENSAJE_REVISION}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-2 md:gap-3 pt-2 md:pt-4">
+            <Button variant="outline" onClick={() => handleRevisionChoice(false)} className="flex-1 h-8 md:h-10 text-xs md:text-base bg-transparent">Cancelar</Button>
+            <Button onClick={() => handleRevisionChoice(true)} className="flex-1 h-8 md:h-10 text-xs md:text-base">Continuar</Button>
+          </div>
         </DialogContent>
       </Dialog>
 

@@ -3,7 +3,7 @@
 import {
   DollarSign, Plus, TrendingUp, BarChart3, Users,
   LayoutDashboard, ClipboardList, CheckCircle, Route, MapPin,
-  ListChecks, FileText, Link2, Eye, ShoppingBag, MessageSquare, BarChart2,
+  ListChecks, FileText, Link2, Eye, ShoppingBag, MessageSquare, BarChart2, ShieldCheck,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { AuthenticatedUser } from "./views/login-view"
@@ -70,6 +70,7 @@ const ALL_NAV_ITEMS: NavItem[] = [
   { id: "admin-reportes",         icon: FileText,        label: "Rep. A.",   colorClass: "nav-item-home"     },
   // Secretaria
   { id: "secretary-authorizations", icon: CheckCircle, label: "Autoriz.",  colorClass: "nav-item-payment"  },
+  { id: "movimientos-revision",    icon: ShieldCheck,  label: "Revisión",  colorClass: "nav-item-payment"  },
   { id: "payment-control",         icon: ListChecks,   label: "Control",   colorClass: "nav-item-summary"  },
   { id: "secretary-reports",       icon: FileText,     label: "Reportes",  colorClass: "nav-item-home"     },
   { id: "secretary-admin-reportes",icon: FileText,     label: "Rep. Admin",colorClass: "nav-item-expense"  },

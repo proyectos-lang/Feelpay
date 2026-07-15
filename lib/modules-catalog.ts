@@ -157,6 +157,16 @@ export const ALL_MODULES: ModuleDefinition[] = [
     group: "Secretaria",
   },
   {
+    viewId: "movimientos-revision",
+    label: "Movimientos en Revisión",
+    mobileLabel: "Revisión",
+    description: "Aprobar o rechazar gastos, ventas y abonos que superaron el umbral de su ruta",
+    defaultRoles: ["secretaria", "secretario"],
+    defaultMobileNavRoles: ["secretaria", "secretario"],
+    iconName: "ShieldCheck",
+    group: "Secretaria",
+  },
+  {
     viewId: "payment-control",
     label: "Control de Pagos",
     mobileLabel: "Control",
