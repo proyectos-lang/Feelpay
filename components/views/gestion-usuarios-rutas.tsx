@@ -9,6 +9,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Switch } from "@/components/ui/switch"
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion"
 import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info, MessageSquare, BarChart2, Gauge } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { ALL_MODULES, MODULE_GROUPS, getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
@@ -1521,12 +1523,10 @@ function ReportesBiTab() {
   )
 }
 
-// ─── Tab Umbrales ─────────────────────────────────────────────────────────────
+// ─── Tab Control de Aprobaciones ───────────────────────────────────────────────
 
-type RutaUmbralRow = {
+type RutaConfigRow = {
   ruta_id: number
-  gasto_habilitado: boolean
-  gasto_umbral: number | null
   venta_nueva_habilitado: boolean
   venta_nueva_umbral: number | null
   venta_renovacion_habilitado: boolean
@@ -1535,33 +1535,62 @@ type RutaUmbralRow = {
   abono_umbral: number | null
 }
 
-function UmbralesTab() {
+type CatalogItem = { id: number; nombre: string }
+
+type ItemFormRow = { habilitado: boolean; umbral: string }
+
+const ITEM_TIPOS = [
+  { tipo: "ingreso" as const, label: "Ingresos" },
+  { tipo: "gasto" as const, label: "Gastos" },
+  { tipo: "retiro" as const, label: "Retiros" },
+]
+
+function ControlAprobacionesTab() {
   const { toast } = useToast()
   const [rutas, setRutas] = useState<Ruta[]>([])
-  const [configs, setConfigs] = useState<Map<number, RutaUmbralRow>>(new Map())
+  const [configs, setConfigs] = useState<Map<number, RutaConfigRow>>(new Map())
   const [selectedRutaId, setSelectedRutaId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadingItems, setLoadingItems] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  const [fGastoHab, setFGastoHab] = useState(false)
-  const [fGastoUmbral, setFGastoUmbral] = useState("")
+  // Catálogos de items (una vez, no cambian por ruta)
+  const [ingresoItems, setIngresoItems] = useState<CatalogItem[]>([])
+  const [gastoItems, setGastoItems] = useState<CatalogItem[]>([])
+  const [retiroItems, setRetiroItems] = useState<CatalogItem[]>([])
+
+  // Form de la ruta seleccionada
   const [fVentaNuevaHab, setFVentaNuevaHab] = useState(false)
   const [fVentaNuevaUmbral, setFVentaNuevaUmbral] = useState("")
   const [fVentaRenovacionHab, setFVentaRenovacionHab] = useState(false)
   const [fVentaRenovacionUmbral, setFVentaRenovacionUmbral] = useState("")
   const [fAbonoHab, setFAbonoHab] = useState(false)
   const [fAbonoUmbral, setFAbonoUmbral] = useState("")
+  const [itemForm, setItemForm] = useState<Map<string, ItemFormRow>>(new Map())
+
+  const itemsByTipo: Record<string, CatalogItem[]> = {
+    ingreso: ingresoItems,
+    gasto: gastoItems,
+    retiro: retiroItems,
+  }
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
       const supabase = createClient()
-      const [{ data: rutasData }, { data: configsData }] = await Promise.all([
-        supabase.from("rutas").select("id, nombre, ciudad, pais").order("id"),
-        supabase.from("ruta_config_umbrales").select("*"),
-      ])
+      const [{ data: rutasData }, { data: configsData }, { data: ingresosData }, { data: gastosData }, { data: retirosData }] =
+        await Promise.all([
+          supabase.from("rutas").select("id, nombre, ciudad, pais").order("id"),
+          supabase.from("ruta_config_umbrales").select("*"),
+          supabase.from("ingresos").select("id, nombre").order("nombre"),
+          supabase.from("gastos").select("id, nombre").order("nombre"),
+          supabase.from("retiros").select("id, nombre").order("nombre"),
+        ])
       setRutas((rutasData as Ruta[]) ?? [])
-      setConfigs(new Map(((configsData as RutaUmbralRow[]) ?? []).map((c) => [c.ruta_id, c])))
+      setConfigs(new Map(((configsData as RutaConfigRow[]) ?? []).map((c) => [c.ruta_id, c])))
+      setIngresoItems((ingresosData as CatalogItem[]) ?? [])
+      setGastoItems((gastosData as CatalogItem[]) ?? [])
+      setRetiroItems((retirosData as CatalogItem[]) ?? [])
     } finally {
       setLoading(false)
     }
@@ -1569,17 +1598,46 @@ function UmbralesTab() {
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
-  const selectRuta = (id: number) => {
+  const selectRuta = async (id: number) => {
     setSelectedRutaId(id)
     const c = configs.get(id)
-    setFGastoHab(c?.gasto_habilitado ?? false)
-    setFGastoUmbral(c?.gasto_umbral?.toString() ?? "")
     setFVentaNuevaHab(c?.venta_nueva_habilitado ?? false)
     setFVentaNuevaUmbral(c?.venta_nueva_umbral?.toString() ?? "")
     setFVentaRenovacionHab(c?.venta_renovacion_habilitado ?? false)
     setFVentaRenovacionUmbral(c?.venta_renovacion_umbral?.toString() ?? "")
     setFAbonoHab(c?.abono_habilitado ?? false)
     setFAbonoUmbral(c?.abono_umbral?.toString() ?? "")
+
+    setLoadingItems(true)
+    try {
+      const { data } = await createClient()
+        .from("ruta_item_umbrales")
+        .select("item_tipo, item_id, habilitado, umbral")
+        .eq("ruta_id", id)
+      const map = new Map<string, ItemFormRow>()
+      for (const row of (data ?? []) as { item_tipo: string; item_id: number; habilitado: boolean; umbral: number | null }[]) {
+        map.set(`${row.item_tipo}:${row.item_id}`, { habilitado: row.habilitado, umbral: row.umbral?.toString() ?? "" })
+      }
+      setItemForm(map)
+    } finally {
+      setLoadingItems(false)
+    }
+  }
+
+  const toggleItemHabilitado = (key: string, habilitado: boolean) => {
+    setItemForm((prev) => {
+      const next = new Map(prev)
+      next.set(key, { habilitado, umbral: next.get(key)?.umbral ?? "" })
+      return next
+    })
+  }
+
+  const setItemUmbralValue = (key: string, umbral: string) => {
+    setItemForm((prev) => {
+      const next = new Map(prev)
+      next.set(key, { habilitado: next.get(key)?.habilitado ?? false, umbral })
+      return next
+    })
   }
 
   const handleGuardar = async () => {
@@ -1587,10 +1645,9 @@ function UmbralesTab() {
     setSaving(true)
     try {
       const supabase = createClient()
-      const payload = {
+
+      const configPayload = {
         ruta_id: selectedRutaId,
-        gasto_habilitado: fGastoHab,
-        gasto_umbral: fGastoUmbral ? Number.parseFloat(fGastoUmbral) : null,
         venta_nueva_habilitado: fVentaNuevaHab,
         venta_nueva_umbral: fVentaNuevaUmbral ? Number.parseFloat(fVentaNuevaUmbral) : null,
         venta_renovacion_habilitado: fVentaRenovacionHab,
@@ -1599,9 +1656,31 @@ function UmbralesTab() {
         abono_umbral: fAbonoUmbral ? Number.parseFloat(fAbonoUmbral) : null,
         updated_at: new Date().toISOString(),
       }
-      const { error } = await supabase.from("ruta_config_umbrales").upsert(payload, { onConflict: "ruta_id" })
-      if (error) throw error
-      toast({ title: "Umbrales guardados" })
+      const { error: configErr } = await supabase.from("ruta_config_umbrales").upsert(configPayload, { onConflict: "ruta_id" })
+      if (configErr) throw configErr
+
+      const itemRows = ITEM_TIPOS.flatMap(({ tipo }) =>
+        itemsByTipo[tipo].map((item) => {
+          const key = `${tipo}:${item.id}`
+          const f = itemForm.get(key)
+          return {
+            ruta_id: selectedRutaId,
+            item_tipo: tipo,
+            item_id: item.id,
+            habilitado: f?.habilitado ?? false,
+            umbral: f?.umbral ? Number.parseFloat(f.umbral) : null,
+            updated_at: new Date().toISOString(),
+          }
+        })
+      )
+      if (itemRows.length > 0) {
+        const { error: itemsErr } = await supabase
+          .from("ruta_item_umbrales")
+          .upsert(itemRows, { onConflict: "ruta_id,item_tipo,item_id" })
+        if (itemsErr) throw itemsErr
+      }
+
+      toast({ title: "Control de aprobaciones guardado" })
       await fetchAll()
     } catch (err) {
       toast({ title: "Error", description: err instanceof Error ? err.message : "Error desconocido", variant: "destructive" })
@@ -1645,27 +1724,70 @@ function UmbralesTab() {
         {!selectedRuta ? (
           <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground gap-2">
             <Gauge className="h-8 w-8 opacity-30" />
-            <p className="text-sm">Selecciona una ruta para configurar<br />sus umbrales de aprobación</p>
+            <p className="text-sm">Selecciona una ruta para configurar<br />su control de aprobaciones</p>
           </div>
         ) : (
           <>
-            <p className="font-semibold text-sm">{selectedRuta.nombre}</p>
-
-            {/* Gastos/Ingresos/Retiros */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm">Gastos, Ingresos y Retiros</Label>
-                <Checkbox checked={fGastoHab} onCheckedChange={(v) => setFGastoHab(!!v)} />
-              </div>
-              <Input
-                type="number"
-                disabled={!fGastoHab}
-                value={fGastoUmbral}
-                onChange={(e) => setFGastoUmbral(e.target.value)}
-                placeholder="Umbral en $ (ej. 200000)"
-                className="h-9 text-sm"
-              />
+            <div>
+              <p className="font-semibold text-sm">Control de Aprobaciones</p>
+              <p className="text-xs text-muted-foreground">{selectedRuta.nombre}</p>
             </div>
+
+            {/* Gastos/Ingresos/Retiros: umbral por item */}
+            {loadingItems ? (
+              <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+            ) : (
+              <Accordion type="multiple" className="rounded-lg border px-3">
+                {ITEM_TIPOS.map(({ tipo, label }) => {
+                  const items = itemsByTipo[tipo]
+                  const activos = items.filter((item) => itemForm.get(`${tipo}:${item.id}`)?.habilitado).length
+                  return (
+                    <AccordionItem key={tipo} value={tipo}>
+                      <AccordionTrigger className="text-sm">
+                        {label}
+                        {activos > 0 && (
+                          <span className="text-[10px] font-normal text-muted-foreground mr-auto ml-2">
+                            {activos} con umbral
+                          </span>
+                        )}
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        {items.length === 0 ? (
+                          <p className="text-xs text-muted-foreground py-1">Sin items configurados en {label.toLowerCase()}</p>
+                        ) : (
+                          <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                            {items.map((item) => {
+                              const key = `${tipo}:${item.id}`
+                              const f = itemForm.get(key)
+                              return (
+                                <div key={item.id} className="space-y-1">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <Label className="text-xs font-normal truncate">{item.nombre}</Label>
+                                    <Switch
+                                      checked={f?.habilitado ?? false}
+                                      onCheckedChange={(v) => toggleItemHabilitado(key, v)}
+                                    />
+                                  </div>
+                                  {f?.habilitado && (
+                                    <Input
+                                      type="number"
+                                      value={f?.umbral ?? ""}
+                                      onChange={(e) => setItemUmbralValue(key, e.target.value)}
+                                      placeholder="Umbral en $"
+                                      className="h-8 text-xs"
+                                    />
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </AccordionContent>
+                    </AccordionItem>
+                  )
+                })}
+              </Accordion>
+            )}
 
             {/* Ventas: nueva + renovación */}
             <div className="space-y-2 pt-1 border-t">
@@ -1673,7 +1795,7 @@ function UmbralesTab() {
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <Label className="text-sm">Ventas nuevas</Label>
-                  <Checkbox checked={fVentaNuevaHab} onCheckedChange={(v) => setFVentaNuevaHab(!!v)} />
+                  <Switch checked={fVentaNuevaHab} onCheckedChange={setFVentaNuevaHab} />
                 </div>
                 <Input
                   type="number"
@@ -1687,7 +1809,7 @@ function UmbralesTab() {
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <Label className="text-sm">Renovaciones</Label>
-                  <Checkbox checked={fVentaRenovacionHab} onCheckedChange={(v) => setFVentaRenovacionHab(!!v)} />
+                  <Switch checked={fVentaRenovacionHab} onCheckedChange={setFVentaRenovacionHab} />
                 </div>
                 <Input
                   type="number"
@@ -1704,7 +1826,7 @@ function UmbralesTab() {
             <div className="space-y-1.5 pt-1 border-t pt-3">
               <div className="flex items-center justify-between">
                 <Label className="text-sm">Abonos</Label>
-                <Checkbox checked={fAbonoHab} onCheckedChange={(v) => setFAbonoHab(!!v)} />
+                <Switch checked={fAbonoHab} onCheckedChange={setFAbonoHab} />
               </div>
               <Input
                 type="number"
@@ -1774,7 +1896,7 @@ export function GestionUsuariosRutas() {
           </TabsTrigger>
           <TabsTrigger value="umbrales" className="gap-1 text-xs">
             <Gauge className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Umbrales</span>
+            <span className="hidden sm:inline">Aprobaciones</span>
           </TabsTrigger>
         </TabsList>
 
@@ -1797,7 +1919,7 @@ export function GestionUsuariosRutas() {
           <ReportesBiTab />
         </TabsContent>
         <TabsContent value="umbrales">
-          <UmbralesTab />
+          <ControlAprobacionesTab />
         </TabsContent>
       </Tabs>
     </div>

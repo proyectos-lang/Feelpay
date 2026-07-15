@@ -3,8 +3,6 @@
 import { createClient } from "@/lib/supabase/client"
 
 export interface RutaUmbrales {
-  gasto_habilitado: boolean
-  gasto_umbral: number | null
   venta_nueva_habilitado: boolean
   venta_nueva_umbral: number | null
   venta_renovacion_habilitado: boolean
@@ -14,7 +12,6 @@ export interface RutaUmbrales {
 }
 
 const DEFAULT_UMBRALES: RutaUmbrales = {
-  gasto_habilitado: false, gasto_umbral: null,
   venta_nueva_habilitado: false, venta_nueva_umbral: null,
   venta_renovacion_habilitado: false, venta_renovacion_umbral: null,
   abono_habilitado: false, abono_umbral: null,
@@ -26,7 +23,7 @@ export async function getRutaUmbrales(rutaId: number): Promise<RutaUmbrales> {
   try {
     const { data, error } = await createClient()
       .from("ruta_config_umbrales")
-      .select("gasto_habilitado, gasto_umbral, venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral")
+      .select("venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral")
       .eq("ruta_id", rutaId)
       .maybeSingle()
     if (error || !data) return DEFAULT_UMBRALES
@@ -35,6 +32,29 @@ export async function getRutaUmbrales(rutaId: number): Promise<RutaUmbrales> {
     console.error("[v0] Error fetching ruta_config_umbrales:", err)
     return DEFAULT_UMBRALES
   }
+}
+
+// Umbral de gasto/ingreso/retiro: se configura por item (concepto especifico
+// del catalogo), no como un valor unico compartido por ruta.
+export interface ItemUmbral {
+  habilitado: boolean
+  umbral: number | null
+}
+
+export async function getRutaItemUmbrales(rutaId: number): Promise<Map<string, ItemUmbral>> {
+  const map = new Map<string, ItemUmbral>()
+  try {
+    const { data } = await createClient()
+      .from("ruta_item_umbrales")
+      .select("item_tipo, item_id, habilitado, umbral")
+      .eq("ruta_id", rutaId)
+    for (const row of (data ?? []) as { item_tipo: string; item_id: number; habilitado: boolean; umbral: number | null }[]) {
+      map.set(`${row.item_tipo}:${row.item_id}`, { habilitado: row.habilitado, umbral: row.umbral })
+    }
+  } catch (err) {
+    console.error("[v0] Error fetching ruta_item_umbrales:", err)
+  }
+  return map
 }
 
 export function excedeUmbral(habilitado: boolean, umbral: number | null, monto: number): boolean {

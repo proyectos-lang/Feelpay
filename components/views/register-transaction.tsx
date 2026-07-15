@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TrendingDown, TrendingUp, Wallet, Camera, X, AlertCircle } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { saveTransaction } from "@/lib/actions/save-transaction"
-import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre, type RutaUmbrales } from "@/lib/ruta-umbrales"
+import { getRutaItemUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre, type ItemUmbral } from "@/lib/ruta-umbrales"
 import {
   Dialog,
   DialogContent,
@@ -101,14 +101,15 @@ export function RegisterTransaction({
   const [showWithdrawalApprovalDialog, setShowWithdrawalApprovalDialog] = useState(false)
   const [pendingTransaction, setPendingTransaction] = useState<PendingTransaction | null>(null)
 
-  // Umbral de aprobacion por ruta (configurado por secretaria en Gestion de
-  // Usuarios y Rutas > Umbrales). Si un movimiento lo supera, se envia a
-  // revision en vez de aplicarse directamente.
-  const [umbrales, setUmbrales] = useState<RutaUmbrales | null>(null)
+  // Umbral de aprobacion por item (configurado por secretaria en Gestion de
+  // Usuarios y Rutas > Control de Aprobaciones, por concepto especifico y
+  // por ruta). Si un movimiento lo supera, se envia a revision en vez de
+  // aplicarse directamente.
+  const [itemUmbrales, setItemUmbrales] = useState<Map<string, ItemUmbral>>(new Map())
   const [confirmingRevision, setConfirmingRevision] = useState(false)
 
   useEffect(() => {
-    getRutaUmbrales(ruta).then(setUmbrales)
+    getRutaItemUmbrales(ruta).then(setItemUmbrales)
   }, [ruta])
 
   useEffect(() => {
@@ -219,7 +220,8 @@ export function RegisterTransaction({
       return
     }
 
-    if (excedeUmbral(umbrales?.gasto_habilitado ?? false, umbrales?.gasto_umbral ?? null, valor)) {
+    const incomeItemU = itemUmbrales.get(`ingreso:${selectedIncomeItem}`)
+    if (excedeUmbral(incomeItemU?.habilitado ?? false, incomeItemU?.umbral ?? null, valor)) {
       setPendingTransaction({ type: "income", amount: valor })
       setShowIncomeApprovalDialog(true)
       return
@@ -273,7 +275,8 @@ export function RegisterTransaction({
       return
     }
 
-    if (excedeUmbral(umbrales?.gasto_habilitado ?? false, umbrales?.gasto_umbral ?? null, valor)) {
+    const expenseItemU = itemUmbrales.get(`gasto:${selectedExpenseItem}`)
+    if (excedeUmbral(expenseItemU?.habilitado ?? false, expenseItemU?.umbral ?? null, valor)) {
       setPendingTransaction({ type: "expense", amount: valor })
       setShowExpenseApprovalDialog(true)
       return
@@ -327,7 +330,8 @@ export function RegisterTransaction({
       return
     }
 
-    if (excedeUmbral(umbrales?.gasto_habilitado ?? false, umbrales?.gasto_umbral ?? null, valor)) {
+    const withdrawalItemU = itemUmbrales.get(`retiro:${selectedWithdrawalItem}`)
+    if (excedeUmbral(withdrawalItemU?.habilitado ?? false, withdrawalItemU?.umbral ?? null, valor)) {
       setPendingTransaction({ type: "withdrawal", amount: valor })
       setShowWithdrawalApprovalDialog(true)
       return
