@@ -945,15 +945,20 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
       // -----------------------------------------------------------------
       // ── Umbral de aprobacion de abonos por ruta ──────────────────────
-      // Si el monto supera el umbral configurado por secretaria, el pago
-      // se envia a revision ANTES de tocar cualquier tabla real (incluidos
-      // los pre-pasos de "pago extraordinario" y "extension de americano"
-      // de mas abajo, que tambien quedan en espera). payment_plan/loans
-      // no se modifican hasta que secretaria apruebe.
+      // El umbral compara la CANTIDAD DE CUOTAS pagadas de una sola vez
+      // (selector "Nro Cuotas"), no el monto en pesos. Solo aplica a pago
+      // normal -- pago parcial (siempre 1 cuota) y cancelacion total (paga
+      // todo el prestamo) nunca disparan este umbral. Si se dispara, el
+      // pago se envia a revision ANTES de tocar cualquier tabla real
+      // (incluidos los pre-pasos de "pago extraordinario" y "extension de
+      // americano" de mas abajo, que tambien quedan en espera).
+      // payment_plan/loans no se modifican hasta que secretaria apruebe.
       const tipoOperacionUmbral: "pago_normal" | "pago_parcial" | "cancelacion_total" =
         isCanceladaSnap ? "cancelacion_total" : isPartialSnap ? "pago_parcial" : "pago_normal"
 
-      if (excedeUmbral(umbrales?.abono_habilitado ?? false, umbrales?.abono_umbral ?? null, monto)) {
+      const esPagoNormalUmbral = tipoOperacionUmbral === "pago_normal"
+
+      if (esPagoNormalUmbral && excedeUmbral(umbrales?.abono_habilitado ?? false, umbrales?.abono_umbral_cuotas ?? null, numCuotasSnap)) {
         const confirmado = await confirmRevision()
         if (!confirmado) { setSaving(false); return }
 
@@ -966,7 +971,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             solicitado_por: identity.user_id,
             solicitado_por_nombre: getSolicitanteNombre(),
             monto,
-            descripcion: `Abono — ${clientSnapshot.nombre} (cuota ${clientSnapshot.nextPaymentNumero})`,
+            descripcion: `Abono — ${clientSnapshot.nombre} (${numCuotasSnap} cuotas de una vez)`,
             payload: {
               p_payload: {
                 tipo: tipoOperacionUmbral,

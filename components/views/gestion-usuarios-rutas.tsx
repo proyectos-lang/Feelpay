@@ -1532,7 +1532,7 @@ type RutaConfigRow = {
   venta_renovacion_habilitado: boolean
   venta_renovacion_umbral: number | null
   abono_habilitado: boolean
-  abono_umbral: number | null
+  abono_umbral_cuotas: number | null
 }
 
 type CatalogItem = { id: number; nombre: string }
@@ -1565,7 +1565,7 @@ function ControlAprobacionesTab() {
   const [fVentaRenovacionHab, setFVentaRenovacionHab] = useState(false)
   const [fVentaRenovacionUmbral, setFVentaRenovacionUmbral] = useState("")
   const [fAbonoHab, setFAbonoHab] = useState(false)
-  const [fAbonoUmbral, setFAbonoUmbral] = useState("")
+  const [fAbonoUmbralCuotas, setFAbonoUmbralCuotas] = useState("")
   const [itemForm, setItemForm] = useState<Map<string, ItemFormRow>>(new Map())
 
   const itemsByTipo: Record<string, CatalogItem[]> = {
@@ -1606,7 +1606,7 @@ function ControlAprobacionesTab() {
     setFVentaRenovacionHab(c?.venta_renovacion_habilitado ?? false)
     setFVentaRenovacionUmbral(c?.venta_renovacion_umbral?.toString() ?? "")
     setFAbonoHab(c?.abono_habilitado ?? false)
-    setFAbonoUmbral(c?.abono_umbral?.toString() ?? "")
+    setFAbonoUmbralCuotas(c?.abono_umbral_cuotas?.toString() ?? "")
 
     setLoadingItems(true)
     try {
@@ -1653,7 +1653,7 @@ function ControlAprobacionesTab() {
         venta_renovacion_habilitado: fVentaRenovacionHab,
         venta_renovacion_umbral: fVentaRenovacionUmbral ? Number.parseFloat(fVentaRenovacionUmbral) : null,
         abono_habilitado: fAbonoHab,
-        abono_umbral: fAbonoUmbral ? Number.parseFloat(fAbonoUmbral) : null,
+        abono_umbral_cuotas: fAbonoUmbralCuotas ? Number.parseInt(fAbonoUmbralCuotas, 10) : null,
         updated_at: new Date().toISOString(),
       }
       const { error: configErr } = await supabase.from("ruta_config_umbrales").upsert(configPayload, { onConflict: "ruta_id" })
@@ -1822,18 +1822,20 @@ function ControlAprobacionesTab() {
               </div>
             </div>
 
-            {/* Abonos */}
+            {/* Abonos: umbral por cantidad de cuotas pagadas de una vez */}
             <div className="space-y-1.5 pt-1 border-t pt-3">
               <div className="flex items-center justify-between">
-                <Label className="text-sm">Abonos</Label>
+                <Label className="text-sm">Abonos (cuotas pagadas de una vez)</Label>
                 <Switch checked={fAbonoHab} onCheckedChange={setFAbonoHab} />
               </div>
               <Input
                 type="number"
+                min={1}
+                step={1}
                 disabled={!fAbonoHab}
-                value={fAbonoUmbral}
-                onChange={(e) => setFAbonoUmbral(e.target.value)}
-                placeholder="Umbral en $ (ej. 300000)"
+                value={fAbonoUmbralCuotas}
+                onChange={(e) => setFAbonoUmbralCuotas(e.target.value)}
+                placeholder="Cantidad de cuotas (ej. 3)"
                 className="h-9 text-sm"
               />
             </div>
