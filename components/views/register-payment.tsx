@@ -117,6 +117,9 @@ type DisplayClient = {
   ordenvisita: number
   diaSemana: string | null
   valorPrestamo: number
+  // Multa pendiente del prestamo (null si no tiene). Generada automaticamente
+  // cuando el cliente cruza el umbral de cuotas en mora configurado por ruta.
+  multaPendiente: { id: string; valor: number } | null
 }
 
 type RegisterPaymentProps = {
@@ -243,6 +246,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // las nuevas cuotas pendientes.
   const [extenderCuotas, setExtenderCuotas] = useState(false)
   const [cantidadCuotasExtender, setCantidadCuotasExtender] = useState("1")
+
+  // "Pagar multa": cobrar la multa pendiente del cliente junto con el pago.
+  // Solo visible cuando el cliente seleccionado tiene multaPendiente.
+  const [pagarMulta, setPagarMulta] = useState(false)
 
   // ── BLINDAJE BUG cuotas duplicadas ────────────────────────────────────
   // Defensa adicional: si por cualquier motivo (cambio de cliente, refetch,
@@ -624,7 +631,64 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         existing.push(pp)
         paymentPlansByLoan.set(pp.loan_id, existing)
       }
-      
+
+      // ── Multas por mora ──────────────────────────────────────────────
+      // Si la ruta tiene multas habilitadas (Control de Aprobaciones),
+      // genera una multa a cada prestamo que cruce el umbral de cuotas
+      // vencidas y aun no tenga una multa pendiente. La generacion corre
+      // aqui porque la app no tiene procesos programados. El indice unico
+      // parcial (idx_multas_unica_pendiente) garantiza una sola multa
+      // pendiente por prestamo aunque varios dispositivos carguen a la vez.
+      const multasMap = new Map<string, { id: string; valor: number }>()
+      try {
+        const [umbralesRuta, multasRes] = await Promise.all([
+          getRutaUmbrales(currentRutaId),
+          supabase
+            .from("multas")
+            .select("id, loan_id, valor")
+            .eq("ruta_id", currentRutaId)
+            .eq("estado", "pendiente"),
+        ])
+        for (const m of (multasRes.data ?? []) as { id: string; loan_id: string; valor: number }[]) {
+          multasMap.set(m.loan_id, { id: m.id, valor: m.valor })
+        }
+
+        if (umbralesRuta.multa_habilitada && umbralesRuta.multa_cuotas_umbral != null && umbralesRuta.multa_valor != null) {
+          for (const loan of activeLoans) {
+            if (multasMap.has(loan.id)) continue
+            if (loan.estado === "cancelado") continue
+            const plan = paymentPlansByLoan.get(loan.id) || []
+            const cuotasVencidas = plan.filter(
+              (p) => p.estado === "pendiente" && p.fecha_pago < todayColombia,
+            ).length
+            if (cuotasVencidas < umbralesRuta.multa_cuotas_umbral) continue
+
+            const { data: nueva, error: multaErr } = await supabase
+              .from("multas")
+              .insert({
+                loan_id: loan.id,
+                client_id: loan.client_id,
+                ruta_id: currentRutaId,
+                cliente_nombre: loan.clients?.apodo || loan.clients?.nombre_completo || null,
+                valor: umbralesRuta.multa_valor,
+                cuotas_mora: cuotasVencidas,
+              })
+              .select("id, valor")
+              .single()
+
+            if (multaErr) {
+              // 23505 = otra sesion la creo primero (indice unico) — no es error
+              if (multaErr.code !== "23505") console.error("[v0] Error generando multa:", multaErr)
+              continue
+            }
+            if (nueva) multasMap.set(loan.id, { id: nueva.id, valor: nueva.valor })
+          }
+        }
+      } catch (err) {
+        // Las multas nunca deben bloquear la carga del listado de pagos
+        console.error("[v0] Error en generacion/carga de multas:", err)
+      }
+
       // Process each loan with its payment plan
       for (const loan of activeLoans) {
         // Ocultar préstamos creados hoy — no se cobran el mismo día de la venta.
@@ -769,6 +833,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           nextPaymentFecha: targetEntry.fecha_pago,
           ordenvisita: loan.ordenvisita || 0,
           diaSemana: loan.dia_semana || null,
+          multaPendiente: multasMap.get(loan.id) ?? null,
         }
 
         // Check if target entry has been managed (pagado, no_pago, parcial, or cancelada)
@@ -843,6 +908,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     setIsCancelada(false)
     setExtenderCuotas(false)
     setCantidadCuotasExtender("1")
+    setPagarMulta(false)
     // Nota: ya no hacemos fetch de saldo aqui. Usamos client.saldo
     // directamente del listado para que el dialogo abra al instante.
   }
@@ -858,6 +924,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     setIsCancelada(false)
     setExtenderCuotas(false)
     setCantidadCuotasExtender("1")
+    setPagarMulta(false)
   }
 
   const handleRegisterPayment = async () => {
@@ -901,6 +968,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     const isCanceladaSnap = isCancelada
     const isPartialSnap = isPartialPayment
     const numCuotasSnap = numCuotas
+    // Snapshot de "pagar multa": solo valido si el cliente tiene multa pendiente.
+    const pagarMultaSnap = pagarMulta && !!clientSnapshot.multaPendiente
     // Snapshot del flag de extension. Solo aplica si:
     //   - el prestamo es tipo "americano" (intereses)
     //   - la cuota actual es la ULTIMA del plan
@@ -958,6 +1027,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
       const esPagoNormalUmbral = tipoOperacionUmbral === "pago_normal"
 
+      // Nota: si el pago se va a revision, "Pagar multa" NO se procesa — la
+      // multa queda pendiente y podra cobrarse en un pago posterior (el
+      // cobro de multa solo corre en el camino directo, tras el RPC exitoso).
       if (esPagoNormalUmbral && excedeUmbral(umbrales?.abono_habilitado ?? false, umbrales?.abono_umbral_cuotas ?? null, numCuotasSnap)) {
         const confirmado = await confirmRevision()
         if (!confirmado) { setSaving(false); return }
@@ -1177,6 +1249,57 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       void rpcResult.loan_estado_final
       void rpcResult.cliente_marcado_sin_prestamo
 
+      // ── Cobro de la multa (si se marcó "Pagar multa") ────────────────
+      // Corre DESPUES de que el pago principal quedo aplicado: marca la
+      // multa como pagada y registra el dinero como Ingreso en
+      // gastosregistros (contabilidad de la ruta). Si algo falla aqui, el
+      // pago principal NO se revierte — se avisa para regularizar manualmente
+      // (consistente con la no-atomicidad aceptada en gastos).
+      let multaCobrada = false
+      if (pagarMultaSnap && clientSnapshot.multaPendiente) {
+        try {
+          const identity = getSessionIdentity()
+          const supabase = await getSupabaseSafe()
+          const { error: multaUpdErr, count } = await supabase
+            .from("multas")
+            .update({
+              estado: "pagada",
+              pagada_at: new Date().toISOString(),
+              pagada_por: identity.user_id,
+              metodo_pago: paymentMethod,
+            }, { count: "exact" })
+            .eq("id", clientSnapshot.multaPendiente.id)
+            .eq("estado", "pendiente")
+          if (multaUpdErr) throw multaUpdErr
+          // count 0 = la multa ya no estaba pendiente (secretaria la cancelo
+          // mientras tanto) — no registrar el ingreso.
+          if ((count ?? 0) > 0) {
+            const { error: ingresoErr } = await supabase.from("gastosregistros").insert({
+              fechahorasol: new Date().toISOString(),
+              adminid: identity.user_id,
+              ruta: currentRutaId,
+              concepto: `Multa — ${clientSnapshot.nombre}`,
+              limite: null,
+              valor: clientSnapshot.multaPendiente.valor,
+              observacion: "Pago de multa por mora",
+              foto: null,
+              tipo: "Ingreso",
+              estadoadmin: "NA",
+              estadosecre: "NA",
+            })
+            if (ingresoErr) throw ingresoErr
+            multaCobrada = true
+          }
+        } catch (multaErr) {
+          console.error("[v0] Error cobrando multa:", multaErr)
+          toast({
+            title: "Multa no procesada",
+            description: "El pago se registró, pero la multa no pudo marcarse como pagada. Repórtalo a secretaría.",
+            variant: "destructive",
+          })
+        }
+      }
+
       // Optimistic UI: quitar al cliente de la lista de pendientes localmente
       // y agregarlo a managedToday con la forma correcta de ManagedClient
       // (DisplayClient & { gestionTipo, gestionHora, valorAbonado, paymentPlanId? }).
@@ -1189,6 +1312,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         {
           ...clientSnapshot,
           saldo: nuevoSaldo,
+          multaPendiente: multaCobrada ? null : clientSnapshot.multaPendiente,
           gestionTipo: "pago",
           gestionHora,
           valorAbonado: isCanceladaSnap ? clientSnapshot.saldo : monto,
@@ -1212,11 +1336,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           description: `Pago registrado y préstamo extendido exitosamente por ${cantidadExtenderSnap} cuota${cantidadExtenderSnap === 1 ? "" : "s"} más`,
         })
       } else {
+        const multaSuffix = multaCobrada && clientSnapshot.multaPendiente
+          ? ` + multa de $${clientSnapshot.multaPendiente.valor.toLocaleString()}`
+          : ""
         toast({
           title: esPagoExtraordinario ? "Pago extraordinario registrado" : "Pago registrado",
           description: esPagoExtraordinario
-            ? `Se registró el pago extraordinario por $${monto.toLocaleString()} para ${clientSnapshot.nombre} (cuota originalmente del ${cuotaFechaOriginal}).`
-            : `Se registró el pago por $${monto.toLocaleString()} para ${clientSnapshot.nombre}`,
+            ? `Se registró el pago extraordinario por $${monto.toLocaleString()}${multaSuffix} para ${clientSnapshot.nombre} (cuota originalmente del ${cuotaFechaOriginal}).`
+            : `Se registró el pago por $${monto.toLocaleString()}${multaSuffix} para ${clientSnapshot.nombre}`,
         })
       }
 
@@ -1692,6 +1819,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         nextPaymentNumero: m.nextPaymentNumero,
         nextPaymentCapital: capitalARevertir,
         nextPaymentValorCuota: m.nextPaymentValorCuota,
+        nextPaymentEsFuturo: false,
+        nextPaymentFecha: m.nextPaymentFecha,
+        valorPrestamo: m.valorPrestamo,
+        multaPendiente: m.multaPendiente,
         ordenvisita: m.ordenvisita,
         diaSemana: m.diaSemana,
       }
@@ -2331,6 +2462,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                     })()}
                                   </span>
                                 )}
+                                {/* Badge de multa pendiente por mora */}
+                                {client.multaPendiente && (
+                                  <span className="text-[9px] md:text-xs px-1.5 py-0.5 rounded font-semibold bg-red-100 text-red-700">
+                                    Multa ${client.multaPendiente.valor.toLocaleString("es-CO")}
+                                  </span>
+                                )}
                               </div>
                               <div className={`inline-flex items-center justify-center w-fit px-1.5 py-0.5 rounded text-[10px] md:text-sm font-semibold ${getMoraColor(client.mora)}`}>
                                 {client.mora}d mora
@@ -2706,6 +2843,23 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                       </Label>
                     </div>
                   )}
+                {/* Checkbox "Pagar multa": solo visible si el cliente tiene
+                    una multa pendiente por mora. Al marcarse, la multa se
+                    cobra junto con el pago (se marca pagada + ingreso en
+                    los movimientos de la ruta). */}
+                {selectedClient?.multaPendiente && (
+                  <div className="flex items-center space-x-1.5">
+                    <Checkbox
+                      id="pagarMulta"
+                      checked={pagarMulta}
+                      onCheckedChange={(c) => setPagarMulta(c as boolean)}
+                      className="h-4 w-4 border-2 border-red-400"
+                    />
+                    <Label htmlFor="pagarMulta" className="text-[11px] md:text-sm font-normal cursor-pointer whitespace-nowrap text-red-700">
+                      Pagar multa (${selectedClient.multaPendiente.valor.toLocaleString("es-CO")})
+                    </Label>
+                  </div>
+                )}
               </div>
               <div className="flex justify-end">
                 <input type="file" accept="image/*" capture="environment" onChange={handlePhotoCapture} className="hidden" id="payment-photo" />
@@ -2716,6 +2870,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 </Label>
               </div>
             </div>
+
+            {/* Total a cobrar cuando se paga tambien la multa */}
+            {pagarMulta && selectedClient?.multaPendiente && (
+              <p className="text-[11px] md:text-sm font-semibold text-red-700 bg-red-50 rounded-lg px-3 py-1.5">
+                Total a cobrar: ${((Number.parseFloat(paymentAmount) || 0) + selectedClient.multaPendiente.valor).toLocaleString("es-CO")} (pago + multa)
+              </p>
+            )}
 
             {/* Input para cantidad de cuotas a extender. Solo aparece si el
                 checkbox "Extender Cuotas" esta activo. */}

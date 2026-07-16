@@ -49,6 +49,7 @@ export function DashboardLayout({
       "pending-authorizations": "Autorizaciones Administrador",
       "secretary-authorizations": "Autorizaciones Secretaria",
       "movimientos-revision": "Movimientos en Revisión",
+      "multas": "Multas",
       "daily-route": "Ruta Diaria",
       "configure-route": "Ordenar Ruta",
       "register-payment": "Registrar Pago",

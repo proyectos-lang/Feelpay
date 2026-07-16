@@ -167,6 +167,16 @@ export const ALL_MODULES: ModuleDefinition[] = [
     group: "Secretaria",
   },
   {
+    viewId: "multas",
+    label: "Multas",
+    mobileLabel: "Multas",
+    description: "Ver multas por mora vigentes y cancelarlas manualmente",
+    defaultRoles: ["secretaria", "secretario"],
+    defaultMobileNavRoles: [],
+    iconName: "AlertTriangle",
+    group: "Secretaria",
+  },
+  {
     viewId: "payment-control",
     label: "Control de Pagos",
     mobileLabel: "Control",

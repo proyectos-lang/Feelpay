@@ -1533,6 +1533,9 @@ type RutaConfigRow = {
   venta_renovacion_umbral: number | null
   abono_habilitado: boolean
   abono_umbral_cuotas: number | null
+  multa_habilitada: boolean
+  multa_cuotas_umbral: number | null
+  multa_valor: number | null
 }
 
 type CatalogItem = { id: number; nombre: string }
@@ -1566,6 +1569,9 @@ function ControlAprobacionesTab() {
   const [fVentaRenovacionUmbral, setFVentaRenovacionUmbral] = useState("")
   const [fAbonoHab, setFAbonoHab] = useState(false)
   const [fAbonoUmbralCuotas, setFAbonoUmbralCuotas] = useState("")
+  const [fMultaHab, setFMultaHab] = useState(false)
+  const [fMultaCuotas, setFMultaCuotas] = useState("")
+  const [fMultaValor, setFMultaValor] = useState("")
   const [itemForm, setItemForm] = useState<Map<string, ItemFormRow>>(new Map())
 
   const itemsByTipo: Record<string, CatalogItem[]> = {
@@ -1607,6 +1613,9 @@ function ControlAprobacionesTab() {
     setFVentaRenovacionUmbral(c?.venta_renovacion_umbral?.toString() ?? "")
     setFAbonoHab(c?.abono_habilitado ?? false)
     setFAbonoUmbralCuotas(c?.abono_umbral_cuotas?.toString() ?? "")
+    setFMultaHab(c?.multa_habilitada ?? false)
+    setFMultaCuotas(c?.multa_cuotas_umbral?.toString() ?? "")
+    setFMultaValor(c?.multa_valor?.toString() ?? "")
 
     setLoadingItems(true)
     try {
@@ -1654,6 +1663,9 @@ function ControlAprobacionesTab() {
         venta_renovacion_umbral: fVentaRenovacionUmbral ? Number.parseFloat(fVentaRenovacionUmbral) : null,
         abono_habilitado: fAbonoHab,
         abono_umbral_cuotas: fAbonoUmbralCuotas ? Number.parseInt(fAbonoUmbralCuotas, 10) : null,
+        multa_habilitada: fMultaHab,
+        multa_cuotas_umbral: fMultaCuotas ? Number.parseInt(fMultaCuotas, 10) : null,
+        multa_valor: fMultaValor ? Number.parseFloat(fMultaValor) : null,
         updated_at: new Date().toISOString(),
       }
       const { error: configErr } = await supabase.from("ruta_config_umbrales").upsert(configPayload, { onConflict: "ruta_id" })
@@ -1836,6 +1848,33 @@ function ControlAprobacionesTab() {
                 value={fAbonoUmbralCuotas}
                 onChange={(e) => setFAbonoUmbralCuotas(e.target.value)}
                 placeholder="Cantidad de cuotas (ej. 3)"
+                className="h-9 text-sm"
+              />
+            </div>
+
+            {/* Multas por mora: N cuotas vencidas → multa de $X */}
+            <div className="space-y-1.5 pt-1 border-t pt-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm">Multas por mora</Label>
+                <Switch checked={fMultaHab} onCheckedChange={setFMultaHab} />
+              </div>
+              <Input
+                type="number"
+                min={1}
+                step={1}
+                disabled={!fMultaHab}
+                value={fMultaCuotas}
+                onChange={(e) => setFMultaCuotas(e.target.value)}
+                placeholder="Cuotas en mora para generar multa (ej. 3)"
+                className="h-9 text-sm"
+              />
+              <Input
+                type="number"
+                min={0}
+                disabled={!fMultaHab}
+                value={fMultaValor}
+                onChange={(e) => setFMultaValor(e.target.value)}
+                placeholder="Valor de la multa en $ (ej. 10000)"
                 className="h-9 text-sm"
               />
             </div>
