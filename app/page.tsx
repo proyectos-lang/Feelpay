@@ -12,6 +12,7 @@ import { PendingAuthorizations } from "@/components/views/pending-authorizations
 import { SecretaryAuthorizations } from "@/components/views/secretary-authorizations"
 import { MovimientosRevision } from "@/components/views/movimientos-revision"
 import { MultasView } from "@/components/views/multas-view"
+import { DocumentosView } from "@/components/views/documentos-view"
 import { SecretaryReports } from "@/components/views/secretary-reports"
 import { SocioAdminReportes } from "@/components/views/socio-admin-reportes"
 import { AdminReportes } from "@/components/views/admin-reportes"
@@ -569,6 +570,8 @@ export default function Page() {
         return <MovimientosRevision />
       case "multas":
         return <MultasView />
+      case "documentos":
+        return <DocumentosView currentUser={currentUser!} />
       case "daily-route":
         return <DailyRoute />
       case "configure-route":

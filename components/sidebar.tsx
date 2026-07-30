@@ -27,6 +27,7 @@ import {
   MessageSquare,
   ShieldCheck,
   AlertTriangle,
+  FolderOpen,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -74,6 +75,7 @@ const navGroups: NavGroup[] = [
       { id: "secretary-authorizations",  label: "Autor. Secret.",  icon: CheckCircle,   colorClass: "sidebar-item-secretary" },
       { id: "movimientos-revision",      label: "Movim. Revisión", icon: ShieldCheck,   colorClass: "sidebar-item-payment"   },
       { id: "multas",                    label: "Multas",          icon: AlertTriangle, colorClass: "sidebar-item-expense"   },
+      { id: "documentos",                label: "Documentos",      icon: FolderOpen,    colorClass: "sidebar-item-clients"   },
       { id: "payment-control",           label: "Control Pagos",   icon: ListChecks,    colorClass: "sidebar-item-payment"   },
       { id: "secretary-reports",         label: "Reportes",        icon: FileText,    colorClass: "sidebar-item-secretary" },
       { id: "secretary-admin-reportes",  label: "Rep. Admin",      icon: FileText,    colorClass: "sidebar-item-clients"   },

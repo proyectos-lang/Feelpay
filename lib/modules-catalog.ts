@@ -177,6 +177,16 @@ export const ALL_MODULES: ModuleDefinition[] = [
     group: "Secretaria",
   },
   {
+    viewId: "documentos",
+    label: "Documentos",
+    mobileLabel: "Documentos",
+    description: "Carpetas para almacenar y organizar documentos por categoría",
+    defaultRoles: ["secretaria", "secretario"],
+    defaultMobileNavRoles: [],
+    iconName: "FolderOpen",
+    group: "Secretaria",
+  },
+  {
     viewId: "payment-control",
     label: "Control de Pagos",
     mobileLabel: "Control",

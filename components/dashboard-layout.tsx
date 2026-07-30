@@ -50,6 +50,7 @@ export function DashboardLayout({
       "secretary-authorizations": "Autorizaciones Secretaria",
       "movimientos-revision": "Movimientos en Revisión",
       "multas": "Multas",
+      "documentos": "Documentos",
       "daily-route": "Ruta Diaria",
       "configure-route": "Ordenar Ruta",
       "register-payment": "Registrar Pago",
