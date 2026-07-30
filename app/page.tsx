@@ -43,22 +43,41 @@ import { LoginView, type AuthenticatedUser } from "@/components/views/login-view
 import { LoginSplash } from "@/components/login-splash"
 import { SESSION_LOST_EVENT, getSupabaseSafe } from "@/lib/api-helper"
 import { createClient } from "@/lib/supabase/client"
-import type { PermissionsMap } from "@/lib/modules-catalog"
+import { ALL_MODULES, isDefaultMobileNav, type PermissionsMap } from "@/lib/modules-catalog"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { Loader2, ShieldAlert, RefreshCw } from "lucide-react"
 
-async function loadUserPermissions(userId: number): Promise<PermissionsMap | null> {
+async function loadUserPermissions(userId: number, rol: string): Promise<PermissionsMap | null> {
   try {
     const { data } = await createClient()
       .from("user_permissions")
       .select("view_id, enabled, in_mobile_nav")
       .eq("user_id", userId)
+    // Sin filas: el usuario nunca tuvo permisos personalizados -> null le
+    // indica al sidebar/mobile-nav que use los defaults de rol tal cual.
     if (!data || data.length === 0) return null
-    const map: PermissionsMap = {}
+
+    const overrides = new Map<string, { enabled: boolean; inMobileNav: boolean }>()
     data.forEach((row) => {
-      map[row.view_id] = { enabled: row.enabled, inMobileNav: row.in_mobile_nav }
+      overrides.set(row.view_id, { enabled: row.enabled, inMobileNav: row.in_mobile_nav })
     })
+
+    // Para cada modulo del catalogo: usar el override guardado si existe: si
+    // no, caer al default de su rol. Sin este merge, un modulo agregado
+    // DESPUES de que a este usuario se le personalizaron permisos queda
+    // invisible para siempre (sin fila en user_permissions = "deshabilitado"),
+    // aunque su rol lo tendria habilitado por defecto.
+    const map: PermissionsMap = {}
+    for (const m of ALL_MODULES) {
+      const override = overrides.get(m.viewId)
+      if (override) {
+        map[m.viewId] = override
+      } else {
+        const isDefault = m.defaultRoles.includes(rol.toLowerCase())
+        map[m.viewId] = { enabled: isDefault, inMobileNav: isDefault && isDefaultMobileNav(m, rol) }
+      }
+    }
     return map
   } catch {
     return null
@@ -119,7 +138,7 @@ export default function Page() {
           const parsed = JSON.parse(rawUser) as AuthenticatedUser
           if (parsed && parsed.id) {
             setCurrentUser(parsed)
-            loadUserPermissions(parsed.id).then(setUserPermissions).catch(() => {})
+            loadUserPermissions(parsed.id, parsed.rol ?? "").then(setUserPermissions).catch(() => {})
           }
         }
         const rawRuta = localStorage.getItem(RUTA_STORAGE_KEY)
@@ -341,7 +360,7 @@ export default function Page() {
     }
     setCurrentUser(user)
     setShowSplash(true)
-    loadUserPermissions(user.id).then(setUserPermissions).catch(() => {})
+    loadUserPermissions(user.id, user.rol ?? "").then(setUserPermissions).catch(() => {})
 
     const isAdmin = ADMIN_ROLES.has((user.rol ?? "").toLowerCase())
     if (isAdmin) {
