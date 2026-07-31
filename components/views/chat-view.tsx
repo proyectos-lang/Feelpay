@@ -8,10 +8,13 @@ import { Textarea } from "@/components/ui/textarea"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Checkbox } from "@/components/ui/checkbox"
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { useToast } from "@/hooks/use-toast"
 import {
   Loader2, Send, Paperclip, ArrowLeft, Plus, Users, User, X, Image as ImageIcon, MessageSquare,
-  Search, ChevronUp, ChevronDown, Pencil,
+  Search, ChevronUp, ChevronDown, Pencil, MoreVertical, Settings2, Check, Trash2,
 } from "lucide-react"
 import type { AuthenticatedUser } from "./login-view"
 import type { RealtimeChannel } from "@supabase/supabase-js"
@@ -53,7 +56,10 @@ type Conversation = {
   last_at: string | null
   unread_count: number
   members_count: number
+  carpeta_id: string | null
 }
+
+type ChatCarpeta = { id: string; nombre: string }
 
 type ChatMessage = {
   id: string
@@ -594,6 +600,17 @@ export function ChatView({ currentUser }: ChatViewProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [matchIndex, setMatchIndex] = useState(0)
 
+  // Carpetas personales para organizar los chats (por usuario)
+  const [carpetas, setCarpetas] = useState<ChatCarpeta[]>([])
+  const [activeFolderFilter, setActiveFolderFilter] = useState<"all" | "sin-carpeta" | string>("all")
+  const [showManageFolders, setShowManageFolders] = useState(false)
+  const [newFolderName, setNewFolderName] = useState("")
+  const [creatingFolder, setCreatingFolder] = useState(false)
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
+  const [renameFolderValue, setRenameFolderValue] = useState("")
+  const [savingFolderRename, setSavingFolderRename] = useState(false)
+  const [deletingFolderId, setDeletingFolderId] = useState<string | null>(null)
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -617,6 +634,89 @@ export function ChatView({ currentUser }: ChatViewProps) {
   useEffect(() => {
     loadConversations()
   }, [loadConversations])
+
+  // ── Carpetas personales ────────────────────────────────────────────────────
+
+  const loadCarpetas = useCallback(async () => {
+    const { data } = await createClient()
+      .from("chat_carpetas")
+      .select("id, nombre")
+      .eq("user_id", currentUser.id)
+      .order("nombre")
+    setCarpetas((data ?? []) as ChatCarpeta[])
+  }, [currentUser.id])
+
+  useEffect(() => { loadCarpetas() }, [loadCarpetas])
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim()) return
+    setCreatingFolder(true)
+    try {
+      const { data, error } = await createClient()
+        .from("chat_carpetas")
+        .insert({ user_id: currentUser.id, nombre: newFolderName.trim() })
+        .select("id, nombre")
+        .single()
+      if (error) throw error
+      const nueva = data as ChatCarpeta
+      setCarpetas((prev) => [...prev, nueva].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+      setNewFolderName("")
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "No se pudo crear la carpeta", variant: "destructive" })
+    } finally {
+      setCreatingFolder(false)
+    }
+  }
+
+  const handleRenameFolder = async (id: string) => {
+    if (!renameFolderValue.trim()) return
+    setSavingFolderRename(true)
+    try {
+      const nombre = renameFolderValue.trim()
+      const { error } = await createClient().from("chat_carpetas").update({ nombre }).eq("id", id)
+      if (error) throw error
+      setCarpetas((prev) => prev.map((f) => (f.id === id ? { ...f, nombre } : f)).sort((a, b) => a.nombre.localeCompare(b.nombre)))
+      setRenamingFolderId(null)
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "No se pudo renombrar la carpeta", variant: "destructive" })
+    } finally {
+      setSavingFolderRename(false)
+    }
+  }
+
+  const handleDeleteFolder = async (id: string) => {
+    setDeletingFolderId(id)
+    try {
+      const { error } = await createClient().from("chat_carpetas").delete().eq("id", id)
+      if (error) throw error
+      setCarpetas((prev) => prev.filter((f) => f.id !== id))
+      setConversations((prev) => prev.map((c) => (c.carpeta_id === id ? { ...c, carpeta_id: null } : c)))
+      setActiveFolderFilter((prev) => (prev === id ? "all" : prev))
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "No se pudo eliminar la carpeta", variant: "destructive" })
+    } finally {
+      setDeletingFolderId(null)
+    }
+  }
+
+  const assignConversationToFolder = async (convId: string, carpetaId: string | null) => {
+    // Optimista primero: la UI responde de inmediato, sin esperar la escritura.
+    setConversations((prev) => prev.map((c) => (c.conversation_id === convId ? { ...c, carpeta_id: carpetaId } : c)))
+    try {
+      const supabase = createClient()
+      if (carpetaId === null) {
+        await supabase.from("chat_conversacion_carpeta").delete().eq("user_id", currentUser.id).eq("conversation_id", convId)
+      } else {
+        await supabase.from("chat_conversacion_carpeta").upsert(
+          { user_id: currentUser.id, conversation_id: convId, carpeta_id: carpetaId },
+          { onConflict: "user_id,conversation_id" }
+        )
+      }
+    } catch {
+      toast({ title: "Error", description: "No se pudo mover el chat de carpeta", variant: "destructive" })
+      loadConversations()
+    }
+  }
 
   // ── Realtime: nuevas invitaciones ─────────────────────────────────────────
 
@@ -914,6 +1014,12 @@ export function ChatView({ currentUser }: ChatViewProps) {
 
   const activeConv = conversations.find((c) => c.conversation_id === activeConvId)
 
+  const visibleConversations = conversations.filter((c) => {
+    if (activeFolderFilter === "all") return true
+    if (activeFolderFilter === "sin-carpeta") return !c.carpeta_id
+    return c.carpeta_id === activeFolderFilter
+  })
+
   // ── Búsqueda dentro de la conversación ────────────────────────────────────
 
   const matchIds = searchQuery.trim()
@@ -972,6 +1078,51 @@ export function ChatView({ currentUser }: ChatViewProps) {
           </Button>
         </div>
 
+        {/* Carpetas */}
+        {conversations.length > 0 && (
+          <div className="flex items-center gap-1.5 px-3 py-2 border-b overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+            <button
+              type="button"
+              onClick={() => setActiveFolderFilter("all")}
+              className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
+                activeFolderFilter === "all" ? "bg-brand text-white" : "bg-muted text-muted-foreground hover:bg-muted/70"
+              }`}
+            >
+              Todos
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveFolderFilter("sin-carpeta")}
+              className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
+                activeFolderFilter === "sin-carpeta" ? "bg-brand text-white" : "bg-muted text-muted-foreground hover:bg-muted/70"
+              }`}
+            >
+              Sin carpeta
+            </button>
+            {carpetas.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setActiveFolderFilter(f.id)}
+                className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-medium truncate max-w-[110px] transition-colors ${
+                  activeFolderFilter === f.id ? "bg-brand text-white" : "bg-muted text-muted-foreground hover:bg-muted/70"
+                }`}
+                title={f.nombre}
+              >
+                {f.nombre}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setShowManageFolders(true)}
+              className="shrink-0 flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
+              title="Gestionar carpetas"
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* Lista */}
         {loadingConvs ? (
           <div className="flex flex-1 items-center justify-center">
@@ -986,14 +1137,18 @@ export function ChatView({ currentUser }: ChatViewProps) {
               Nueva conversación
             </Button>
           </div>
+        ) : visibleConversations.length === 0 ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground px-4 text-center">
+            <Users className="h-8 w-8 opacity-30" />
+            <p className="text-sm">Sin chats en esta carpeta</p>
+          </div>
         ) : (
           <div className="flex-1 overflow-y-auto divide-y divide-border">
-            {conversations.map((conv) => (
-              <button
+            {visibleConversations.map((conv) => (
+              <div
                 key={conv.conversation_id}
-                type="button"
                 onClick={() => selectConversation(conv.conversation_id)}
-                className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40 ${
+                className={`w-full flex items-start gap-2 px-4 py-3 text-left transition-colors hover:bg-muted/40 cursor-pointer select-none ${
                   activeConvId === conv.conversation_id ? "bg-muted/60" : ""
                 }`}
               >
@@ -1014,7 +1169,35 @@ export function ChatView({ currentUser }: ChatViewProps) {
                     {conv.unread_count > 9 ? "9+" : conv.unread_count}
                   </span>
                 )}
-              </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={(e) => e.stopPropagation()}
+                      className="shrink-0 flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                      title="Mover a carpeta"
+                    >
+                      <MoreVertical className="h-3.5 w-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                    <DropdownMenuLabel className="text-[11px]">Mover a carpeta</DropdownMenuLabel>
+                    {carpetas.map((f) => (
+                      <DropdownMenuItem key={f.id} onClick={() => assignConversationToFolder(conv.conversation_id, f.id)} className="gap-1.5">
+                        {conv.carpeta_id === f.id ? <Check className="h-3.5 w-3.5" /> : <span className="w-3.5" />}
+                        <span className="truncate">{f.nombre}</span>
+                      </DropdownMenuItem>
+                    ))}
+                    {carpetas.length > 0 && <DropdownMenuSeparator />}
+                    <DropdownMenuItem onClick={() => assignConversationToFolder(conv.conversation_id, null)} disabled={!conv.carpeta_id}>
+                      Sin carpeta
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setShowManageFolders(true)}>
+                      + Nueva carpeta...
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             ))}
           </div>
         )}
@@ -1281,6 +1464,72 @@ export function ChatView({ currentUser }: ChatViewProps) {
           onChanged={() => { loadConversations(); refreshParticipants(activeConvId) }}
         />
       )}
+
+      {/* Dialog gestionar carpetas */}
+      <Dialog open={showManageFolders} onOpenChange={setShowManageFolders}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Carpetas de chat</DialogTitle>
+          </DialogHeader>
+          <div className="flex gap-2">
+            <Input
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleCreateFolder() }}
+              placeholder="Nueva carpeta..."
+              className="h-9 text-sm flex-1"
+            />
+            <Button size="sm" className="h-9 shrink-0" onClick={handleCreateFolder} disabled={creatingFolder || !newFolderName.trim()}>
+              {creatingFolder ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+            </Button>
+          </div>
+          <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
+            {carpetas.map((f) => (
+              <div key={f.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-muted/40">
+                {renamingFolderId === f.id ? (
+                  <>
+                    <Input
+                      value={renameFolderValue}
+                      onChange={(e) => setRenameFolderValue(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleRenameFolder(f.id) }}
+                      className="h-8 text-sm flex-1"
+                      autoFocus
+                    />
+                    <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => handleRenameFolder(f.id)} disabled={savingFolderRename || !renameFolderValue.trim()}>
+                      {savingFolderRename ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                    </Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => setRenamingFolderId(null)}>
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-sm flex-1 truncate">{f.nombre}</span>
+                    <button
+                      type="button"
+                      onClick={() => { setRenamingFolderId(f.id); setRenameFolderValue(f.nombre) }}
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                      title="Renombrar"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteFolder(f.id)}
+                      disabled={deletingFolderId === f.id}
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
+                      title="Eliminar"
+                    >
+                      {deletingFolderId === f.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+            {carpetas.length === 0 && <p className="text-xs text-muted-foreground text-center py-3">Sin carpetas aún</p>}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
