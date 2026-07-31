@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast"
 import {
   FolderOpen, Folder, Plus, ArrowLeft, Share2, LayoutGrid, List,
   Upload, Loader2, FileText, FileSpreadsheet, File as FileIcon,
-  Trash2, X, Users, Pencil,
+  Trash2, X, Users, Pencil, ChevronLeft, ChevronRight, Check,
 } from "lucide-react"
 import type { AuthenticatedUser } from "./login-view"
 
@@ -72,6 +72,17 @@ function initials(nombre: string): string {
   return nombre.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase()
 }
 
+type IconSize = "sm" | "md" | "lg"
+
+const GRID_SIZE_CONFIG: Record<IconSize, { gridClass: string; thumbClass: string; label: string }> = {
+  sm: { gridClass: "grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8", thumbClass: "h-12", label: "Pequeño" },
+  md: { gridClass: "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5", thumbClass: "h-16", label: "Mediano" },
+  lg: { gridClass: "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4", thumbClass: "h-28", label: "Grande" },
+}
+
+const VIEW_MODE_KEY = "documentos_view_mode"
+const ICON_SIZE_KEY = "documentos_icon_size"
+
 // ─── Componente ───────────────────────────────────────────────────────────────
 
 interface DocumentosViewProps {
@@ -94,7 +105,20 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
   const [activeCarpetaId, setActiveCarpetaId] = useState<string | null>(null)
   const [documentos, setDocumentos] = useState<Documento[]>([])
   const [loadingDocs, setLoadingDocs] = useState(false)
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
+  const [viewMode, setViewModeState] = useState<"grid" | "list">(() =>
+    typeof window !== "undefined" ? ((localStorage.getItem(VIEW_MODE_KEY) as "grid" | "list") || "grid") : "grid"
+  )
+  const setViewMode = (v: "grid" | "list") => {
+    setViewModeState(v)
+    try { localStorage.setItem(VIEW_MODE_KEY, v) } catch {}
+  }
+  const [iconSize, setIconSizeState] = useState<IconSize>(() =>
+    typeof window !== "undefined" ? ((localStorage.getItem(ICON_SIZE_KEY) as IconSize) || "md") : "md"
+  )
+  const setIconSize = (v: IconSize) => {
+    setIconSizeState(v)
+    try { localStorage.setItem(ICON_SIZE_KEY, v) } catch {}
+  }
 
   // Categorías (catálogo global)
   const [categorias, setCategorias] = useState<Categoria[]>([])
@@ -131,6 +155,13 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
   const [deletingCarpeta, setDeletingCarpeta] = useState(false)
 
   const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  // Vista previa de documento (con navegacion prev/next) + edicion de nombre/notas
+  const [previewDocId, setPreviewDocId] = useState<string | null>(null)
+  const [editingDocMeta, setEditingDocMeta] = useState(false)
+  const [editDocNombre, setEditDocNombre] = useState("")
+  const [editDocNotas, setEditDocNotas] = useState("")
+  const [savingDocMeta, setSavingDocMeta] = useState(false)
 
   // ── Cargar carpetas ─────────────────────────────────────────────────────
 
@@ -226,7 +257,6 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
     setFilterUploader("all")
     setFilterDesde("")
     setFilterHasta("")
-    setViewMode("grid")
     loadDocumentos(id)
   }
 
@@ -432,6 +462,81 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
 
   const categoriaNombre = (id: number | null) => categorias.find((c) => c.id === id)?.nombre ?? null
 
+  // ── Vista previa de documento (navegable con flechas) ───────────────────
+
+  const previewIndex = previewDocId ? filteredDocs.findIndex((d) => d.id === previewDocId) : -1
+  const previewDoc = previewIndex >= 0 ? filteredDocs[previewIndex] : null
+
+  const openPreview = (doc: Documento) => {
+    setEditingDocMeta(false)
+    setPreviewDocId(doc.id)
+  }
+  const closePreview = () => {
+    setPreviewDocId(null)
+    setEditingDocMeta(false)
+  }
+  const goPrev = useCallback(() => {
+    if (filteredDocs.length === 0) return
+    setPreviewDocId((current) => {
+      const i = filteredDocs.findIndex((d) => d.id === current)
+      const next = i <= 0 ? filteredDocs.length - 1 : i - 1
+      return filteredDocs[next].id
+    })
+    setEditingDocMeta(false)
+  }, [filteredDocs])
+  const goNext = useCallback(() => {
+    if (filteredDocs.length === 0) return
+    setPreviewDocId((current) => {
+      const i = filteredDocs.findIndex((d) => d.id === current)
+      const next = i >= filteredDocs.length - 1 ? 0 : i + 1
+      return filteredDocs[next].id
+    })
+    setEditingDocMeta(false)
+  }, [filteredDocs])
+
+  useEffect(() => {
+    if (!previewDocId) return
+    const onKey = (e: KeyboardEvent) => {
+      if (editingDocMeta) return
+      if (e.key === "ArrowLeft") goPrev()
+      if (e.key === "ArrowRight") goNext()
+      if (e.key === "Escape") closePreview()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [previewDocId, editingDocMeta, goPrev, goNext])
+
+  const openEditDocMeta = () => {
+    if (!previewDoc) return
+    setEditDocNombre(previewDoc.nombre_archivo)
+    setEditDocNotas(previewDoc.notas ?? "")
+    setEditingDocMeta(true)
+  }
+
+  const handleSaveDocMeta = async () => {
+    if (!previewDoc || !editDocNombre.trim()) return
+    setSavingDocMeta(true)
+    try {
+      const nombre_archivo = editDocNombre.trim()
+      const notas = editDocNotas.trim() || null
+      const { error } = await createClient().from("documentos").update({ nombre_archivo, notas }).eq("id", previewDoc.id)
+      if (error) throw error
+      setDocumentos((prev) => prev.map((d) => (d.id === previewDoc.id ? { ...d, nombre_archivo, notas } : d)))
+      setEditingDocMeta(false)
+      toast({ title: "Documento actualizado" })
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "No se pudo actualizar el documento", variant: "destructive" })
+    } finally {
+      setSavingDocMeta(false)
+    }
+  }
+
+  const handleDeleteFromPreview = async () => {
+    if (!previewDoc) return
+    await handleDeleteDocumento(previewDoc)
+    closePreview()
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   if (!activeCarpetaId) {
@@ -576,7 +681,25 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
         <Input type="date" value={filterDesde} onChange={(e) => setFilterDesde(e.target.value)} className="h-8 w-32 text-xs" title="Desde" />
         <Input type="date" value={filterHasta} onChange={(e) => setFilterHasta(e.target.value)} className="h-8 w-32 text-xs" title="Hasta" />
 
-        <div className="ml-auto flex items-center gap-1 rounded-lg border p-0.5">
+        {viewMode === "grid" && (
+          <div className="flex items-center gap-0.5 rounded-lg border p-0.5">
+            {(["sm", "md", "lg"] as IconSize[]).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setIconSize(s)}
+                title={GRID_SIZE_CONFIG[s].label}
+                className={`h-7 px-2 rounded-md text-[10px] font-semibold transition-colors ${
+                  iconSize === s ? "bg-brand text-white" : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                {GRID_SIZE_CONFIG[s].label[0]}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className={`flex items-center gap-1 rounded-lg border p-0.5 ${viewMode === "grid" ? "" : "ml-auto"}`}>
           <Button size="icon" variant={viewMode === "grid" ? "default" : "ghost"} className="h-7 w-7" onClick={() => setViewMode("grid")}>
             <LayoutGrid className="h-3.5 w-3.5" />
           </Button>
@@ -595,24 +718,24 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
           <p className="text-sm">{documentos.length === 0 ? "Sin documentos aún" : "Ningún documento coincide con los filtros"}</p>
         </div>
       ) : viewMode === "grid" ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+        <div className={`grid ${GRID_SIZE_CONFIG[iconSize].gridClass} gap-3`}>
           {filteredDocs.map((doc) => {
             const puedeEliminar = doc.uploaded_by === currentUser.id || esCreador
             const { Icon, className } = getFileIconMeta(doc.tipo_mime, doc.nombre_archivo)
             const cat = categoriaNombre(doc.categoria_id)
             return (
               <div key={doc.id} className="group relative flex flex-col gap-1.5 rounded-xl border bg-card p-2.5">
-                <a href={doc.url} target="_blank" rel="noopener noreferrer" className="flex flex-col items-center gap-1.5">
+                <button type="button" onClick={() => openPreview(doc)} className="flex flex-col items-center gap-1.5 text-left">
                   {doc.tipo_mime?.startsWith("image/") ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={doc.url} alt={doc.nombre_archivo} className="h-16 w-full object-cover rounded-lg" />
+                    <img src={doc.url} alt={doc.nombre_archivo} className={`${GRID_SIZE_CONFIG[iconSize].thumbClass} w-full object-cover rounded-lg`} />
                   ) : (
-                    <div className="flex h-16 w-full items-center justify-center rounded-lg bg-muted">
+                    <div className={`flex ${GRID_SIZE_CONFIG[iconSize].thumbClass} w-full items-center justify-center rounded-lg bg-muted`}>
                       <Icon className={`h-8 w-8 ${className}`} />
                     </div>
                   )}
                   <p className="text-[11px] font-medium text-center truncate w-full" title={doc.nombre_archivo}>{doc.nombre_archivo}</p>
-                </a>
+                </button>
                 {cat && <Badge variant="outline" className="text-[9px] px-1.5 py-0 self-center">{cat}</Badge>}
                 <p className="text-[9px] text-muted-foreground text-center truncate">{doc.uploaded_by_nombre} · {formatFecha(doc.created_at)}</p>
                 {puedeEliminar && (
@@ -637,23 +760,25 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
             const cat = categoriaNombre(doc.categoria_id)
             return (
               <div key={doc.id} className="flex items-center gap-3 px-3 py-2.5">
-                <a href={doc.url} target="_blank" rel="noopener noreferrer" className="shrink-0">
-                  {doc.tipo_mime?.startsWith("image/") ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={doc.url} alt={doc.nombre_archivo} className="h-9 w-9 object-cover rounded-md" />
-                  ) : (
-                    <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
-                      <Icon className={`h-4 w-4 ${className}`} />
-                    </div>
-                  )}
-                </a>
-                <a href={doc.url} target="_blank" rel="noopener noreferrer" className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{doc.nombre_archivo}</p>
-                  <p className="text-[11px] text-muted-foreground truncate">
-                    {doc.uploaded_by_nombre} · {formatFecha(doc.created_at)} · {formatBytes(doc.tamano_bytes)}
-                    {doc.notas ? ` · ${doc.notas}` : ""}
-                  </p>
-                </a>
+                <button type="button" onClick={() => openPreview(doc)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+                  <span className="shrink-0">
+                    {doc.tipo_mime?.startsWith("image/") ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={doc.url} alt={doc.nombre_archivo} className="h-9 w-9 object-cover rounded-md" />
+                    ) : (
+                      <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
+                        <Icon className={`h-4 w-4 ${className}`} />
+                      </div>
+                    )}
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{doc.nombre_archivo}</p>
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      {doc.uploaded_by_nombre} · {formatFecha(doc.created_at)} · {formatBytes(doc.tamano_bytes)}
+                      {doc.notas ? ` · ${doc.notas}` : ""}
+                    </p>
+                  </span>
+                </button>
                 {cat && <Badge variant="outline" className="text-[10px] shrink-0">{cat}</Badge>}
                 {puedeEliminar && (
                   <Button
@@ -808,6 +933,110 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
               {deletingCarpeta ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Eliminar carpeta"}
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog vista previa de documento (navegable, editable) */}
+      <Dialog open={!!previewDocId} onOpenChange={(open) => { if (!open) closePreview() }}>
+        <DialogContent className="max-w-lg rounded-2xl">
+          {previewDoc && (() => {
+            const puedeEliminar = previewDoc.uploaded_by === currentUser.id || esCreador
+            const { Icon, className } = getFileIconMeta(previewDoc.tipo_mime, previewDoc.nombre_archivo)
+            const cat = categoriaNombre(previewDoc.categoria_id)
+            const esImagen = previewDoc.tipo_mime?.startsWith("image/")
+            const esPdf = previewDoc.tipo_mime === "application/pdf" || previewDoc.nombre_archivo.toLowerCase().endsWith(".pdf")
+            return (
+              <div className="space-y-3">
+                <DialogHeader>
+                  {editingDocMeta ? (
+                    <Input value={editDocNombre} onChange={(e) => setEditDocNombre(e.target.value)} className="h-9 text-sm font-semibold" />
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <DialogTitle className="text-base truncate flex-1">{previewDoc.nombre_archivo}</DialogTitle>
+                      <button type="button" onClick={openEditDocMeta} className="shrink-0 text-muted-foreground hover:text-foreground" title="Renombrar documento">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </DialogHeader>
+
+                {/* Preview */}
+                {esImagen ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={previewDoc.url} alt={previewDoc.nombre_archivo} className="w-full max-h-[50vh] object-contain rounded-lg bg-muted" />
+                ) : esPdf ? (
+                  <iframe src={previewDoc.url} className="w-full h-[50vh] rounded-lg border" title={previewDoc.nombre_archivo} />
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-2 py-10 rounded-lg bg-muted">
+                    <Icon className={`h-14 w-14 ${className}`} />
+                    <a href={previewDoc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-brand underline">
+                      Abrir archivo
+                    </a>
+                  </div>
+                )}
+
+                {/* Notas */}
+                {editingDocMeta ? (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Notas</Label>
+                    <Textarea value={editDocNotas} onChange={(e) => setEditDocNotas(e.target.value)} className="text-sm" rows={2} />
+                  </div>
+                ) : previewDoc.notas ? (
+                  <p className="text-sm text-muted-foreground">{previewDoc.notas}</p>
+                ) : null}
+
+                {editingDocMeta && (
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setEditingDocMeta(false)} disabled={savingDocMeta}>
+                      Cancelar
+                    </Button>
+                    <Button size="sm" onClick={handleSaveDocMeta} disabled={savingDocMeta || !editDocNombre.trim()}>
+                      {savingDocMeta ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Check className="h-3.5 w-3.5" /> Guardar</>}
+                    </Button>
+                  </div>
+                )}
+
+                {/* Metadata */}
+                <div className="flex items-center gap-2 flex-wrap text-[11px] text-muted-foreground">
+                  {cat && <Badge variant="outline" className="text-[10px]">{cat}</Badge>}
+                  <span>{previewDoc.uploaded_by_nombre} · {formatFecha(previewDoc.created_at)}</span>
+                  {previewDoc.tamano_bytes && <span>· {formatBytes(previewDoc.tamano_bytes)}</span>}
+                </div>
+
+                {/* Navegación + acciones */}
+                <div className="flex items-center justify-between pt-2 border-t">
+                  <div className="flex items-center gap-1">
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={goPrev} disabled={filteredDocs.length <= 1} title="Anterior">
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="text-[11px] text-muted-foreground tabular-nums">
+                      {previewIndex + 1}/{filteredDocs.length}
+                    </span>
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={goNext} disabled={filteredDocs.length <= 1} title="Siguiente">
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Button size="sm" variant="outline" className="h-8 text-xs" asChild>
+                      <a href={previewDoc.url} target="_blank" rel="noopener noreferrer">Abrir en pestaña nueva</a>
+                    </Button>
+                    {puedeEliminar && (
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        onClick={handleDeleteFromPreview}
+                        disabled={deletingId === previewDoc.id}
+                        title="Eliminar documento"
+                      >
+                        {deletingId === previewDoc.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
         </DialogContent>
       </Dialog>
     </div>
