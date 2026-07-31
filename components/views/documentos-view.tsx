@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast"
 import {
   FolderOpen, Folder, Plus, ArrowLeft, Share2, LayoutGrid, List,
   Upload, Loader2, FileText, FileSpreadsheet, File as FileIcon,
-  Trash2, X, Users,
+  Trash2, X, Users, Pencil,
 } from "lucide-react"
 import type { AuthenticatedUser } from "./login-view"
 
@@ -121,6 +121,14 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
   const [allowedIds, setAllowedIds] = useState<Set<number>>(new Set())
   const [loadingShare, setLoadingShare] = useState(false)
   const [savingShare, setSavingShare] = useState(false)
+
+  // Renombrar / eliminar carpeta
+  const [showEditCarpeta, setShowEditCarpeta] = useState(false)
+  const [editNombre, setEditNombre] = useState("")
+  const [editDescripcion, setEditDescripcion] = useState("")
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [showDeleteCarpeta, setShowDeleteCarpeta] = useState(false)
+  const [deletingCarpeta, setDeletingCarpeta] = useState(false)
 
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
@@ -354,6 +362,53 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
     }
   }
 
+  // ── Renombrar / eliminar carpeta ─────────────────────────────────────────
+
+  const openEditCarpeta = () => {
+    if (!activeCarpeta) return
+    setEditNombre(activeCarpeta.nombre)
+    setEditDescripcion(activeCarpeta.descripcion ?? "")
+    setShowEditCarpeta(true)
+  }
+
+  const handleSaveEditCarpeta = async () => {
+    if (!activeCarpetaId || !editNombre.trim()) return
+    setSavingEdit(true)
+    try {
+      const nombre = editNombre.trim()
+      const descripcion = editDescripcion.trim() || null
+      const { error } = await createClient()
+        .from("documento_carpetas")
+        .update({ nombre, descripcion })
+        .eq("id", activeCarpetaId)
+      if (error) throw error
+      setCarpetas((prev) => prev.map((c) => (c.id === activeCarpetaId ? { ...c, nombre, descripcion } : c)))
+      setShowEditCarpeta(false)
+      toast({ title: "Carpeta actualizada" })
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "No se pudo actualizar la carpeta", variant: "destructive" })
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  const handleDeleteCarpeta = async () => {
+    if (!activeCarpetaId) return
+    setDeletingCarpeta(true)
+    try {
+      const { error } = await createClient().from("documento_carpetas").delete().eq("id", activeCarpetaId)
+      if (error) throw error
+      toast({ title: "Carpeta eliminada" })
+      setShowDeleteCarpeta(false)
+      setActiveCarpetaId(null)
+      await loadCarpetas()
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "No se pudo eliminar la carpeta", variant: "destructive" })
+    } finally {
+      setDeletingCarpeta(false)
+    }
+  }
+
   // ── Filtros ──────────────────────────────────────────────────────────────
 
   const uploaders = useMemo(() => {
@@ -472,10 +527,24 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {esCreador && (
-            <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={openShare}>
-              <Share2 className="h-3.5 w-3.5" />
-              Compartir
-            </Button>
+            <>
+              <Button size="icon" variant="outline" className="h-8 w-8" onClick={openEditCarpeta} title="Renombrar carpeta">
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                size="icon"
+                variant="outline"
+                className="h-8 w-8 text-destructive hover:text-destructive"
+                onClick={() => setShowDeleteCarpeta(true)}
+                title="Eliminar carpeta"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+              <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={openShare}>
+                <Share2 className="h-3.5 w-3.5" />
+                Compartir
+              </Button>
+            </>
           )}
           <Button size="sm" className="gap-1.5 h-8 text-xs" onClick={() => setShowUpload(true)}>
             <Upload className="h-3.5 w-3.5" />
@@ -697,6 +766,48 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
               </Button>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog renombrar carpeta */}
+      <Dialog open={showEditCarpeta} onOpenChange={setShowEditCarpeta}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Renombrar carpeta</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Nombre</Label>
+              <Input value={editNombre} onChange={(e) => setEditNombre(e.target.value)} className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Descripción (opcional)</Label>
+              <Textarea value={editDescripcion} onChange={(e) => setEditDescripcion(e.target.value)} className="text-sm" rows={2} />
+            </div>
+            <Button className="w-full" size="sm" onClick={handleSaveEditCarpeta} disabled={savingEdit || !editNombre.trim()}>
+              {savingEdit ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar cambios"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog confirmar eliminación de carpeta */}
+      <Dialog open={showDeleteCarpeta} onOpenChange={setShowDeleteCarpeta}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Eliminar carpeta</DialogTitle>
+            <DialogDescription>
+              Se eliminará "{activeCarpeta?.nombre}" y {documentos.length > 0 ? `los ${documentos.length} documento${documentos.length !== 1 ? "s" : ""} que contiene` : "su contenido"}. Esta acción no se puede deshacer.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" size="sm" onClick={() => setShowDeleteCarpeta(false)} disabled={deletingCarpeta}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" size="sm" onClick={handleDeleteCarpeta} disabled={deletingCarpeta}>
+              {deletingCarpeta ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Eliminar carpeta"}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
