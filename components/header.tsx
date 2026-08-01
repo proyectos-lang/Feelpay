@@ -10,7 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { useState, useEffect } from "react"
 import type { SelectedRuta } from "./route-selector"
 import type { AuthenticatedUser } from "./views/login-view"
@@ -26,6 +26,7 @@ interface HeaderProps {
   onChangeRuta?: () => void
   currentUser?: AuthenticatedUser | null
   onLogout?: () => void
+  onViewChange?: (view: string) => void
 }
 
 export function Header({
@@ -37,6 +38,7 @@ export function Header({
   onChangeRuta,
   currentUser,
   onLogout,
+  onViewChange,
 }: HeaderProps) {
   const [currentDateTime, setCurrentDateTime] = useState(new Date())
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("checking")
@@ -233,6 +235,7 @@ export function Header({
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="hidden md:flex gap-1 md:gap-2 px-1.5 md:px-4 h-8 md:h-10">
               <Avatar className="h-5 w-5 md:h-8 md:w-8">
+                {currentUser?.foto_url && <AvatarImage src={currentUser.foto_url} alt={currentUser.nombre} />}
                 <AvatarFallback className="bg-brand-gradient text-brand-foreground text-[10px] md:text-xs font-bold">
                   {currentUser?.nombre
                     ? currentUser.nombre
@@ -264,7 +267,7 @@ export function Header({
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-xs md:text-sm">Perfil</DropdownMenuItem>
+            <DropdownMenuItem className="text-xs md:text-sm cursor-pointer" onClick={() => onViewChange?.("mi-perfil")}>Perfil</DropdownMenuItem>
             <DropdownMenuItem className="text-xs md:text-sm">Configuracion</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem

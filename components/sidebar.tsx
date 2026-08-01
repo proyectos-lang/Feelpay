@@ -31,7 +31,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import type { AuthenticatedUser } from "./views/login-view"
 import type { PermissionsMap } from "@/lib/modules-catalog"
@@ -345,8 +345,13 @@ export function Sidebar({
       {/* Mobile-only session footer with user info + logout */}
       {currentUser && (
         <div className="md:hidden flex-shrink-0 border-t border-sidebar-border bg-white/10 backdrop-blur-sm p-3">
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => onViewChange("mi-perfil")}
+            className="flex items-center gap-3 w-full text-left rounded-lg -m-1 p-1 hover:bg-white/10 transition-colors"
+          >
             <Avatar className="h-10 w-10 ring-2 ring-white/30">
+              {currentUser.foto_url && <AvatarImage src={currentUser.foto_url} alt={currentUser.nombre} />}
               <AvatarFallback className="bg-brand-gradient text-brand-foreground text-xs font-bold">
                 {initials || <UserIcon className="h-4 w-4" />}
               </AvatarFallback>
@@ -361,7 +366,7 @@ export function Sidebar({
                 </span>
               )}
             </div>
-          </div>
+          </button>
 
           {/* Instalar app — móvil: siempre visible mientras no esté instalada */}
           {!isStandalone && (

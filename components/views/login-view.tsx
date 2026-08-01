@@ -12,6 +12,7 @@ export type AuthenticatedUser = {
   nombre: string
   rol: string
   usuario?: string
+  foto_url?: string | null
 }
 
 interface LoginViewProps {

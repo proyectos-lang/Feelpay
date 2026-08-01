@@ -70,6 +70,7 @@ export function DashboardLayout({
       "user-route-management": "Gestión de Usuarios y Rutas",
       "chat": "Chat Interno",
       "reportes-bi": "Reportes Power BI",
+      "mi-perfil": "Mi Perfil",
     }
     return titleMap[view] || "Panel Principal"
   }
@@ -123,6 +124,7 @@ export function DashboardLayout({
           onChangeRuta={onChangeRuta}
           currentUser={currentUser}
           onLogout={onLogout}
+          onViewChange={onViewChange}
         />
         <main className="flex-1 overflow-y-auto p-3 md:p-6 pb-16 md:pb-6">{children}</main>
         <MobileBottomNav currentView={currentView} onViewChange={onViewChange} currentUser={currentUser} userPermissions={userPermissions} chatUnreadCount={chatUnreadCount} />

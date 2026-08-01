@@ -13,6 +13,7 @@ import { SecretaryAuthorizations } from "@/components/views/secretary-authorizat
 import { MovimientosRevision } from "@/components/views/movimientos-revision"
 import { MultasView } from "@/components/views/multas-view"
 import { DocumentosView } from "@/components/views/documentos-view"
+import { MiPerfil } from "@/components/views/mi-perfil"
 import { SecretaryReports } from "@/components/views/secretary-reports"
 import { SocioAdminReportes } from "@/components/views/socio-admin-reportes"
 import { AdminReportes } from "@/components/views/admin-reportes"
@@ -84,6 +85,15 @@ async function loadUserPermissions(userId: number, rol: string): Promise<Permiss
   }
 }
 
+async function loadUserFoto(userId: number | string): Promise<string | null> {
+  try {
+    const { data } = await createClient().from("usuarios").select("foto_url").eq("id", userId).maybeSingle()
+    return (data as { foto_url: string | null } | null)?.foto_url ?? null
+  } catch {
+    return null
+  }
+}
+
 const RUTA_STORAGE_KEY = "selectedRuta"
 const USER_STORAGE_KEY = "currentUser"
 // Cache local del último estado conocido de `rutas_diarias` para la ruta y
@@ -139,6 +149,12 @@ export default function Page() {
           if (parsed && parsed.id) {
             setCurrentUser(parsed)
             loadUserPermissions(parsed.id, parsed.rol ?? "").then(setUserPermissions).catch(() => {})
+            // Refresca la foto de perfil por si cambio desde otro dispositivo
+            // desde la ultima vez que se guardo la sesion en este localStorage.
+            loadUserFoto(parsed.id).then((foto_url) => {
+              setCurrentUser((prev) => (prev ? { ...prev, foto_url } : prev))
+              try { localStorage.setItem(USER_STORAGE_KEY, JSON.stringify({ ...parsed, foto_url })) } catch {}
+            }).catch(() => {})
           }
         }
         const rawRuta = localStorage.getItem(RUTA_STORAGE_KEY)
@@ -361,6 +377,10 @@ export default function Page() {
     setCurrentUser(user)
     setShowSplash(true)
     loadUserPermissions(user.id, user.rol ?? "").then(setUserPermissions).catch(() => {})
+    loadUserFoto(user.id).then((foto_url) => {
+      setCurrentUser((prev) => (prev ? { ...prev, foto_url } : prev))
+      try { localStorage.setItem(USER_STORAGE_KEY, JSON.stringify({ ...user, foto_url })) } catch {}
+    }).catch(() => {})
 
     const isAdmin = ADMIN_ROLES.has((user.rol ?? "").toLowerCase())
     if (isAdmin) {
@@ -508,6 +528,13 @@ export default function Page() {
     setShowRutaSelector(true)
   }, [])
 
+  // Permite que una vista (ej. Mi Perfil tras subir una foto) actualice el
+  // usuario en memoria y en localStorage sin necesidad de volver a iniciar sesion.
+  const handleUserUpdate = useCallback((updated: AuthenticatedUser) => {
+    setCurrentUser(updated)
+    try { localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(updated)) } catch {}
+  }, [])
+
   // Listener global del evento "app:session-lost" disparado por `safeQuery` en
   // `lib/api-helper.ts` cuando detecta que las variables de sesion RLS no
   // estan aplicadas o que faltan datos de sesion en localStorage. Al recibir
@@ -591,6 +618,8 @@ export default function Page() {
         return <MultasView />
       case "documentos":
         return <DocumentosView currentUser={currentUser!} />
+      case "mi-perfil":
+        return <MiPerfil currentUser={currentUser!} onUserUpdate={handleUserUpdate} />
       case "daily-route":
         return <DailyRoute />
       case "configure-route":
