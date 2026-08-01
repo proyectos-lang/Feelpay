@@ -638,11 +638,12 @@ export function ChatView({ currentUser }: ChatViewProps) {
   // ── Carpetas personales ────────────────────────────────────────────────────
 
   const loadCarpetas = useCallback(async () => {
-    const { data } = await createClient()
+    const { data, error } = await createClient()
       .from("chat_carpetas")
       .select("id, nombre")
       .eq("user_id", currentUser.id)
       .order("nombre")
+    if (error) console.error("[v0] Error cargando carpetas de chat:", error)
     setCarpetas((data ?? []) as ChatCarpeta[])
   }, [currentUser.id])
 
@@ -662,6 +663,7 @@ export function ChatView({ currentUser }: ChatViewProps) {
       setCarpetas((prev) => [...prev, nueva].sort((a, b) => a.nombre.localeCompare(b.nombre)))
       setNewFolderName("")
     } catch (err) {
+      console.error("[v0] Error creando carpeta de chat:", err)
       toast({ title: "Error", description: err instanceof Error ? err.message : "No se pudo crear la carpeta", variant: "destructive" })
     } finally {
       setCreatingFolder(false)
@@ -678,6 +680,7 @@ export function ChatView({ currentUser }: ChatViewProps) {
       setCarpetas((prev) => prev.map((f) => (f.id === id ? { ...f, nombre } : f)).sort((a, b) => a.nombre.localeCompare(b.nombre)))
       setRenamingFolderId(null)
     } catch (err) {
+      console.error("[v0] Error renombrando carpeta de chat:", err)
       toast({ title: "Error", description: err instanceof Error ? err.message : "No se pudo renombrar la carpeta", variant: "destructive" })
     } finally {
       setSavingFolderRename(false)
@@ -693,6 +696,7 @@ export function ChatView({ currentUser }: ChatViewProps) {
       setConversations((prev) => prev.map((c) => (c.carpeta_id === id ? { ...c, carpeta_id: null } : c)))
       setActiveFolderFilter((prev) => (prev === id ? "all" : prev))
     } catch (err) {
+      console.error("[v0] Error eliminando carpeta de chat:", err)
       toast({ title: "Error", description: err instanceof Error ? err.message : "No se pudo eliminar la carpeta", variant: "destructive" })
     } finally {
       setDeletingFolderId(null)
@@ -712,7 +716,8 @@ export function ChatView({ currentUser }: ChatViewProps) {
           { onConflict: "user_id,conversation_id" }
         )
       }
-    } catch {
+    } catch (err) {
+      console.error("[v0] Error moviendo chat de carpeta:", err)
       toast({ title: "Error", description: "No se pudo mover el chat de carpeta", variant: "destructive" })
       loadConversations()
     }
