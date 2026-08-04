@@ -7,11 +7,14 @@ import { getSolicitanteNombre } from "@/lib/ruta-umbrales"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
-import { Loader2, AlertTriangle, XCircle, CheckCircle2 } from "lucide-react"
+import { Loader2, AlertTriangle, XCircle, CheckCircle2, Settings2, Save } from "lucide-react"
 
 interface Multa {
   id: string
@@ -32,6 +35,13 @@ interface Multa {
 
 type RutaOption = { id: number; nombre: string }
 
+type MultaConfigRow = {
+  ruta_id: number
+  multa_habilitada: boolean
+  multa_cuotas_umbral: number | null
+  multa_valor: number | null
+}
+
 function formatMonto(n: number): string {
   return `$${n.toLocaleString("es-CO")}`
 }
@@ -40,9 +50,156 @@ function formatFecha(iso: string): string {
   return new Date(iso).toLocaleString("es-CO", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
 }
 
+// ─── Tab Configuración: política de multas por ruta ────────────────────────
+
+function ConfiguracionMultasTab() {
+  const { toast } = useToast()
+  const [rutas, setRutas] = useState<RutaOption[]>([])
+  const [configs, setConfigs] = useState<Map<number, MultaConfigRow>>(new Map())
+  const [selectedRutaId, setSelectedRutaId] = useState<number | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  const [fHabilitada, setFHabilitada] = useState(false)
+  const [fCuotas, setFCuotas] = useState("")
+  const [fValor, setFValor] = useState("")
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true)
+    try {
+      const supabase = createClient()
+      const [{ data: rutasData }, { data: configsData }] = await Promise.all([
+        supabase.from("rutas").select("id, nombre").order("id"),
+        supabase.from("ruta_config_umbrales").select("ruta_id, multa_habilitada, multa_cuotas_umbral, multa_valor"),
+      ])
+      setRutas((rutasData as RutaOption[]) ?? [])
+      setConfigs(new Map(((configsData as MultaConfigRow[]) ?? []).map((c) => [c.ruta_id, c])))
+    } catch (err) {
+      console.error("[v0] Error cargando configuración de multas:", err)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchAll() }, [fetchAll])
+
+  const selectRuta = (id: number) => {
+    setSelectedRutaId(id)
+    const c = configs.get(id)
+    setFHabilitada(c?.multa_habilitada ?? false)
+    setFCuotas(c?.multa_cuotas_umbral?.toString() ?? "")
+    setFValor(c?.multa_valor?.toString() ?? "")
+  }
+
+  const handleGuardar = async () => {
+    if (selectedRutaId === null) return
+    setSaving(true)
+    try {
+      const payload = {
+        ruta_id: selectedRutaId,
+        multa_habilitada: fHabilitada,
+        multa_cuotas_umbral: fCuotas ? Number.parseInt(fCuotas, 10) : null,
+        multa_valor: fValor ? Number.parseFloat(fValor) : null,
+        updated_at: new Date().toISOString(),
+      }
+      const { error } = await createClient().from("ruta_config_umbrales").upsert(payload, { onConflict: "ruta_id" })
+      if (error) throw error
+      setConfigs((prev) => new Map(prev).set(selectedRutaId, payload))
+      toast({ title: "Política de multas guardada" })
+    } catch (err) {
+      console.error("[v0] Error guardando configuración de multas:", err)
+      toast({ title: "Error", description: err instanceof Error ? err.message : "No se pudo guardar", variant: "destructive" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const selectedRuta = rutas.find((r) => r.id === selectedRutaId)
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-4">
+      {/* Panel selector de ruta */}
+      <div className="space-y-1">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-1 mb-2">Rutas</p>
+        {loading ? (
+          <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+        ) : (
+          <div className="space-y-1 max-h-[60vh] overflow-y-auto pr-1">
+            {rutas.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => selectRuta(r.id)}
+                className={`w-full text-left rounded-lg border px-3 py-2 text-sm transition-all truncate ${
+                  selectedRutaId === r.id
+                    ? "border-brand bg-brand/10 font-semibold"
+                    : "border-transparent hover:border-border hover:bg-muted/50"
+                }`}
+              >
+                {r.nombre}
+              </button>
+            ))}
+            {rutas.length === 0 && <p className="text-xs text-muted-foreground px-1 py-2">Sin rutas registradas</p>}
+          </div>
+        )}
+      </div>
+
+      {/* Panel de configuración */}
+      <div className="rounded-xl border bg-card p-4 space-y-4">
+        {!selectedRuta ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground gap-2">
+            <Settings2 className="h-8 w-8 opacity-30" />
+            <p className="text-sm">Selecciona una ruta para configurar<br />su política de multas</p>
+          </div>
+        ) : (
+          <>
+            <div>
+              <p className="font-semibold text-sm">Política de multas por mora</p>
+              <p className="text-xs text-muted-foreground">{selectedRuta.nombre}</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm">Generar multas automáticamente</Label>
+                <Switch checked={fHabilitada} onCheckedChange={setFHabilitada} />
+              </div>
+              <Input
+                type="number"
+                min={1}
+                step={1}
+                disabled={!fHabilitada}
+                value={fCuotas}
+                onChange={(e) => setFCuotas(e.target.value)}
+                placeholder="Cuotas en mora para generar multa (ej. 3)"
+                className="h-9 text-sm"
+              />
+              <Input
+                type="number"
+                min={0}
+                disabled={!fHabilitada}
+                value={fValor}
+                onChange={(e) => setFValor(e.target.value)}
+                placeholder="Valor de la multa en $ (ej. 10000)"
+                className="h-9 text-sm"
+              />
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <Button size="sm" onClick={handleGuardar} disabled={saving} className="gap-1.5 h-8 text-xs">
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                Guardar
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function MultasView() {
   const { toast } = useToast()
-  const [activeTab, setActiveTab] = useState<"vigentes" | "historial">("vigentes")
+  const [activeTab, setActiveTab] = useState<"vigentes" | "historial" | "configuracion">("vigentes")
   const [vigentes, setVigentes] = useState<Multa[]>([])
   const [historial, setHistorial] = useState<Multa[]>([])
   const [rutas, setRutas] = useState<RutaOption[]>([])
@@ -142,26 +299,34 @@ export function MultasView() {
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "vigentes" | "historial")}>
-          <TabsList className="grid grid-cols-2 w-full max-w-xs">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "vigentes" | "historial" | "configuracion")}>
+          <TabsList className="grid grid-cols-3 w-full max-w-sm">
             <TabsTrigger value="vigentes" className="text-xs md:text-sm">Vigentes ({vigentesFiltradas.length})</TabsTrigger>
             <TabsTrigger value="historial" className="text-xs md:text-sm">Historial</TabsTrigger>
+            <TabsTrigger value="configuracion" className="gap-1 text-xs md:text-sm">
+              <Settings2 className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Configuración</span>
+            </TabsTrigger>
           </TabsList>
         </Tabs>
-        <Select value={rutaFilter} onValueChange={setRutaFilter}>
-          <SelectTrigger className="h-9 text-xs md:text-sm w-40">
-            <SelectValue placeholder="Ruta" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todas" className="text-xs md:text-sm">Todas las rutas</SelectItem>
-            {rutas.map((r) => (
-              <SelectItem key={r.id} value={r.id.toString()} className="text-xs md:text-sm">{r.nombre}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {activeTab !== "configuracion" && (
+          <Select value={rutaFilter} onValueChange={setRutaFilter}>
+            <SelectTrigger className="h-9 text-xs md:text-sm w-40">
+              <SelectValue placeholder="Ruta" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todas" className="text-xs md:text-sm">Todas las rutas</SelectItem>
+              {rutas.map((r) => (
+                <SelectItem key={r.id} value={r.id.toString()} className="text-xs md:text-sm">{r.nombre}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
-      {loading ? (
+      {activeTab === "configuracion" ? (
+        <ConfiguracionMultasTab />
+      ) : loading ? (
         <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
       ) : (
         <>
