@@ -27,6 +27,7 @@ type Carpeta = {
   created_by: number
   created_by_nombre: string | null
   created_at: string
+  parent_id: string | null
 }
 
 type Categoria = { id: number; nombre: string }
@@ -95,14 +96,15 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
   // Nivel 1: carpetas
   const [carpetas, setCarpetas] = useState<Carpeta[]>([])
   const [docCounts, setDocCounts] = useState<Map<string, number>>(new Map())
+  const [subCarpetaCounts, setSubCarpetaCounts] = useState<Map<string, number>>(new Map())
   const [loadingCarpetas, setLoadingCarpetas] = useState(true)
   const [showNewCarpeta, setShowNewCarpeta] = useState(false)
   const [newCarpetaNombre, setNewCarpetaNombre] = useState("")
   const [newCarpetaDescripcion, setNewCarpetaDescripcion] = useState("")
   const [creatingCarpeta, setCreatingCarpeta] = useState(false)
 
-  // Nivel 2: dentro de una carpeta
-  const [activeCarpetaId, setActiveCarpetaId] = useState<string | null>(null)
+  // Nivel 2: dentro de una carpeta (folderPath = ids desde la raíz hasta la carpeta activa)
+  const [folderPath, setFolderPath] = useState<string[]>([])
   const [documentos, setDocumentos] = useState<Documento[]>([])
   const [loadingDocs, setLoadingDocs] = useState(false)
   const [viewMode, setViewModeState] = useState<"grid" | "list">(() =>
@@ -175,14 +177,33 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
         .eq("user_id", currentUser.id)
       const allowedCarpetaIds = ((permisos ?? []) as { carpeta_id: string }[]).map((p) => p.carpeta_id)
 
-      let query = supabase.from("documento_carpetas").select("*").order("created_at", { ascending: false })
-      query = allowedCarpetaIds.length > 0
-        ? query.or(`created_by.eq.${currentUser.id},id.in.(${allowedCarpetaIds.join(",")})`)
-        : query.eq("created_by", currentUser.id)
+      // Carpetas raíz accesibles (creadas por mí o compartidas conmigo)
+      let rootQuery = supabase.from("documento_carpetas").select("*").is("parent_id", null).order("created_at", { ascending: false })
+      rootQuery = allowedCarpetaIds.length > 0
+        ? rootQuery.or(`created_by.eq.${currentUser.id},id.in.(${allowedCarpetaIds.join(",")})`)
+        : rootQuery.eq("created_by", currentUser.id)
+      const { data: rootData } = await rootQuery
+      const rootRows = (rootData as Carpeta[]) ?? []
 
-      const { data } = await query
-      const rows = (data as Carpeta[]) ?? []
+      // Subcarpetas: heredan la visibilidad de su carpeta padre (sin permisos propios)
+      let subRows: Carpeta[] = []
+      if (rootRows.length > 0) {
+        const { data: subData } = await supabase
+          .from("documento_carpetas")
+          .select("*")
+          .in("parent_id", rootRows.map((c) => c.id))
+          .order("created_at", { ascending: false })
+        subRows = (subData as Carpeta[]) ?? []
+      }
+
+      const rows = [...rootRows, ...subRows]
       setCarpetas(rows)
+
+      const subCounts = new Map<string, number>()
+      for (const c of rows) {
+        if (c.parent_id) subCounts.set(c.parent_id, (subCounts.get(c.parent_id) ?? 0) + 1)
+      }
+      setSubCarpetaCounts(subCounts)
 
       if (rows.length > 0) {
         const { data: docsData } = await supabase
@@ -222,6 +243,7 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
         descripcion: newCarpetaDescripcion.trim() || null,
         created_by: currentUser.id,
         created_by_nombre: currentUser.nombre,
+        parent_id: activeCarpetaId,
       })
       if (error) throw error
       setShowNewCarpeta(false)
@@ -251,17 +273,40 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
     }
   }, [])
 
-  const selectCarpeta = (id: string) => {
-    setActiveCarpetaId(id)
+  const resetFiltros = () => {
     setFilterCategoria("all")
     setFilterUploader("all")
     setFilterDesde("")
     setFilterHasta("")
+  }
+
+  const openCarpeta = (id: string) => {
+    setFolderPath((prev) => [...prev, id])
+    resetFiltros()
     loadDocumentos(id)
   }
 
+  // index: -1 = raíz, 0..n = posición dentro de folderPath a la que saltar
+  const jumpToBreadcrumb = (index: number) => {
+    const next = index < 0 ? [] : folderPath.slice(0, index + 1)
+    setFolderPath(next)
+    resetFiltros()
+    if (next.length > 0) loadDocumentos(next[next.length - 1])
+    else setDocumentos([])
+  }
+
+  const goBack = () => jumpToBreadcrumb(folderPath.length - 2)
+
+  const activeCarpetaId = folderPath.length > 0 ? folderPath[folderPath.length - 1] : null
   const activeCarpeta = carpetas.find((c) => c.id === activeCarpetaId)
   const esCreador = activeCarpeta?.created_by === currentUser.id
+  const enSubcarpeta = activeCarpeta?.parent_id != null
+  const breadcrumbCarpetas = folderPath
+    .slice(0, -1)
+    .map((id) => carpetas.find((c) => c.id === id))
+    .filter((c): c is Carpeta => !!c)
+  const topLevelCarpetas = carpetas.filter((c) => c.parent_id === null)
+  const subCarpetas = activeCarpetaId ? carpetas.filter((c) => c.parent_id === activeCarpetaId) : []
 
   // ── Subir documento ──────────────────────────────────────────────────────
 
@@ -430,7 +475,7 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
       if (error) throw error
       toast({ title: "Carpeta eliminada" })
       setShowDeleteCarpeta(false)
-      setActiveCarpetaId(null)
+      goBack()
       await loadCarpetas()
     } catch (err) {
       toast({ title: "Error", description: err instanceof Error ? err.message : "No se pudo eliminar la carpeta", variant: "destructive" })
@@ -561,7 +606,7 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
 
         {loadingCarpetas ? (
           <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-        ) : carpetas.length === 0 ? (
+        ) : topLevelCarpetas.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">
             <FolderOpen className="h-10 w-10 opacity-30" />
             <p className="text-sm">Aún no tienes carpetas</p>
@@ -572,11 +617,11 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-            {carpetas.map((c) => (
+            {topLevelCarpetas.map((c) => (
               <button
                 key={c.id}
                 type="button"
-                onClick={() => selectCarpeta(c.id)}
+                onClick={() => openCarpeta(c.id)}
                 className="flex flex-col items-start gap-2 rounded-xl border bg-card p-3 text-left hover:border-brand hover:bg-brand/5 transition-colors"
               >
                 <Folder className="h-8 w-8 text-brand" />
@@ -584,6 +629,7 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
                   <p className="text-sm font-semibold truncate">{c.nombre}</p>
                   {c.descripcion && <p className="text-[11px] text-muted-foreground truncate">{c.descripcion}</p>}
                   <p className="text-[10px] text-muted-foreground mt-1">
+                    {(subCarpetaCounts.get(c.id) ?? 0) > 0 && `${subCarpetaCounts.get(c.id)} carpeta${(subCarpetaCounts.get(c.id) ?? 0) !== 1 ? "s" : ""} · `}
                     {docCounts.get(c.id) ?? 0} archivo{(docCounts.get(c.id) ?? 0) !== 1 ? "s" : ""} · {c.created_by_nombre ?? "—"}
                   </p>
                 </div>
@@ -622,10 +668,25 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
       {/* Header */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
-          <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => setActiveCarpetaId(null)}>
+          <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={goBack}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="min-w-0">
+            {breadcrumbCarpetas.length > 0 && (
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+                <button type="button" onClick={() => jumpToBreadcrumb(-1)} className="shrink-0 whitespace-nowrap hover:text-foreground">
+                  Documentos
+                </button>
+                {breadcrumbCarpetas.map((c, i) => (
+                  <span key={c.id} className="flex items-center gap-1 shrink-0 whitespace-nowrap">
+                    <ChevronRight className="h-3 w-3 shrink-0" />
+                    <button type="button" onClick={() => jumpToBreadcrumb(i)} className="hover:text-foreground">
+                      {c.nombre}
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <h2 className="text-sm md:text-lg font-bold truncate">{activeCarpeta?.nombre}</h2>
             <p className="text-[11px] text-muted-foreground truncate">{activeCarpeta?.descripcion}</p>
           </div>
@@ -633,7 +694,7 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
         <div className="flex items-center gap-1.5 shrink-0">
           {esCreador && (
             <>
-              <Button size="icon" variant="outline" className="h-8 w-8" onClick={openEditCarpeta} title="Renombrar carpeta">
+              <Button size="icon" variant="outline" className="h-8 w-8" onClick={openEditCarpeta} title={enSubcarpeta ? "Renombrar subcarpeta" : "Renombrar carpeta"}>
                 <Pencil className="h-3.5 w-3.5" />
               </Button>
               <Button
@@ -641,15 +702,23 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
                 variant="outline"
                 className="h-8 w-8 text-destructive hover:text-destructive"
                 onClick={() => setShowDeleteCarpeta(true)}
-                title="Eliminar carpeta"
+                title={enSubcarpeta ? "Eliminar subcarpeta" : "Eliminar carpeta"}
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
-              <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={openShare}>
-                <Share2 className="h-3.5 w-3.5" />
-                Compartir
-              </Button>
+              {!enSubcarpeta && (
+                <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={openShare}>
+                  <Share2 className="h-3.5 w-3.5" />
+                  Compartir
+                </Button>
+              )}
             </>
+          )}
+          {!enSubcarpeta && (
+            <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={() => setShowNewCarpeta(true)}>
+              <Plus className="h-3.5 w-3.5" />
+              Subcarpeta
+            </Button>
           )}
           <Button size="sm" className="gap-1.5 h-8 text-xs" onClick={() => setShowUpload(true)}>
             <Upload className="h-3.5 w-3.5" />
@@ -657,6 +726,32 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
           </Button>
         </div>
       </div>
+
+      {/* Subcarpetas */}
+      {subCarpetas.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-muted-foreground">Carpetas</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            {subCarpetas.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => openCarpeta(c.id)}
+                className="flex flex-col items-start gap-2 rounded-xl border bg-card p-3 text-left hover:border-brand hover:bg-brand/5 transition-colors"
+              >
+                <Folder className="h-8 w-8 text-brand" />
+                <div className="min-w-0 w-full">
+                  <p className="text-sm font-semibold truncate">{c.nombre}</p>
+                  {c.descripcion && <p className="text-[11px] text-muted-foreground truncate">{c.descripcion}</p>}
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    {docCounts.get(c.id) ?? 0} archivo{(docCounts.get(c.id) ?? 0) !== 1 ? "s" : ""} · {c.created_by_nombre ?? "—"}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Toolbar: filtros + toggle de vista */}
       <div className="flex items-center gap-2 flex-wrap">
@@ -855,6 +950,29 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
         </DialogContent>
       </Dialog>
 
+      {/* Dialog nueva subcarpeta */}
+      <Dialog open={showNewCarpeta} onOpenChange={setShowNewCarpeta}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Nueva subcarpeta</DialogTitle>
+            <DialogDescription>Dentro de "{activeCarpeta?.nombre}".</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Nombre</Label>
+              <Input value={newCarpetaNombre} onChange={(e) => setNewCarpetaNombre(e.target.value)} placeholder="Ej: 2024, Contratos..." className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Descripción (opcional)</Label>
+              <Textarea value={newCarpetaDescripcion} onChange={(e) => setNewCarpetaDescripcion(e.target.value)} className="text-sm" rows={2} />
+            </div>
+            <Button className="w-full" size="sm" onClick={handleCreateCarpeta} disabled={creatingCarpeta || !newCarpetaNombre.trim()}>
+              {creatingCarpeta ? <Loader2 className="h-4 w-4 animate-spin" /> : "Crear subcarpeta"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Dialog compartir carpeta */}
       <Dialog open={showShare} onOpenChange={setShowShare}>
         <DialogContent className="max-w-sm rounded-2xl">
@@ -898,7 +1016,7 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
       <Dialog open={showEditCarpeta} onOpenChange={setShowEditCarpeta}>
         <DialogContent className="max-w-sm rounded-2xl">
           <DialogHeader>
-            <DialogTitle>Renombrar carpeta</DialogTitle>
+            <DialogTitle>{enSubcarpeta ? "Renombrar subcarpeta" : "Renombrar carpeta"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
@@ -920,9 +1038,11 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
       <Dialog open={showDeleteCarpeta} onOpenChange={setShowDeleteCarpeta}>
         <DialogContent className="max-w-sm rounded-2xl">
           <DialogHeader>
-            <DialogTitle>Eliminar carpeta</DialogTitle>
+            <DialogTitle>{enSubcarpeta ? "Eliminar subcarpeta" : "Eliminar carpeta"}</DialogTitle>
             <DialogDescription>
-              Se eliminará "{activeCarpeta?.nombre}" y {documentos.length > 0 ? `los ${documentos.length} documento${documentos.length !== 1 ? "s" : ""} que contiene` : "su contenido"}. Esta acción no se puede deshacer.
+              Se eliminará "{activeCarpeta?.nombre}"
+              {subCarpetas.length > 0 && `, sus ${subCarpetas.length} subcarpeta${subCarpetas.length !== 1 ? "s" : ""}`}
+              {" "}y {documentos.length > 0 ? `los ${documentos.length} documento${documentos.length !== 1 ? "s" : ""} que contiene` : "su contenido"}. Esta acción no se puede deshacer.
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2 pt-1">
