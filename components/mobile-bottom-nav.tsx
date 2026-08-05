@@ -16,7 +16,7 @@ interface MobileBottomNavProps {
   onViewChange: (view: string) => void
   currentUser?: AuthenticatedUser | null
   userPermissions?: PermissionsMap | null
-  chatUnreadCount?: number
+  moduleBadgeCounts?: Record<string, number>
 }
 
 const VENDEDOR_ITEMS: NavItem[] = [
@@ -86,7 +86,7 @@ const ALL_NAV_ITEMS: NavItem[] = [
 
 const COLS: Record<number, string> = { 1: "grid-cols-1", 2: "grid-cols-2", 3: "grid-cols-3", 4: "grid-cols-4", 5: "grid-cols-5" }
 
-export function MobileBottomNav({ currentView, onViewChange, currentUser, userPermissions, chatUnreadCount }: MobileBottomNavProps) {
+export function MobileBottomNav({ currentView, onViewChange, currentUser, userPermissions, moduleBadgeCounts }: MobileBottomNavProps) {
   const rol = (currentUser?.rol ?? "").toLowerCase()
 
   const navItems = (() => {
@@ -116,8 +116,7 @@ export function MobileBottomNav({ currentView, onViewChange, currentUser, userPe
         {navItems.map((item) => {
           const Icon = item.icon
           const isActive = currentView === item.id
-          const isChatItem = item.id === "chat"
-          const unread = isChatItem && chatUnreadCount ? chatUnreadCount : 0
+          const unread = moduleBadgeCounts?.[item.id] ?? 0
           return (
             <Button
               key={item.id}

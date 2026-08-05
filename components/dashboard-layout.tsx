@@ -18,7 +18,7 @@ interface DashboardLayoutProps {
   currentUser?: AuthenticatedUser | null
   onLogout?: () => void
   userPermissions?: PermissionsMap | null
-  chatUnreadCount?: number
+  moduleBadgeCounts?: Record<string, number>
 }
 
 export function DashboardLayout({
@@ -30,7 +30,7 @@ export function DashboardLayout({
   currentUser,
   onLogout,
   userPermissions,
-  chatUnreadCount,
+  moduleBadgeCounts,
 }: DashboardLayoutProps) {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(false)
@@ -91,7 +91,7 @@ export function DashboardLayout({
           currentUser={currentUser}
           onLogout={onLogout}
           userPermissions={userPermissions}
-          chatUnreadCount={chatUnreadCount}
+          moduleBadgeCounts={moduleBadgeCounts}
         />
       </div>
 
@@ -110,7 +110,7 @@ export function DashboardLayout({
           currentUser={currentUser}
           onLogout={onLogout}
           userPermissions={userPermissions}
-          chatUnreadCount={chatUnreadCount}
+          moduleBadgeCounts={moduleBadgeCounts}
         />
       </div>
 
@@ -127,7 +127,7 @@ export function DashboardLayout({
           onViewChange={onViewChange}
         />
         <main className="flex-1 overflow-y-auto p-3 md:p-6 pb-16 md:pb-6">{children}</main>
-        <MobileBottomNav currentView={currentView} onViewChange={onViewChange} currentUser={currentUser} userPermissions={userPermissions} chatUnreadCount={chatUnreadCount} />
+        <MobileBottomNav currentView={currentView} onViewChange={onViewChange} currentUser={currentUser} userPermissions={userPermissions} moduleBadgeCounts={moduleBadgeCounts} />
       </div>
       {currentUser && <PushPermissionPrompt currentUser={currentUser} />}
     </div>

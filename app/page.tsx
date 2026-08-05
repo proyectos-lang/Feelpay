@@ -131,10 +131,15 @@ export default function Page() {
   const [showRutaSelector, setShowRutaSelector] = useState(false)
   const [userPermissions, setUserPermissions] = useState<PermissionsMap | null>(null)
 
-  // ── Chat: conteo global de mensajes no leídos ──────────────────────────────
-  const [chatUnreadCount, setChatUnreadCount] = useState(0)
+  // ── Badges de "nuevo": conteo en memoria por viewId (chat, documentos, reportes) ──
+  const [moduleBadgeCounts, setModuleBadgeCounts] = useState<Record<string, number>>({})
+  const bumpBadge = useCallback((viewId: string) => {
+    setModuleBadgeCounts((prev) => ({ ...prev, [viewId]: (prev[viewId] ?? 0) + 1 }))
+  }, [])
   // IDs de conversaciones donde participa el usuario (para filtrar mensajes ajenos)
   const myConvIdsRef = useRef<Set<string>>(new Set())
+  // IDs de carpetas de Documentos accesibles (raíz + subcarpetas heredadas)
+  const myCarpetaIdsRef = useRef<Set<string>>(new Set())
   // Ref del currentView para leer en handlers sin closure stale
   const currentViewRef = useRef(currentView)
   currentViewRef.current = currentView
@@ -458,17 +463,20 @@ export default function Page() {
     setSessionPhase("idle")
     setShowSplash(false)
     setUserPermissions(null)
-    setChatUnreadCount(0)
+    setModuleBadgeCounts({})
     myConvIdsRef.current = new Set()
+    myCarpetaIdsRef.current = new Set()
   }, [])
 
-  // ── Suscripción global de notificaciones de chat ───────────────────────────
+  // ── Suscripción global de notificaciones (chat, documentos, reportes) ──────
   // Se mantiene activa durante toda la sesión, independientemente de la vista.
   useEffect(() => {
     if (!currentUser) return
+    const supabase = createClient()
+    const rol = (currentUser.rol ?? "").toLowerCase()
 
     // Cargar IDs de conversaciones propias para filtrar mensajes ajenos
-    createClient()
+    supabase
       .from("chat_participants")
       .select("conversation_id")
       .eq("user_id", currentUser.id)
@@ -477,9 +485,39 @@ export default function Page() {
       })
       .catch(() => {})
 
-    const supabase = createClient()
+    // Cargar IDs de carpetas de Documentos accesibles (mismo query shape que
+    // documentos-view.tsx loadCarpetas: permisos -> raíz -> subcarpetas heredadas)
+    ;(async () => {
+      try {
+        const { data: permisos } = await supabase
+          .from("documento_carpeta_permisos")
+          .select("carpeta_id")
+          .eq("user_id", currentUser.id)
+        const allowedIds = ((permisos ?? []) as { carpeta_id: string }[]).map((p) => p.carpeta_id)
+
+        let rootQuery = supabase.from("documento_carpetas").select("id").is("parent_id", null)
+        rootQuery = allowedIds.length > 0
+          ? rootQuery.or(`created_by.eq.${currentUser.id},id.in.(${allowedIds.join(",")})`)
+          : rootQuery.eq("created_by", currentUser.id)
+        const { data: rootData } = await rootQuery
+        const rootIds = ((rootData ?? []) as { id: string }[]).map((r) => r.id)
+
+        let subIds: string[] = []
+        if (rootIds.length > 0) {
+          const { data: subData } = await supabase
+            .from("documento_carpetas")
+            .select("id")
+            .in("parent_id", rootIds)
+          subIds = ((subData ?? []) as { id: string }[]).map((r) => r.id)
+        }
+        myCarpetaIdsRef.current = new Set([...rootIds, ...subIds])
+      } catch (err) {
+        console.error("[v0] Error cargando carpetas accesibles:", err)
+      }
+    })()
+
     const channel = supabase
-      .channel(`notif-chat-${currentUser.id}`)
+      .channel(`notif-${currentUser.id}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "chat_messages" },
@@ -489,7 +527,7 @@ export default function Page() {
           if (!myConvIdsRef.current.has(msg.conversation_id)) return
           // Solo notificar si el usuario NO está ya en el módulo de chat
           if (currentViewRef.current !== "chat") {
-            setChatUnreadCount((prev) => prev + 1)
+            bumpBadge("chat")
             toast({
               title: `💬 ${msg.sender_nombre}`,
               description: msg.body ?? "📷 Imagen",
@@ -504,6 +542,68 @@ export default function Page() {
           // Registrar nuevas conversaciones donde me agregan
           if (payload.new.user_id === currentUser.id) {
             myConvIdsRef.current.add(payload.new.conversation_id)
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "documentos" },
+        (payload: { new: { carpeta_id: string; uploaded_by: number; uploaded_by_nombre: string; nombre_archivo: string } }) => {
+          const doc = payload.new
+          if (doc.uploaded_by === currentUser.id) return
+          if (!myCarpetaIdsRef.current.has(doc.carpeta_id)) return
+          if (currentViewRef.current !== "documentos") {
+            bumpBadge("documentos")
+            toast({ title: "📁 Nuevo documento", description: `${doc.uploaded_by_nombre}: ${doc.nombre_archivo}` })
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "documento_carpeta_permisos" },
+        (payload: { new: { user_id: number; carpeta_id: string } }) => {
+          if (payload.new.user_id === currentUser.id) {
+            myCarpetaIdsRef.current.add(payload.new.carpeta_id)
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "documento_carpetas" },
+        (payload: { new: { id: string; parent_id: string | null } }) => {
+          // Nueva subcarpeta dentro de una carpeta a la que ya tengo acceso
+          if (payload.new.parent_id && myCarpetaIdsRef.current.has(payload.new.parent_id)) {
+            myCarpetaIdsRef.current.add(payload.new.id)
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "informes" },
+        (payload: { new: { destinatario: string; socioadmin_id: number | null; secretaria_nombre: string; nombre_reporte: string } }) => {
+          const row = payload.new
+          if (rol === "gerencia" && row.destinatario === "gerencia") {
+            if (currentViewRef.current !== "secretary-reports") {
+              bumpBadge("secretary-reports")
+              toast({ title: "📄 Nuevo reporte", description: `${row.secretaria_nombre}: ${row.nombre_reporte}` })
+            }
+          } else if (rol === "socioadmin" && row.destinatario === "socioadmin" && row.socioadmin_id === currentUser.id) {
+            if (currentViewRef.current !== "socio-admin-reportes") {
+              bumpBadge("socio-admin-reportes")
+              toast({ title: "📄 Nuevo reporte", description: `${row.secretaria_nombre}: ${row.nombre_reporte}` })
+            }
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "admin_informes" },
+        (payload: { new: { admin_nombre: string; nombre_reporte: string } }) => {
+          if (rol !== "secretaria" && rol !== "secretario") return
+          const row = payload.new
+          if (currentViewRef.current !== "secretary-admin-reportes") {
+            bumpBadge("secretary-admin-reportes")
+            toast({ title: "📄 Reporte de admin", description: `${row.admin_nombre}: ${row.nombre_reporte}` })
           }
         }
       )
@@ -568,10 +668,14 @@ export default function Page() {
   const userRol = (currentUser?.rol ?? "").toLowerCase()
   const canChangeRuta = ["admin", "administrador", "secretaria", "secretario"].includes(userRol)
 
+  const BADGE_VIEWS = ["chat", "documentos", "secretary-reports", "socio-admin-reportes", "secretary-admin-reportes"]
+
   const handleViewChange = (view: string, data?: any) => {
     setCurrentView(view)
     setViewData(data)
-    if (view === "chat") setChatUnreadCount(0)
+    if (BADGE_VIEWS.includes(view)) {
+      setModuleBadgeCounts((prev) => ({ ...prev, [view]: 0 }))
+    }
   }
 
   const rutaId = selectedRuta?.id ?? 0
@@ -751,7 +855,7 @@ export default function Page() {
         currentUser={currentUser}
         onLogout={handleLogout}
         userPermissions={userPermissions}
-        chatUnreadCount={chatUnreadCount}
+        moduleBadgeCounts={moduleBadgeCounts}
       >
         {renderView()}
       </DashboardLayout>

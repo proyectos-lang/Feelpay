@@ -117,7 +117,7 @@ interface SidebarProps {
   currentUser?: AuthenticatedUser | null
   onLogout?: () => void
   userPermissions?: PermissionsMap | null
-  chatUnreadCount?: number
+  moduleBadgeCounts?: Record<string, number>
 }
 
 export function Sidebar({
@@ -128,7 +128,7 @@ export function Sidebar({
   currentUser,
   onLogout,
   userPermissions,
-  chatUnreadCount,
+  moduleBadgeCounts,
 }: SidebarProps) {
   const rol = (currentUser?.rol ?? "").toLowerCase()
 
@@ -277,8 +277,7 @@ export function Sidebar({
                 {items.map((item) => {
                   const Icon = item.icon
                   const isActive = currentView === item.id
-                  const isChatItem = item.id === "chat"
-                  const unread = isChatItem && chatUnreadCount ? chatUnreadCount : 0
+                  const unread = moduleBadgeCounts?.[item.id] ?? 0
                   return (
                     <button
                       key={item.id}
