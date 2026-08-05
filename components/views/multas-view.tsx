@@ -39,7 +39,9 @@ type MultaConfigRow = {
   ruta_id: number
   multa_habilitada: boolean
   multa_cuotas_umbral: number | null
+  multa_tipo_valor: "fijo" | "cuotas"
   multa_valor: number | null
+  multa_cantidad_cuotas: number | null
 }
 
 function formatMonto(n: number): string {
@@ -62,7 +64,9 @@ function ConfiguracionMultasTab() {
 
   const [fHabilitada, setFHabilitada] = useState(false)
   const [fCuotas, setFCuotas] = useState("")
+  const [fTipoValor, setFTipoValor] = useState<"fijo" | "cuotas">("fijo")
   const [fValor, setFValor] = useState("")
+  const [fCantidadCuotas, setFCantidadCuotas] = useState("")
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
@@ -70,7 +74,7 @@ function ConfiguracionMultasTab() {
       const supabase = createClient()
       const [{ data: rutasData }, { data: configsData }] = await Promise.all([
         supabase.from("rutas").select("id, nombre").order("id"),
-        supabase.from("ruta_config_umbrales").select("ruta_id, multa_habilitada, multa_cuotas_umbral, multa_valor"),
+        supabase.from("ruta_config_umbrales").select("ruta_id, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas"),
       ])
       setRutas((rutasData as RutaOption[]) ?? [])
       setConfigs(new Map(((configsData as MultaConfigRow[]) ?? []).map((c) => [c.ruta_id, c])))
@@ -88,7 +92,9 @@ function ConfiguracionMultasTab() {
     const c = configs.get(id)
     setFHabilitada(c?.multa_habilitada ?? false)
     setFCuotas(c?.multa_cuotas_umbral?.toString() ?? "")
+    setFTipoValor(c?.multa_tipo_valor ?? "fijo")
     setFValor(c?.multa_valor?.toString() ?? "")
+    setFCantidadCuotas(c?.multa_cantidad_cuotas?.toString() ?? "")
   }
 
   const handleGuardar = async () => {
@@ -99,7 +105,9 @@ function ConfiguracionMultasTab() {
         ruta_id: selectedRutaId,
         multa_habilitada: fHabilitada,
         multa_cuotas_umbral: fCuotas ? Number.parseInt(fCuotas, 10) : null,
-        multa_valor: fValor ? Number.parseFloat(fValor) : null,
+        multa_tipo_valor: fTipoValor,
+        multa_valor: fTipoValor === "fijo" && fValor ? Number.parseFloat(fValor) : null,
+        multa_cantidad_cuotas: fTipoValor === "cuotas" && fCantidadCuotas ? Number.parseFloat(fCantidadCuotas) : null,
         updated_at: new Date().toISOString(),
       }
       const { error } = await createClient().from("ruta_config_umbrales").upsert(payload, { onConflict: "ruta_id" })
@@ -173,15 +181,57 @@ function ConfiguracionMultasTab() {
                 placeholder="Cuotas en mora para generar multa (ej. 3)"
                 className="h-9 text-sm"
               />
-              <Input
-                type="number"
-                min={0}
-                disabled={!fHabilitada}
-                value={fValor}
-                onChange={(e) => setFValor(e.target.value)}
-                placeholder="Valor de la multa en $ (ej. 10000)"
-                className="h-9 text-sm"
-              />
+
+              <div className="flex items-center gap-0.5 rounded-lg border p-0.5">
+                <button
+                  type="button"
+                  disabled={!fHabilitada}
+                  onClick={() => setFTipoValor("fijo")}
+                  className={`flex-1 h-8 rounded-md text-xs font-semibold transition-colors disabled:opacity-50 ${
+                    fTipoValor === "fijo" ? "bg-brand text-white" : "text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  Valor fijo ($)
+                </button>
+                <button
+                  type="button"
+                  disabled={!fHabilitada}
+                  onClick={() => setFTipoValor("cuotas")}
+                  className={`flex-1 h-8 rounded-md text-xs font-semibold transition-colors disabled:opacity-50 ${
+                    fTipoValor === "cuotas" ? "bg-brand text-white" : "text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  Cantidad de cuotas
+                </button>
+              </div>
+
+              {fTipoValor === "fijo" ? (
+                <Input
+                  type="number"
+                  min={0}
+                  disabled={!fHabilitada}
+                  value={fValor}
+                  onChange={(e) => setFValor(e.target.value)}
+                  placeholder="Valor de la multa en $ (ej. 10000)"
+                  className="h-9 text-sm"
+                />
+              ) : (
+                <Input
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  disabled={!fHabilitada}
+                  value={fCantidadCuotas}
+                  onChange={(e) => setFCantidadCuotas(e.target.value)}
+                  placeholder="Cantidad de cuotas a cobrar (ej. 1)"
+                  className="h-9 text-sm"
+                />
+              )}
+              {fTipoValor === "cuotas" && (
+                <p className="text-[11px] text-muted-foreground">
+                  La multa valdrá esa cantidad de cuotas del préstamo (ej. 1 cuota = el valor de una cuota normal).
+                </p>
+              )}
             </div>
 
             <div className="flex justify-end pt-1">

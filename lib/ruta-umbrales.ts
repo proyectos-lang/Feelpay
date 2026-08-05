@@ -12,17 +12,23 @@ export interface RutaUmbrales {
   abono_habilitado: boolean
   abono_umbral_cuotas: number | null
   // Multas por mora: si el cliente acumula multa_cuotas_umbral cuotas
-  // vencidas, se le genera una multa de multa_valor pesos.
+  // vencidas, se le genera una multa. El valor de esa multa se calcula
+  // segun multa_tipo_valor: 'fijo' usa multa_valor en pesos directamente,
+  // 'cuotas' multiplica multa_cantidad_cuotas por el valor de una cuota
+  // del prestamo (multiplicador fijo, no escala con cuotas vencidas).
   multa_habilitada: boolean
   multa_cuotas_umbral: number | null
+  multa_tipo_valor: "fijo" | "cuotas"
   multa_valor: number | null
+  multa_cantidad_cuotas: number | null
 }
 
 const DEFAULT_UMBRALES: RutaUmbrales = {
   venta_nueva_habilitado: false, venta_nueva_umbral: null,
   venta_renovacion_habilitado: false, venta_renovacion_umbral: null,
   abono_habilitado: false, abono_umbral_cuotas: null,
-  multa_habilitada: false, multa_cuotas_umbral: null, multa_valor: null,
+  multa_habilitada: false, multa_cuotas_umbral: null,
+  multa_tipo_valor: "fijo", multa_valor: null, multa_cantidad_cuotas: null,
 }
 
 // Si la ruta no tiene fila configurada, no hay revisión (falla abierta hacia
@@ -31,7 +37,7 @@ export async function getRutaUmbrales(rutaId: number): Promise<RutaUmbrales> {
   try {
     const { data, error } = await createClient()
       .from("ruta_config_umbrales")
-      .select("venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral_cuotas, multa_habilitada, multa_cuotas_umbral, multa_valor")
+      .select("venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral_cuotas, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas")
       .eq("ruta_id", rutaId)
       .maybeSingle()
     if (error || !data) return DEFAULT_UMBRALES

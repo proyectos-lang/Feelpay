@@ -653,15 +653,27 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           multasMap.set(m.loan_id, { id: m.id, valor: m.valor })
         }
 
-        if (umbralesRuta.multa_habilitada && umbralesRuta.multa_cuotas_umbral != null && umbralesRuta.multa_valor != null) {
+        const multaValorConfigurado = umbralesRuta.multa_tipo_valor === "cuotas"
+          ? umbralesRuta.multa_cantidad_cuotas != null
+          : umbralesRuta.multa_valor != null
+
+        if (umbralesRuta.multa_habilitada && umbralesRuta.multa_cuotas_umbral != null && multaValorConfigurado) {
           for (const loan of activeLoans) {
             if (multasMap.has(loan.id)) continue
             if (loan.estado === "cancelado") continue
             const plan = paymentPlansByLoan.get(loan.id) || []
-            const cuotasVencidas = plan.filter(
+            const cuotasVencidasList = plan.filter(
               (p) => p.estado === "pendiente" && p.fecha_pago < todayColombia,
-            ).length
-            if (cuotasVencidas < umbralesRuta.multa_cuotas_umbral) continue
+            )
+            if (cuotasVencidasList.length < umbralesRuta.multa_cuotas_umbral) continue
+
+            // Valor de la multa: fijo en $, o multiplicador de cuotas sobre
+            // el valor de una cuota del prestamo (multiplicador fijo, no
+            // escala con la cantidad de cuotas realmente vencidas).
+            const valorMulta = umbralesRuta.multa_tipo_valor === "cuotas"
+              ? (cuotasVencidasList[0]?.valor_cuota ?? plan[0]?.valor_cuota ?? 0) * (umbralesRuta.multa_cantidad_cuotas ?? 0)
+              : (umbralesRuta.multa_valor ?? 0)
+            if (valorMulta <= 0) continue
 
             const { data: nueva, error: multaErr } = await supabase
               .from("multas")
@@ -670,8 +682,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 client_id: loan.client_id,
                 ruta_id: currentRutaId,
                 cliente_nombre: loan.clients?.apodo || loan.clients?.nombre_completo || null,
-                valor: umbralesRuta.multa_valor,
-                cuotas_mora: cuotasVencidas,
+                valor: valorMulta,
+                cuotas_mora: cuotasVencidasList.length,
               })
               .select("id, valor")
               .single()
