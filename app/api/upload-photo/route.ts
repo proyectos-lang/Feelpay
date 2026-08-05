@@ -23,6 +23,7 @@ export async function POST(request: NextRequest) {
     // Upload to Vercel Blob
     const blob = await put(filename, file, {
       access: 'public',
+      contentType: file.type || undefined,
     })
 
     return NextResponse.json({

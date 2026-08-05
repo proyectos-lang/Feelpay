@@ -571,6 +571,8 @@ function EditGroupDialog({ open, onClose, currentUser, conversationId, currentNa
 
 // ─── ChatView ─────────────────────────────────────────────────────────────────
 
+const UNSUPPORTED_IMAGE_TYPES = ["image/heic", "image/heif"]
+
 interface ChatViewProps {
   currentUser: AuthenticatedUser
 }
@@ -1012,9 +1014,23 @@ export function ChatView({ currentUser }: ChatViewProps) {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    e.target.value = ""
+
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Archivo no válido", description: "Solo se pueden adjuntar imágenes en el chat.", variant: "destructive" })
+      return
+    }
+    if (UNSUPPORTED_IMAGE_TYPES.includes(file.type.toLowerCase())) {
+      toast({
+        title: "Formato no compatible",
+        description: "Las fotos en formato HEIC/HEIF no se muestran en el chat. Usa JPG o PNG (en iPhone: Ajustes > Cámara > Formatos > \"Más compatible\").",
+        variant: "destructive",
+      })
+      return
+    }
+
     setImageFile(file)
     setImagePreview(URL.createObjectURL(file))
-    e.target.value = ""
   }
 
   const activeConv = conversations.find((c) => c.conversation_id === activeConvId)
