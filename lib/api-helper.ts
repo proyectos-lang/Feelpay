@@ -160,6 +160,7 @@ export interface AtomicRpcResult {
   nuevo_saldo?: number
   loan_estado_final?: "activo" | "cancelado"
   cliente_marcado_sin_prestamo?: boolean
+  cuota_adicional_generada?: boolean
   [key: string]: unknown
 }
 

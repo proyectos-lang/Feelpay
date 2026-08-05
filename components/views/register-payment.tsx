@@ -251,6 +251,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // Solo visible cuando el cliente seleccionado tiene multaPendiente.
   const [pagarMulta, setPagarMulta] = useState(false)
 
+  // "Agregar cuota adicional si el cliente aun debe": pregunta que aparece
+  // cuando la cuota actual es la ULTIMA del plan (cualquier tipo de
+  // amortizacion, a diferencia de "Extender Cuotas" que es solo para
+  // americano). Si se marca y tras el pago/no-pago el cliente aun debe
+  // (segun saldo_prestamos_clientes), el RPC genera una cuota extra en vez
+  // de dejar el prestamo sin fechas a las que caer para seguir cobrando.
+  // Activado por defecto: mas seguro, evita que el cliente desaparezca del
+  // listado por descuido si no se desmarca a proposito.
+  const [agregarCuotaSiDebe, setAgregarCuotaSiDebe] = useState(true)
+  const [agregarCuotaSiDebeNoPago, setAgregarCuotaSiDebeNoPago] = useState(true)
+
   // ── BLINDAJE BUG cuotas duplicadas ────────────────────────────────────
   // Defensa adicional: si por cualquier motivo (cambio de cliente, refetch,
   // etc.) el flag `extenderCuotas` queda en `true` cuando el cliente
@@ -921,6 +932,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     setExtenderCuotas(false)
     setCantidadCuotasExtender("1")
     setPagarMulta(false)
+    setAgregarCuotaSiDebe(true)
     // Nota: ya no hacemos fetch de saldo aqui. Usamos client.saldo
     // directamente del listado para que el dialogo abra al instante.
   }
@@ -937,6 +949,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     setExtenderCuotas(false)
     setCantidadCuotasExtender("1")
     setPagarMulta(false)
+    setAgregarCuotaSiDebe(true)
   }
 
   const handleRegisterPayment = async () => {
@@ -1002,6 +1015,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       })
       return
     }
+    // Snapshot de "agregar cuota adicional si debe": recalculado desde la
+    // condicion real (no solo el checkbox) para que jamas se dispare fuera
+    // de la ultima cuota, ni mezclado con cancelacion total o con la
+    // extension manual de americano.
+    const agregarCuotaSnap =
+      agregarCuotaSiDebe &&
+      !isCanceladaSnap &&
+      !extenderSnap &&
+      clientSnapshot.nextPaymentNumero === clientSnapshot.cuotasTotales
 
     try {
       setSaving(true)
@@ -1253,6 +1275,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         fecha_pago_real: fechaPagoReal,
         latitud,
         longitud,
+        generar_cuota_si_debe: agregarCuotaSnap,
       })
 
       // Valores derivados desde la respuesta autoritativa del RPC.
@@ -1347,6 +1370,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           title: "Pago registrado y préstamo extendido",
           description: `Pago registrado y préstamo extendido exitosamente por ${cantidadExtenderSnap} cuota${cantidadExtenderSnap === 1 ? "" : "s"} más`,
         })
+      } else if (rpcResult.cuota_adicional_generada) {
+        // El cliente aun debia al agotarse el plan de pagos: el RPC generó
+        // una cuota adicional en vez de cancelar el prestamo (confirmado
+        // por el checkbox "Agregar cuota adicional si aún debe").
+        toast({
+          title: "Pago registrado — cuota adicional agregada",
+          description: `Se registró el pago para ${clientSnapshot.nombre}. Como aún debe, se agregó una cuota adicional al plan de pagos.`,
+        })
       } else {
         const multaSuffix = multaCobrada && clientSnapshot.multaPendiente
           ? ` + multa de $${clientSnapshot.multaPendiente.valor.toLocaleString()}`
@@ -1390,6 +1421,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     }
 
     const clientSnapshot = noPaymentClient
+    // Igual que en handleRegisterPayment: recalculado desde la condicion
+    // real, no solo el checkbox.
+    const agregarCuotaSnapNoPago =
+      agregarCuotaSiDebeNoPago &&
+      clientSnapshot.nextPaymentNumero === clientSnapshot.cuotasTotales
 
     try {
       setSaving(true)
@@ -1414,7 +1450,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       // la carrera con PgBouncer. El RPC marca la cuota como `no_pago` y
       // NO modifica `loans.saldo` ni `clients` (eso lo maneja internamente
       // segun el contrato definido en scripts/010-fn-registrar-pago-atomico.sql).
-      await callRpcAtomic("registrar_pago_atomico", {
+      const rpcResultNoPago = await callRpcAtomic("registrar_pago_atomico", {
         tipo: "no_pago",
         loan_id: clientSnapshot.loanId,
         client_id: clientSnapshot.clientId,
@@ -1424,6 +1460,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         fecha_pago_real: fechaPagoReal,
         latitud,
         longitud,
+        generar_cuota_si_debe: agregarCuotaSnapNoPago,
       })
 
       // Optimistic UI: quitar de pendientes y agregar a managedToday
@@ -1440,10 +1477,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         ...prev,
       ])
 
-      toast({
-        title: "No pago registrado",
-        description: `Se registró que ${clientSnapshot.nombre} no realizó el pago`,
-      })
+      toast(
+        rpcResultNoPago.cuota_adicional_generada
+          ? {
+              title: "No pago registrado — cuota adicional agregada",
+              description: `Se registró que ${clientSnapshot.nombre} no realizó el pago. Como aún debe, se agregó una cuota adicional al plan de pagos.`,
+            }
+          : {
+              title: "No pago registrado",
+              description: `Se registró que ${clientSnapshot.nombre} no realizó el pago`,
+            },
+      )
 
       setNoPaymentClient(null)
       // Refetch SILENCIOSO en background sin bloquear el cierre del dialogo
@@ -2385,11 +2429,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               <Button
                                 size="icon"
                                 className="bg-destructive hover:bg-destructive/80 text-destructive-foreground h-9 w-9 md:h-10 md:w-10 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                                onClick={() =>
-                                  gpsStatus !== "granted"
-                                    ? handleLocationRequired()
-                                    : setNoPaymentClient(client)
-                                }
+                                onClick={() => {
+                                  if (gpsStatus !== "granted") {
+                                    handleLocationRequired()
+                                    return
+                                  }
+                                  setAgregarCuotaSiDebeNoPago(true)
+                                  setNoPaymentClient(client)
+                                }}
                                 disabled={canManage === false && gpsStatus === "granted"}
                                 title={
                                   gpsStatus !== "granted"
@@ -2897,6 +2944,28 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                     </Label>
                   </div>
                 )}
+                {/* Checkbox "Agregar cuota adicional si el cliente aun debe":
+                    solo visible cuando la cuota actual es la ULTIMA del plan
+                    de pagos (cualquier tipo de amortizacion). Se excluye si
+                    ya se esta usando "Extender Cuotas" (americano) o si se
+                    va a cancelar el prestamo por completo, para no mezclar
+                    con esos flujos. */}
+                {selectedClient &&
+                  selectedClient.nextPaymentNumero === selectedClient.cuotasTotales &&
+                  !extenderCuotas &&
+                  !isCancelada && (
+                    <div className="flex items-center space-x-1.5">
+                      <Checkbox
+                        id="agregarCuotaSiDebe"
+                        checked={agregarCuotaSiDebe}
+                        onCheckedChange={(c) => setAgregarCuotaSiDebe(c as boolean)}
+                        className="h-4 w-4 border-2 border-amber-400"
+                      />
+                      <Label htmlFor="agregarCuotaSiDebe" className="text-[11px] md:text-sm font-normal cursor-pointer whitespace-nowrap text-amber-700">
+                        Agregar cuota adicional si aún debe (última cuota)
+                      </Label>
+                    </div>
+                  )}
               </div>
               <div className="flex justify-end">
                 <input type="file" accept="image/*" capture="environment" onChange={handlePhotoCapture} className="hidden" id="payment-photo" />
@@ -2994,6 +3063,23 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               <Label htmlFor="observation" className="text-xs md:text-sm">Notas</Label>
               <Textarea id="observation" placeholder="Escriba el motivo o comentarios sobre el no pago..." value={noPaymentObservation} onChange={(e) => setNoPaymentObservation(e.target.value)} className="min-h-[60px] md:min-h-[100px] text-xs md:text-sm" />
             </div>
+
+            {/* Solo visible cuando la cuota actual es la ULTIMA del plan de
+                pagos: si el cliente aun debe tras este no-pago, agrega una
+                cuota adicional en vez de dejar el prestamo sin fechas. */}
+            {noPaymentClient && noPaymentClient.nextPaymentNumero === noPaymentClient.cuotasTotales && (
+              <div className="flex items-center space-x-1.5">
+                <Checkbox
+                  id="agregarCuotaSiDebeNoPago"
+                  checked={agregarCuotaSiDebeNoPago}
+                  onCheckedChange={(c) => setAgregarCuotaSiDebeNoPago(c as boolean)}
+                  className="h-4 w-4 border-2 border-amber-400"
+                />
+                <Label htmlFor="agregarCuotaSiDebeNoPago" className="text-[11px] md:text-sm font-normal cursor-pointer text-amber-700">
+                  Agregar cuota adicional si aún debe (última cuota)
+                </Label>
+              </div>
+            )}
 
             {noPaymentPhoto && (
               <div className="space-y-1.5 md:space-y-2">
