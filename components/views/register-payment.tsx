@@ -119,7 +119,7 @@ type DisplayClient = {
   valorPrestamo: number
   // Multa pendiente del prestamo (null si no tiene). Generada automaticamente
   // cuando el cliente cruza el umbral de cuotas en mora configurado por ruta.
-  multaPendiente: { id: string; valor: number } | null
+  multaPendiente: { id: string; valor: number; cuotasMora: number | null } | null
 }
 
 type RegisterPaymentProps = {
@@ -639,18 +639,18 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       // aqui porque la app no tiene procesos programados. El indice unico
       // parcial (idx_multas_unica_pendiente) garantiza una sola multa
       // pendiente por prestamo aunque varios dispositivos carguen a la vez.
-      const multasMap = new Map<string, { id: string; valor: number }>()
+      const multasMap = new Map<string, { id: string; valor: number; cuotasMora: number | null }>()
       try {
         const [umbralesRuta, multasRes] = await Promise.all([
           getRutaUmbrales(currentRutaId),
           supabase
             .from("multas")
-            .select("id, loan_id, valor")
+            .select("id, loan_id, valor, cuotas_mora")
             .eq("ruta_id", currentRutaId)
             .eq("estado", "pendiente"),
         ])
-        for (const m of (multasRes.data ?? []) as { id: string; loan_id: string; valor: number }[]) {
-          multasMap.set(m.loan_id, { id: m.id, valor: m.valor })
+        for (const m of (multasRes.data ?? []) as { id: string; loan_id: string; valor: number; cuotas_mora: number | null }[]) {
+          multasMap.set(m.loan_id, { id: m.id, valor: m.valor, cuotasMora: m.cuotas_mora })
         }
 
         const multaValorConfigurado = umbralesRuta.multa_tipo_valor === "cuotas"
@@ -685,7 +685,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 valor: valorMulta,
                 cuotas_mora: cuotasVencidasList.length,
               })
-              .select("id, valor")
+              .select("id, valor, cuotas_mora")
               .single()
 
             if (multaErr) {
@@ -693,7 +693,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               if (multaErr.code !== "23505") console.error("[v0] Error generando multa:", multaErr)
               continue
             }
-            if (nueva) multasMap.set(loan.id, { id: nueva.id, valor: nueva.valor })
+            if (nueva) multasMap.set(loan.id, { id: nueva.id, valor: nueva.valor, cuotasMora: nueva.cuotas_mora })
           }
         }
       } catch (err) {
@@ -2520,6 +2520,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                     ${Math.round(client.saldo).toLocaleString()}
                                   </strong>
                                 </span>
+                                {client.multaPendiente && (
+                                  <span className="whitespace-nowrap text-right">
+                                    Multa{" "}
+                                    <strong className="text-red-600 tabular-nums">
+                                      ${client.multaPendiente.valor.toLocaleString()}
+                                    </strong>
+                                  </span>
+                                )}
                               </div>
                               {/* Fecha último pago — solo visible cuando existe */}
                               {client.ultimoPagoFecha && (
@@ -2698,6 +2706,23 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 <Input id="lastPaymentDate" type="text" value={selectedClient.ultimoPagoFecha || "N/A"} readOnly className="h-7 md:h-10 text-xs md:text-sm bg-muted" />
               </div>
             </div>
+
+            {/* Multa pendiente: valor y origen (cuotas en mora que la generaron).
+                Informativo — se muestra siempre que exista, independientemente
+                de si el checkbox "Pagar multa" de abajo está marcado. */}
+            {selectedClient.multaPendiente && (
+              <div className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-3 py-1.5">
+                <span className="text-[11px] md:text-sm text-red-700">
+                  Multa por mora
+                  {selectedClient.multaPendiente.cuotasMora != null
+                    ? ` — generada por ${selectedClient.multaPendiente.cuotasMora} cuota${selectedClient.multaPendiente.cuotasMora !== 1 ? "s" : ""} vencida${selectedClient.multaPendiente.cuotasMora !== 1 ? "s" : ""}`
+                    : ""}
+                </span>
+                <span className="text-xs md:text-sm font-bold text-red-700 shrink-0">
+                  ${selectedClient.multaPendiente.valor.toLocaleString("es-CO")}
+                </span>
+              </div>
+            )}
 
             {/* Segunda fila: Monto del Pago + Nuevo Saldo */}
             <div className="grid grid-cols-2 gap-2 md:gap-3">
