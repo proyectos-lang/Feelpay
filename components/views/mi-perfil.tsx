@@ -11,6 +11,8 @@ function initials(nombre: string): string {
   return nombre.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase()
 }
 
+const UNSUPPORTED_IMAGE_TYPES = ["image/heic", "image/heif"]
+
 interface MiPerfilProps {
   currentUser: AuthenticatedUser
   onUserUpdate: (user: AuthenticatedUser) => void
@@ -27,6 +29,14 @@ export function MiPerfil({ currentUser, onUserUpdate }: MiPerfilProps) {
 
     if (!file.type.startsWith("image/")) {
       toast({ title: "Archivo inválido", description: "Selecciona una imagen", variant: "destructive" })
+      return
+    }
+    if (UNSUPPORTED_IMAGE_TYPES.includes(file.type.toLowerCase())) {
+      toast({
+        title: "Formato no compatible",
+        description: "Las fotos en formato HEIC/HEIF no se muestran bien. Usa JPG o PNG (en iPhone: Ajustes > Cámara > Formatos > \"Más compatible\").",
+        variant: "destructive",
+      })
       return
     }
 
