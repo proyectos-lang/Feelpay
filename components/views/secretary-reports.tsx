@@ -531,7 +531,7 @@ function SecretariaView({
 
             {/* Archivos Excel */}
             <div className="space-y-2">
-              <Label className="text-xs md:text-sm">Archivos Excel (.xlsx, .xls, .csv)</Label>
+              <Label className="text-xs md:text-sm">Archivos Excel (.xlsx, .xls, .csv, .xlsm)</Label>
               {excelError && <p className="text-xs text-destructive">{excelError}</p>}
               {excelFiles.length > 0 && (
                 <div className="space-y-1.5">
@@ -558,7 +558,7 @@ function SecretariaView({
               <input
                 ref={excelInputRef}
                 type="file"
-                accept=".xlsx,.xls,.csv"
+                accept=".xlsx,.xls,.csv,.xlsm"
                 multiple
                 className="hidden"
                 onChange={handleExcelChange}
