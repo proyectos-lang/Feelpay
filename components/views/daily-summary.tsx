@@ -268,8 +268,11 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         day: "2-digit",
       })
       const todayColombia = colombiaFormatter.format(now)
-      const startOfDay = `${todayColombia}T00:00:00`
-      const endOfDay = `${todayColombia}T23:59:59`
+      // El offset -05:00 es obligatorio: sin el, Postgres interpreta la
+      // ventana en UTC y se pierde todo lo registrado despues de las 7 pm
+      // hora Colombia.
+      const startOfDay = `${todayColombia}T00:00:00-05:00`
+      const endOfDay = `${todayColombia}T23:59:59-05:00`
 
       const { data, error } = await supabase
         .from("gastosregistros")
@@ -293,31 +296,148 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
     }
   }
 
-  // Mock data - back card (detailed report)
+  // ── Tarjeta trasera (Informe Recaudo): datos reales ─────────────────────
+  // Frecuencias desde las cuotas del dia + loans.frecuencia_pago; "Intereses"
+  // = prestamos americanos con cuota hoy. Cartera desde v_loan_mora_status
+  // con las mismas bandas de mora que el modulo de pagos (0 al dia, 1-8
+  // mora, >8 vencido). Cuotas por cliente = cuotas vencidas pendientes
+  // (0-3 / >3). Ventas: renovacion = cliente que ya tenia otro prestamo.
+  const [backCard, setBackCard] = useState({
+    frequency: {
+      diario: { pagos: 0, total: 0 },
+      semanal: { pagos: 0, total: 0 },
+      quincenal: { pagos: 0, total: 0 },
+      mensual: { pagos: 0, total: 0 },
+      intereses: { pagos: 0, total: 0 },
+    },
+    installmentsByClient: { small: 0, large: 0 },
+    salesReport: { nuevas: 0, renovaciones: 0, total: 0 },
+    portfolioStatus: { alDia: 0, mora: 0, vencidos: 0 },
+  })
+
+  useEffect(() => {
+    const loadBackCard = async () => {
+      try {
+        const supabase = createClient()
+        const fechaHoy = getFechaHoyColombia()
+
+        const [rowsHoyRes, activosRes, ventasHoyRes] = await Promise.all([
+          supabase
+            .from("payment_plan")
+            .select("estado, monto_pagado, loans(frecuencia_pago, tipo_amortizacion)")
+            .eq("ruta", rutaId)
+            .eq("fecha_pago", fechaHoy),
+          supabase.from("loans").select("id").eq("ruta", rutaId).eq("estado", "activo"),
+          supabase
+            .from("loans")
+            .select("id, client_id")
+            .eq("ruta", rutaId)
+            .gte("fecha_creacion", `${fechaHoy}T00:00:00-05:00`)
+            .lte("fecha_creacion", `${fechaHoy}T23:59:59-05:00`),
+        ])
+
+        const rowsHoy = (rowsHoyRes.data ?? []) as {
+          estado: string
+          monto_pagado: number | null
+          loans: { frecuencia_pago: string | null; tipo_amortizacion: string | null } | null
+        }[]
+        const esPagoReal = (row: { estado: string; monto_pagado: number | null }) =>
+          ["pagado", "parcial", "cancelada"].includes(row.estado) && Number(row.monto_pagado ?? 0) > 0
+        const frequency = {
+          diario: { pagos: 0, total: 0 },
+          semanal: { pagos: 0, total: 0 },
+          quincenal: { pagos: 0, total: 0 },
+          mensual: { pagos: 0, total: 0 },
+          intereses: { pagos: 0, total: 0 },
+        }
+        for (const row of rowsHoy) {
+          const key =
+            row.loans?.frecuencia_pago === "weekly"
+              ? "semanal"
+              : row.loans?.frecuencia_pago === "biweekly"
+                ? "quincenal"
+                : row.loans?.frecuencia_pago === "monthly"
+                  ? "mensual"
+                  : "diario"
+          frequency[key].total += 1
+          if (esPagoReal(row)) frequency[key].pagos += 1
+          if (row.loans?.tipo_amortizacion?.toLowerCase().trim() === "americano") {
+            frequency.intereses.total += 1
+            if (esPagoReal(row)) frequency.intereses.pagos += 1
+          }
+        }
+
+        // Cartera + cuotas vencidas por cliente (prestamos activos de la ruta)
+        const loanIds = ((activosRes.data ?? []) as { id: string }[]).map((l) => l.id)
+        const installmentsByClient = { small: 0, large: 0 }
+        const portfolioStatus = { alDia: 0, mora: 0, vencidos: 0 }
+        if (loanIds.length > 0) {
+          const [vencidasRes, moraRes] = await Promise.all([
+            supabase
+              .from("payment_plan")
+              .select("loan_id")
+              .eq("estado", "pendiente")
+              .lt("fecha_pago", fechaHoy)
+              .in("loan_id", loanIds),
+            supabase.from("v_loan_mora_status").select("loan_id, dias_mora_calculada").in("loan_id", loanIds),
+          ])
+          const vencidasPorLoan = new Map<string, number>()
+          for (const v of (vencidasRes.data ?? []) as { loan_id: string }[]) {
+            vencidasPorLoan.set(v.loan_id, (vencidasPorLoan.get(v.loan_id) ?? 0) + 1)
+          }
+          const moraPorLoan = new Map<string, number>()
+          for (const m of (moraRes.data ?? []) as { loan_id: string; dias_mora_calculada: number | null }[]) {
+            moraPorLoan.set(m.loan_id, Number(m.dias_mora_calculada ?? 0))
+          }
+          for (const id of loanIds) {
+            if ((vencidasPorLoan.get(id) ?? 0) > 3) installmentsByClient.large += 1
+            else installmentsByClient.small += 1
+            const dias = moraPorLoan.get(id) ?? 0
+            if (dias === 0) portfolioStatus.alDia += 1
+            else if (dias <= 8) portfolioStatus.mora += 1
+            else portfolioStatus.vencidos += 1
+          }
+        }
+
+        // Ventas del dia: renovacion = el cliente ya tenia otro prestamo
+        const ventasHoy = (ventasHoyRes.data ?? []) as { id: string; client_id: string }[]
+        let nuevas = 0
+        let renovaciones = 0
+        if (ventasHoy.length > 0) {
+          const clientIds = [...new Set(ventasHoy.map((v) => v.client_id))]
+          const { data: prevLoans } = await supabase
+            .from("loans")
+            .select("id, client_id")
+            .in("client_id", clientIds)
+          const loansPorCliente = new Map<string, number>()
+          for (const l of (prevLoans ?? []) as { id: string; client_id: string }[]) {
+            loansPorCliente.set(l.client_id, (loansPorCliente.get(l.client_id) ?? 0) + 1)
+          }
+          for (const v of ventasHoy) {
+            if ((loansPorCliente.get(v.client_id) ?? 1) > 1) renovaciones += 1
+            else nuevas += 1
+          }
+        }
+
+        setBackCard({
+          frequency,
+          installmentsByClient,
+          salesReport: { nuevas, renovaciones, total: ventasHoy.length },
+          portfolioStatus,
+        })
+      } catch (err) {
+        console.error("[v0] Error cargando informe recaudo:", err)
+      }
+    }
+
+    loadBackCard()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rutaId])
+
   const reportData = {
     totalPayments: cantidadPagos,
     totalPending: cantidadPagos + cantidadNoPagos,
-    frequency: {
-      diario: { pagos: 28, total: 35 },
-      semanal: { pagos: 3, total: 5 },
-      quincenal: { pagos: 1, total: 2 },
-      mensual: { pagos: 1, total: 1 },
-      intereses: { pagos: 2, total: 3 },
-    },
-    installmentsByClient: {
-      small: 12,
-      large: 23,
-    },
-    salesReport: {
-      nuevas: 1,
-      renovaciones: 0,
-      total: 2,
-    },
-    portfolioStatus: {
-      alDia: 22,
-      mora: 18,
-      vencidos: 10,
-    },
+    ...backCard,
   }
 
   const currentTime = new Date().toLocaleTimeString("es-CO", {
@@ -333,8 +453,8 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
 
   // Calculate pie chart segments
   const totalPortfolio = reportData.portfolioStatus.alDia + reportData.portfolioStatus.mora + reportData.portfolioStatus.vencidos
-  const alDiaPercent = (reportData.portfolioStatus.alDia / totalPortfolio) * 100
-  const moraPercent = (reportData.portfolioStatus.mora / totalPortfolio) * 100
+  const alDiaPercent = totalPortfolio > 0 ? (reportData.portfolioStatus.alDia / totalPortfolio) * 100 : 0
+  const moraPercent = totalPortfolio > 0 ? (reportData.portfolioStatus.mora / totalPortfolio) * 100 : 0
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-background" style={{ perspective: "1000px" }}>

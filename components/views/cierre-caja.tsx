@@ -75,6 +75,150 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
   const operacionesCumple = operacionesPendientes.length === 0
   const puedesCerrar = pagosCumple && operacionesCumple && !loadingPagos
 
+  // ── Datos reales del cierre ────────────────────────────────────────────
+  // Fuentes: resumen_pagos_diarios (misma vista que Resumen del Día — los
+  // números coinciden entre ambas pantallas por construcción), payment_plan
+  // (conteos del día y cuotas vencidas) y v_loan_mora_status (cartera, con
+  // las mismas bandas de mora que usa el módulo de pagos: 0 al día, 1-8
+  // mora, >8 vencido).
+  type FrecKey = "diario" | "semanal" | "quincenal" | "mensual"
+  const [cierreData, setCierreData] = useState({
+    cajaAnterior: 0,
+    efectivoFinal: 0,
+    recaudo: { total: 0, meta: 0 },
+    canceladas: { valor: 0, cantidad: 0 },
+    ventas: { total: 0, cantidad: 0 },
+    gastos: { valor: 0, cantidad: 0 },
+    retiros: { valor: 0, cantidad: 0 },
+    ingresos: { valor: 0, cantidad: 0 },
+    pagos: { realizados: 0, total: 0 },
+    frecuencia: {
+      diario: { pagos: 0, total: 0 },
+      semanal: { pagos: 0, total: 0 },
+      quincenal: { pagos: 0, total: 0 },
+      mensual: { pagos: 0, total: 0 },
+    } as Record<FrecKey, { pagos: number; total: number }>,
+    cuotas: { de0a3: 0, de3oMas: 0 },
+    cartera: { alDia: 0, mora: 0, vencidos: 0 },
+  })
+
+  useEffect(() => {
+    const loadCierreData = async () => {
+      try {
+        const supabase = createClient()
+        const fechaHoy = getFechaHoyColombia()
+
+        const [resumenRes, rowsHoyRes, loansRes] = await Promise.all([
+          supabase
+            .from("resumen_pagos_diarios")
+            .select(
+              "valor_pago, meta_pagos, valor_ingresos, recuento_ingresos, valor_gastos, recuento_gastos, valor_retiros, recuento_retiros, valor_canceladas, cantidad_canceladas, valor_ventas, cantidad_ventas, efectivo",
+            )
+            .eq("fecha_pago", fechaHoy)
+            .eq("ruta", rutaId)
+            .maybeSingle(),
+          supabase
+            .from("payment_plan")
+            .select("estado, monto_pagado, loans(frecuencia_pago)")
+            .eq("ruta", rutaId)
+            .eq("fecha_pago", fechaHoy),
+          supabase.from("loans").select("id").eq("ruta", rutaId).eq("estado", "activo"),
+        ])
+
+        const r = (resumenRes.data ?? {}) as Record<string, number | null>
+        const valorPago = Number(r.valor_pago ?? 0)
+        const valorIngresos = Number(r.valor_ingresos ?? 0)
+        const valorGastos = Number(r.valor_gastos ?? 0)
+        const valorRetiros = Number(r.valor_retiros ?? 0)
+        const valorVentas = Number(r.valor_ventas ?? 0)
+        const efectivo = Number(r.efectivo ?? 0)
+        // `efectivo` es acumulado hasta hoy; la caja anterior es el
+        // acumulado sin el movimiento neto del día.
+        const cajaAnterior = efectivo - (valorIngresos + valorPago - valorVentas - valorGastos - valorRetiros)
+
+        const rowsHoy = (rowsHoyRes.data ?? []) as {
+          estado: string
+          monto_pagado: number | null
+          loans: { frecuencia_pago: string | null } | null
+        }[]
+        const esPagoReal = (row: { estado: string; monto_pagado: number | null }) =>
+          ["pagado", "parcial", "cancelada"].includes(row.estado) && Number(row.monto_pagado ?? 0) > 0
+        const frecuencia: Record<FrecKey, { pagos: number; total: number }> = {
+          diario: { pagos: 0, total: 0 },
+          semanal: { pagos: 0, total: 0 },
+          quincenal: { pagos: 0, total: 0 },
+          mensual: { pagos: 0, total: 0 },
+        }
+        for (const row of rowsHoy) {
+          const key: FrecKey =
+            row.loans?.frecuencia_pago === "weekly"
+              ? "semanal"
+              : row.loans?.frecuencia_pago === "biweekly"
+                ? "quincenal"
+                : row.loans?.frecuencia_pago === "monthly"
+                  ? "mensual"
+                  : "diario"
+          frecuencia[key].total += 1
+          if (esPagoReal(row)) frecuencia[key].pagos += 1
+        }
+
+        const loanIds = ((loansRes.data ?? []) as { id: string }[]).map((l) => l.id)
+        let cuotas = { de0a3: 0, de3oMas: 0 }
+        let cartera = { alDia: 0, mora: 0, vencidos: 0 }
+        if (loanIds.length > 0) {
+          const [vencidasRes, moraRes] = await Promise.all([
+            supabase
+              .from("payment_plan")
+              .select("loan_id")
+              .eq("estado", "pendiente")
+              .lt("fecha_pago", fechaHoy)
+              .in("loan_id", loanIds),
+            supabase.from("v_loan_mora_status").select("loan_id, dias_mora_calculada").in("loan_id", loanIds),
+          ])
+
+          const vencidasPorLoan = new Map<string, number>()
+          for (const v of (vencidasRes.data ?? []) as { loan_id: string }[]) {
+            vencidasPorLoan.set(v.loan_id, (vencidasPorLoan.get(v.loan_id) ?? 0) + 1)
+          }
+          for (const id of loanIds) {
+            if ((vencidasPorLoan.get(id) ?? 0) > 3) cuotas.de3oMas += 1
+            else cuotas.de0a3 += 1
+          }
+
+          const moraPorLoan = new Map<string, number>()
+          for (const m of (moraRes.data ?? []) as { loan_id: string; dias_mora_calculada: number | null }[]) {
+            moraPorLoan.set(m.loan_id, Number(m.dias_mora_calculada ?? 0))
+          }
+          for (const id of loanIds) {
+            const dias = moraPorLoan.get(id) ?? 0
+            if (dias === 0) cartera.alDia += 1
+            else if (dias <= 8) cartera.mora += 1
+            else cartera.vencidos += 1
+          }
+        }
+
+        setCierreData({
+          cajaAnterior,
+          efectivoFinal: efectivo,
+          recaudo: { total: valorPago, meta: Number(r.meta_pagos ?? 0) },
+          canceladas: { valor: Number(r.valor_canceladas ?? 0), cantidad: Number(r.cantidad_canceladas ?? 0) },
+          ventas: { total: valorVentas, cantidad: Number(r.cantidad_ventas ?? 0) },
+          gastos: { valor: valorGastos, cantidad: Number(r.recuento_gastos ?? 0) },
+          retiros: { valor: valorRetiros, cantidad: Number(r.recuento_retiros ?? 0) },
+          ingresos: { valor: valorIngresos, cantidad: Number(r.recuento_ingresos ?? 0) },
+          pagos: { realizados: rowsHoy.filter(esPagoReal).length, total: rowsHoy.length },
+          frecuencia,
+          cuotas,
+          cartera,
+        })
+      } catch (err) {
+        console.error("[v0] Error cargando datos del cierre de caja:", err)
+      }
+    }
+
+    loadCierreData()
+  }, [rutaId])
+
   const [cajaCerrada, setCajaCerrada] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
@@ -125,28 +269,9 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
     }
   }
 
-  const data = {
-    estado: cajaCerrada ? "Cerrada" : "Abierta",
-    cajaAnterior: 0,
-    efectivoFinal: 225,
-    recaudo: { total: 800, meta: 1200, transferencia: 0, efectivo: 800 },
-    canceladas: { valor: 150, cantidad: 2 },
-    ventas: { total: 550, cantidad: 3, nuevas: 0, renovacion: { valor: 200, cantidad: 1 } },
-    gastos: { valor: 25, cantidad: 1 },
-    retiros: { valor: 200, cantidad: 1 },
-    ingresos: { valor: 0, cantidad: 0 },
-    pagos: { realizados: 35, total: 50 },
-    frecuencia: { 
-      diario: { pagos: 28, total: 35 }, 
-      semanal: { pagos: 5, total: 8 }, 
-      quincenal: { pagos: 2, total: 4 }, 
-      intereses: { pagos: 0, total: 2 } 
-    },
-    cuotas: { de0a3: 12, de3oMas: 23 },
-    cartera: { alDia: 22, mora: 18, vencidos: 10 },
-  }
+  const data = { estado: cajaCerrada ? "Cerrada" : "Abierta", ...cierreData }
 
-  const paymentPct = Math.round((data.pagos.realizados / data.pagos.total) * 100)
+  const paymentPct = data.pagos.total > 0 ? Math.round((data.pagos.realizados / data.pagos.total) * 100) : 0
   const rutaLabel = rutaNombre ? `Ruta ${rutaId} — ${rutaNombre}` : `Ruta ${rutaId}`
 
   const handlePDF = () => {
@@ -156,7 +281,7 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
       return
     }
 
-    const logoUrl = "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Logo%20Feelpay.PNG-AWKE6ZXt07dwSoLfebE424CCyTrrNt.png"
+    const logoUrl = `${window.location.origin}/opad-logo.png`
 
     win.document.write(`<!DOCTYPE html>
 <html lang="es">
@@ -209,13 +334,9 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
     <tr class="row"><td class="label">Efectivo Final</td><td class="value">$${data.efectivoFinal.toLocaleString()}</td></tr>
     <tr class="section"><td colspan="2">Recaudo</td></tr>
     <tr class="row"><td class="label">Total Recaudo</td><td class="value">$${data.recaudo.total.toLocaleString()} / $${data.recaudo.meta.toLocaleString()}</td></tr>
-    <tr class="subrow"><td class="label">• Transferencia</td><td class="value">$${data.recaudo.transferencia.toLocaleString()}</td></tr>
-    <tr class="subrow"><td class="label">• Efectivo</td><td class="value">$${data.recaudo.efectivo.toLocaleString()}</td></tr>
     <tr class="section"><td colspan="2">Operaciones</td></tr>
     <tr class="row"><td class="label">Canceladas</td><td class="value">$${data.canceladas.valor.toLocaleString()} (${data.canceladas.cantidad})</td></tr>
     <tr class="row"><td class="label">Total Ventas</td><td class="value">$${data.ventas.total.toLocaleString()} (${data.ventas.cantidad})</td></tr>
-    <tr class="subrow"><td class="label">• Nuevas</td><td class="value">$${data.ventas.nuevas.toLocaleString()}</td></tr>
-    <tr class="subrow"><td class="label">• Renovación</td><td class="value">$${data.ventas.renovacion.valor.toLocaleString()} (${data.ventas.renovacion.cantidad})</td></tr>
     <tr class="row"><td class="label">Gastos</td><td class="value">$${data.gastos.valor.toLocaleString()} (${data.gastos.cantidad})</td></tr>
     <tr class="row"><td class="label">Retiros</td><td class="value">$${data.retiros.valor.toLocaleString()} (${data.retiros.cantidad})</td></tr>
     <tr class="row"><td class="label">Ingresos</td><td class="value">$${data.ingresos.valor.toLocaleString()} (${data.ingresos.cantidad})</td></tr>
@@ -224,10 +345,10 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
     <tr class="row"><td class="label">Frec. Pago Diario</td><td class="value">${data.frecuencia.diario.pagos}/${data.frecuencia.diario.total}</td></tr>
     <tr class="row"><td class="label">Frec. Pago Semanal</td><td class="value">${data.frecuencia.semanal.pagos}/${data.frecuencia.semanal.total}</td></tr>
     <tr class="row"><td class="label">Frec. Pago Quincenal</td><td class="value">${data.frecuencia.quincenal.pagos}/${data.frecuencia.quincenal.total}</td></tr>
-    <tr class="row"><td class="label">Intereses</td><td class="value">${data.frecuencia.intereses.pagos}/${data.frecuencia.intereses.total}</td></tr>
-    <tr class="section"><td colspan="2">Cuotas por Clientes</td></tr>
-    <tr class="row"><td class="label">De 0 - 3 Cuotas Pagas</td><td class="value">${data.cuotas.de0a3}</td></tr>
-    <tr class="row"><td class="label">De 3 Cuotas o más</td><td class="value">${data.cuotas.de3oMas}</td></tr>
+    <tr class="row"><td class="label">Frec. Pago Mensual</td><td class="value">${data.frecuencia.mensual.pagos}/${data.frecuencia.mensual.total}</td></tr>
+    <tr class="section"><td colspan="2">Cuotas Vencidas por Cliente</td></tr>
+    <tr class="row"><td class="label">De 0 a 3 cuotas vencidas</td><td class="value">${data.cuotas.de0a3}</td></tr>
+    <tr class="row"><td class="label">Más de 3 cuotas vencidas</td><td class="value">${data.cuotas.de3oMas}</td></tr>
     <tr class="section"><td colspan="2">Estado de Cartera</td></tr>
     <tr class="row"><td class="label">Clientes Al Día</td><td class="value">${data.cartera.alDia}</td></tr>
     <tr class="row"><td class="label">Clientes en Mora</td><td class="value">${data.cartera.mora}</td></tr>
@@ -252,14 +373,10 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
 
     { type: "section", label: "Recaudo" },
     { type: "row", icon: Target,          iconColor: "text-icon-target",     label: "Total Recaudo",          value: `$${data.recaudo.total.toLocaleString()} / $${data.recaudo.meta.toLocaleString()}` },
-    { type: "subrow",                                                         label: "• Transferencia",        value: `$${data.recaudo.transferencia.toLocaleString()}` },
-    { type: "subrow",                                                         label: "• Efectivo",             value: `$${data.recaudo.efectivo.toLocaleString()}` },
 
     { type: "section", label: "Operaciones" },
     { type: "row", icon: CheckCircle,     iconColor: "text-icon-check",      label: "Canceladas",             value: `$${data.canceladas.valor.toLocaleString()} (${data.canceladas.cantidad})` },
     { type: "row", icon: ShoppingCart,    iconColor: "text-icon-sales",      label: "Total Ventas",           value: `$${data.ventas.total.toLocaleString()} (${data.ventas.cantidad})` },
-    { type: "subrow",                                                         label: "• Nuevas",               value: `$${data.ventas.nuevas.toLocaleString()}` },
-    { type: "subrow",                                                         label: "• Renovación",           value: `$${data.ventas.renovacion.valor.toLocaleString()} (${data.ventas.renovacion.cantidad})` },
     { type: "row", icon: Receipt,         iconColor: "text-icon-expense",    label: "Gastos",                 value: `$${data.gastos.valor.toLocaleString()} (${data.gastos.cantidad})` },
     { type: "row", icon: ArrowDownCircle, iconColor: "text-icon-withdrawal", label: "Retiros",                value: `$${data.retiros.valor.toLocaleString()} (${data.retiros.cantidad})` },
     { type: "row", icon: TrendingUp,      iconColor: "text-icon-income",     label: "Ingresos",               value: `$${data.ingresos.valor.toLocaleString()} (${data.ingresos.cantidad})` },
@@ -269,11 +386,11 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
     { type: "row", icon: CalendarDays,    iconColor: "text-success",         label: "Frec. Pago Diario",      value: `${data.frecuencia.diario.pagos}/${data.frecuencia.diario.total}` },
     { type: "row", icon: CalendarDays,    iconColor: "text-icon-calendar",   label: "Frec. Pago Semanal",     value: `${data.frecuencia.semanal.pagos}/${data.frecuencia.semanal.total}` },
     { type: "row", icon: CalendarClock,   iconColor: "text-icon-clock",      label: "Frec. Pago Quincenal",   value: `${data.frecuencia.quincenal.pagos}/${data.frecuencia.quincenal.total}` },
-    { type: "row", icon: Coins,           iconColor: "text-icon-wallet",     label: "Intereses",              value: `${data.frecuencia.intereses.pagos}/${data.frecuencia.intereses.total}` },
+    { type: "row", icon: Coins,           iconColor: "text-icon-wallet",     label: "Frec. Pago Mensual",     value: `${data.frecuencia.mensual.pagos}/${data.frecuencia.mensual.total}` },
 
-    { type: "section", label: "Cuotas por Clientes" },
-    { type: "row", icon: PiggyBank,       iconColor: "text-icon-sales",      label: "De 0 - 3 Cuotas Pagas", value: `${data.cuotas.de0a3}` },
-    { type: "row", icon: Coins,           iconColor: "text-icon-wallet",     label: "De 3 Cuotas o más",      value: `${data.cuotas.de3oMas}` },
+    { type: "section", label: "Cuotas Vencidas por Cliente" },
+    { type: "row", icon: PiggyBank,       iconColor: "text-icon-sales",      label: "De 0 a 3 cuotas vencidas", value: `${data.cuotas.de0a3}` },
+    { type: "row", icon: Coins,           iconColor: "text-icon-wallet",     label: "Más de 3 cuotas vencidas", value: `${data.cuotas.de3oMas}` },
 
     { type: "section", label: "Estado de Cartera" },
     { type: "row", icon: Users,           iconColor: "text-status-al-dia",   label: "Clientes Al Día",        value: `${data.cartera.alDia}` },
