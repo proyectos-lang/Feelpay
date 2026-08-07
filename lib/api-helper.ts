@@ -162,7 +162,25 @@ export interface AtomicRpcResult {
   cliente_marcado_sin_prestamo?: boolean
   cuota_adicional_generada?: boolean
   fila_hoy_creada?: boolean
+  multa_cobrada?: boolean
+  /** La operacion no se pudo aplicar limpio y quedo en la cola de secretaria. */
+  enviado_a_revision?: boolean
+  motivo?: string
+  /** true si la llave de idempotencia ya se habia procesado (reintento). */
+  duplicado?: boolean
   [key: string]: unknown
+}
+
+/**
+ * Error de red tras agotar los reintentos. Se distingue de un error de negocio
+ * para que la cola offline sepa que la operacion PUEDE reintentarse mas tarde
+ * (un error de negocio no debe reintentarse nunca).
+ */
+export class NetworkUnavailableError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "NetworkUnavailableError"
+  }
 }
 
 /**
@@ -173,6 +191,16 @@ export interface AtomicRpcResult {
  * funcion.
  *
  * Reintenta hasta 3 veces ante errores transitorios de red.
+ *
+ * IDEMPOTENCIA: adjunta una `idempotency_key` generada en el dispositivo. Si
+ * la peticion llega al servidor y se guarda pero la respuesta se pierde por
+ * mala senal, el reintento la manda con la MISMA llave y la funcion SQL
+ * devuelve el resultado original sin volver a aplicar nada. Sin esto, un
+ * reintento cobraba dos veces (ver scripts/030-idempotencia-y-ancla-cuota.sql).
+ *
+ * El caller puede pasar su propia `idempotency_key` en el payload — necesario
+ * para la cola offline, donde la llave se genera al capturar la operacion, no
+ * al enviarla.
  */
 export async function callRpcAtomic<T extends AtomicRpcResult = AtomicRpcResult>(
   functionName: string,
@@ -180,6 +208,13 @@ export async function callRpcAtomic<T extends AtomicRpcResult = AtomicRpcResult>
 ): Promise<T> {
   const identity = getSessionIdentity()
   const supabase = createClient()
+
+  // Una sola llave para los 3 intentos: es justamente lo que permite al
+  // servidor reconocer el reintento como duplicado.
+  const payloadConLlave = {
+    ...payload,
+    idempotency_key: payload.idempotency_key ?? crypto.randomUUID(),
+  }
 
   const MAX_ATTEMPTS = 3
   let lastErrorMsg = ""
@@ -189,7 +224,7 @@ export async function callRpcAtomic<T extends AtomicRpcResult = AtomicRpcResult>
         p_user_id: identity.user_id,
         p_ruta_id: identity.ruta_id,
         p_rol: identity.rol,
-        p_payload: payload,
+        p_payload: payloadConLlave,
       })
       if (!error) {
         return (data ?? { ok: true }) as T
@@ -225,7 +260,10 @@ export async function callRpcAtomic<T extends AtomicRpcResult = AtomicRpcResult>
       await new Promise((r) => setTimeout(r, attempt === 1 ? 200 : 500))
     }
   }
-  throw new Error(
+  // Error tipado: la cola offline necesita distinguir "no hubo red" (se puede
+  // reintentar mas tarde con la misma llave) de un error de negocio (no se
+  // debe reintentar nunca).
+  throw new NetworkUnavailableError(
     `${functionName} fallo tras ${MAX_ATTEMPTS} intentos: ${lastErrorMsg}`,
   )
 }

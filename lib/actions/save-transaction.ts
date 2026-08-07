@@ -13,14 +13,40 @@ interface SaveTransactionParams {
   ruta: number
   adminid: number
   requiresApproval?: boolean
+  /**
+   * Llave generada en el dispositivo. Si la peticion se reintenta (o se
+   * sincroniza dos veces desde la cola offline), la segunda vez no inserta
+   * nada y devuelve el resultado original. Sin esto, un reintento por mala
+   * senal duplicaba el movimiento de caja.
+   */
+  idempotencyKey?: string
+  /**
+   * Momento real de captura en el dispositivo (ISO). Necesario para la cola
+   * offline: sin esto un gasto registrado a las 3pm sin senal quedaria con la
+   * hora en que se sincronizo, cayendo en el dia equivocado.
+   */
+  fechaCaptura?: string
 }
 
 export async function saveTransaction(params: SaveTransactionParams) {
   const supabase = await getSupabaseServer()
 
   try {
-    // Timestamp en UTC real — la visualización usa zona Colombia al leer
-    const fechahorasol = new Date().toISOString()
+    // Hora de captura en el dispositivo; si no viene, ahora (comportamiento
+    // anterior). La visualizacion usa zona Colombia al leer.
+    const fechahorasol = params.fechaCaptura ?? new Date().toISOString()
+
+    // ── Idempotencia ──────────────────────────────────────────────────
+    if (params.idempotencyKey) {
+      const { data: previa } = await supabase
+        .from("operaciones_procesadas")
+        .select("resultado")
+        .eq("id", params.idempotencyKey)
+        .maybeSingle()
+      if (previa) {
+        return { success: true, data: null, duplicado: true }
+      }
+    }
 
     let fotoUrl: string | null = null
 
@@ -82,6 +108,21 @@ export async function saveTransaction(params: SaveTransactionParams) {
         success: false,
         error: error.message,
       }
+    }
+
+    // Marcar la operacion como procesada para que un reintento no la duplique.
+    // El cast es necesario porque los tipos generados de Supabase todavia no
+    // incluyen esta tabla (creada en scripts/030).
+    if (params.idempotencyKey) {
+      await (supabase.from("operaciones_procesadas") as unknown as {
+        insert: (row: Record<string, unknown>) => Promise<unknown>
+      }).insert({
+        id: params.idempotencyKey,
+        tipo: `transaccion_${params.tipo.toLowerCase()}`,
+        user_id: params.adminid,
+        ruta_id: params.ruta,
+        resultado: { ok: true },
+      })
     }
 
     return {

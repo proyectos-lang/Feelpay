@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TrendingDown, TrendingUp, Wallet, Camera, X, AlertCircle } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { saveTransaction } from "@/lib/actions/save-transaction"
+import { getSessionIdentity } from "@/lib/api-helper"
 import { getRutaItemUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre, type ItemUmbral } from "@/lib/ruta-umbrales"
 import {
   Dialog,
@@ -77,7 +78,16 @@ export function RegisterTransaction({
   // Si no se inyecta (caso defensivo), se cae a 1 para no romper inserts;
   // pero en operacion normal SIEMPRE viene desde `app/page.tsx`.
   const ruta = currentRutaId ?? 1
-  const [adminid] = useState(1)
+  // Usuario de la sesion. Antes estaba fijo en 1, asi que TODOS los gastos,
+  // ingresos y retiros quedaban atribuidos al usuario 1 sin importar quien
+  // los registrara.
+  const adminid = (() => {
+    try {
+      return getSessionIdentity().user_id
+    } catch {
+      return 1
+    }
+  })()
 
   // Warning states for limit exceeded
   const [showIncomeWarning, setShowIncomeWarning] = useState(false)
@@ -240,6 +250,8 @@ export function RegisterTransaction({
         ruta,
         adminid,
         requiresApproval: requiresApproval || false,
+        idempotencyKey: crypto.randomUUID(),
+        fechaCaptura: new Date().toISOString(),
       })
 
       if (result.success) {
@@ -295,6 +307,8 @@ export function RegisterTransaction({
         ruta,
         adminid,
         requiresApproval: requiresApproval || false,
+        idempotencyKey: crypto.randomUUID(),
+        fechaCaptura: new Date().toISOString(),
       })
 
       if (result.success) {
@@ -350,6 +364,8 @@ export function RegisterTransaction({
         ruta,
         adminid,
         requiresApproval: requiresApproval || false,
+        idempotencyKey: crypto.randomUUID(),
+        fechaCaptura: new Date().toISOString(),
       })
 
       if (result.success) {

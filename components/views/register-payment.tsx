@@ -1211,57 +1211,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       //    procese la cuota actual quedaran cuotas pendientes y el loan
       //    se mantendra en estado 'activo' sin pasar nunca por 'cancelado'.
       // -----------------------------------------------------------------
-      if (debeExtender && clientSnapshot.nextPaymentId) {
-        try {
-          const supabase = await getSupabaseSafe()
-
-          // 1) Bajar valor_cuota de la cuota actual a solo intereses.
-          const { error: updErr } = await supabase
-            .from("payment_plan")
-            .update({ valor_cuota: clientSnapshot.valorCuota })
-            .eq("id", clientSnapshot.nextPaymentId)
-          if (updErr) {
-            console.error("[v0] Error ajustando valor_cuota antes de extender:", updErr)
-            toast({
-              title: "Error",
-              description: "No se pudo ajustar el valor de la cuota: " + updErr.message,
-              variant: "destructive",
-            })
-            setSaving(false)
-            return
-          }
-
-          // 2) Crear cuotas adicionales via RPC. Lo hacemos ANTES del pago
-          //    para que el loan nunca quede en estado 'cancelado'.
-          const { error: extError } = await supabase.rpc(
-            "extender_prestamo_americano",
-            {
-              p_loan_id: clientSnapshot.loanId,
-              p_nuevas_cuotas: cantidadExtenderSnap,
-              p_ruta_id: currentRutaId,
-            },
-          )
-          if (extError) {
-            console.error("[v0] extender_prestamo_americano error:", extError)
-            toast({
-              title: "Error al extender el préstamo",
-              description: extError.message ?? "No se pudo extender el préstamo.",
-              variant: "destructive",
-            })
-            setSaving(false)
-            return
-          }
-        } catch (err) {
-          console.error("[v0] Excepcion durante extension:", err)
-          toast({
-            title: "Error",
-            description: err instanceof Error ? err.message : String(err),
-            variant: "destructive",
-          })
-          setSaving(false)
-          return
-        }
-      }
+      // La prorroga de americano ya NO se ejecuta aqui: viaja en el payload
+      // (`extender_cuotas`) y la RPC la aplica dentro de la misma transaccion
+      // del pago. Antes eran 2 escrituras sueltas ANTES del pago cuyo orden
+      // era critico — si el pago fallaba despues, el prestamo quedaba
+      // extendido sin cobrar.
 
       // -----------------------------------------------------------------
       // Llamada al RPC atomico `registrar_pago_atomico`.
@@ -1287,6 +1241,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         longitud,
         generar_cuota_si_debe: agregarCuotaSnap,
         asociar_a_hoy: asociarAHoySnap,
+        // Ancla: se cobra ESTA cuota, la que el cobrador vio en pantalla. Sin
+        // esto la RPC elegia "la mas antigua pendiente en este momento", que
+        // puede ser otra si alguien mas gestiono el prestamo entre medio.
+        payment_plan_id: clientSnapshot.nextPaymentId,
+        // La multa y la prorroga se aplican dentro de la misma transaccion.
+        multa_id: pagarMultaSnap ? clientSnapshot.multaPendiente?.id ?? null : null,
+        metodo_pago: paymentMethod,
+        cliente_nombre: clientSnapshot.nombre,
+        extender_cuotas: debeExtender ? cantidadExtenderSnap : 0,
       })
 
       // Valores derivados desde la respuesta autoritativa del RPC.
@@ -1295,56 +1258,24 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       void rpcResult.loan_estado_final
       void rpcResult.cliente_marcado_sin_prestamo
 
-      // ── Cobro de la multa (si se marcó "Pagar multa") ────────────────
-      // Corre DESPUES de que el pago principal quedo aplicado: marca la
-      // multa como pagada y registra el dinero como Ingreso en
-      // gastosregistros (contabilidad de la ruta). Si algo falla aqui, el
-      // pago principal NO se revierte — se avisa para regularizar manualmente
-      // (consistente con la no-atomicidad aceptada en gastos).
-      let multaCobrada = false
-      if (pagarMultaSnap && clientSnapshot.multaPendiente) {
-        try {
-          const identity = getSessionIdentity()
-          const supabase = await getSupabaseSafe()
-          const { error: multaUpdErr, count } = await supabase
-            .from("multas")
-            .update({
-              estado: "pagada",
-              pagada_at: new Date().toISOString(),
-              pagada_por: identity.user_id,
-              metodo_pago: paymentMethod,
-            }, { count: "exact" })
-            .eq("id", clientSnapshot.multaPendiente.id)
-            .eq("estado", "pendiente")
-          if (multaUpdErr) throw multaUpdErr
-          // count 0 = la multa ya no estaba pendiente (secretaria la cancelo
-          // mientras tanto) — no registrar el ingreso.
-          if ((count ?? 0) > 0) {
-            const { error: ingresoErr } = await supabase.from("gastosregistros").insert({
-              fechahorasol: new Date().toISOString(),
-              adminid: identity.user_id,
-              ruta: currentRutaId,
-              concepto: `Multa — ${clientSnapshot.nombre}`,
-              limite: null,
-              valor: clientSnapshot.multaPendiente.valor,
-              observacion: "Pago de multa por mora",
-              foto: null,
-              tipo: "Ingreso",
-              estadoadmin: "NA",
-              estadosecre: "NA",
-            })
-            if (ingresoErr) throw ingresoErr
-            multaCobrada = true
-          }
-        } catch (multaErr) {
-          console.error("[v0] Error cobrando multa:", multaErr)
-          toast({
-            title: "Multa no procesada",
-            description: "El pago se registró, pero la multa no pudo marcarse como pagada. Repórtalo a secretaría.",
-            variant: "destructive",
-          })
-        }
+      // El pago no se pudo aplicar limpio (la cuota ya la gestiono alguien
+      // mas, o el prestamo quedo cancelado). La RPC no lo perdio: lo dejo en
+      // la cola de revision de secretaria. No lo marcamos como gestionado.
+      if (rpcResult.enviado_a_revision) {
+        toast({
+          title: "Pago enviado a revisión",
+          description: `${rpcResult.motivo ?? "El pago no se pudo aplicar directamente"}. Secretaría lo revisará; el cobro quedó registrado.`,
+        })
+        void fetchData({ silent: true })
+        handleBack()
+        return
       }
+
+      // El cobro de la multa ya viene resuelto por la RPC, dentro de la misma
+      // transaccion del pago: o entran los dos, o no entra ninguno. Antes eran
+      // dos escrituras sueltas y si la segunda fallaba, la multa quedaba
+      // cobrada pero el dinero nunca llegaba a la caja de la ruta.
+      const multaCobrada = rpcResult.multa_cobrada === true
 
       // Optimistic UI: quitar al cliente de la lista de pendientes localmente
       // y agregarlo a managedToday con la forma correcta de ManagedClient
@@ -1375,8 +1306,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         setClientForRenovation(clientSnapshot)
         setShowRenovationDialog(true)
       } else if (debeExtender) {
-        // La extension ya se ejecuto ANTES del pago (ver pre-steps), asi
-        // que aqui solo informamos el resultado al usuario.
+        // La extension corrio dentro de la misma transaccion del pago.
         toast({
           title: "Pago registrado y préstamo extendido",
           description: `Pago registrado y préstamo extendido exitosamente por ${cantidadExtenderSnap} cuota${cantidadExtenderSnap === 1 ? "" : "s"} más`,
@@ -1496,6 +1426,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         longitud,
         generar_cuota_si_debe: agregarCuotaSnapNoPago,
         asociar_a_hoy: asociarAHoySnapNoPago,
+        // Ancla: se marca ESTA cuota, la que el cobrador vio en pantalla.
+        payment_plan_id: clientSnapshot.nextPaymentId,
+        cliente_nombre: clientSnapshot.nombre,
       })
 
       // Optimistic UI: quitar de pendientes y agregar a managedToday
