@@ -39,7 +39,7 @@ const DB_NAME = "feelpay-offline"
 const DB_VERSION = 1
 const STORE = "cola"
 
-export type TipoOperacion = "pago" | "no_pago" | "transaccion"
+export type TipoOperacion = "pago" | "no_pago" | "transaccion" | "venta"
 
 export type EstadoItem = "pendiente" | "enviando" | "fallido"
 
@@ -174,6 +174,24 @@ async function enviarItem(item: ItemCola): Promise<AtomicRpcResult> {
       p_ruta_id: item.identidad.ruta_id,
       p_rol: item.identidad.rol,
       p_payload: { ...item.payload, idempotency_key: item.id },
+    })
+    if (error) throw error
+    return (data ?? { ok: true }) as AtomicRpcResult
+  }
+
+  if (item.tipo === "venta") {
+    // La llave viaja dentro de p_loan (ver scripts/031-idempotencia-ventas.sql:
+    // se metio ahi para no cambiar la firma de la funcion, que ya tiene otros
+    // callers). Las fechas del plan NO se recalculan: son las que se pactaron
+    // con el cliente al hacer la venta.
+    const p = item.payload as { p_cliente: unknown; p_loan: Record<string, unknown>; p_payment_plan: unknown }
+    const { data, error } = await supabase.rpc("crear_venta_atomica", {
+      p_user_id: item.identidad.user_id,
+      p_ruta_id: item.identidad.ruta_id,
+      p_rol: item.identidad.rol,
+      p_cliente: p.p_cliente,
+      p_loan: { ...p.p_loan, idempotency_key: item.id },
+      p_payment_plan: p.p_payment_plan,
     })
     if (error) throw error
     return (data ?? { ok: true }) as AtomicRpcResult

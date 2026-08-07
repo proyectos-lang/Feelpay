@@ -31,6 +31,34 @@ const DEFAULT_UMBRALES: RutaUmbrales = {
   multa_tipo_valor: "fijo", multa_valor: null, multa_cantidad_cuotas: null,
 }
 
+// Cache local de los umbrales por ruta.
+//
+// Sin conexion la consulta falla y se caeria a DEFAULT_UMBRALES (todo
+// deshabilitado), lo que significa "ninguna operacion necesita revision" — y
+// una venta grande registrada offline se aplicaria directo en vez de pasar
+// por secretaria. Guardando el ultimo valor leido, la decision offline es la
+// misma que se habria tomado con senal.
+const UMBRALES_CACHE_KEY = "ruta_umbrales_cache"
+
+function leerCache(rutaId: number): RutaUmbrales | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = localStorage.getItem(`${UMBRALES_CACHE_KEY}_${rutaId}`)
+    return raw ? (JSON.parse(raw) as RutaUmbrales) : null
+  } catch {
+    return null
+  }
+}
+
+function guardarCache(rutaId: number, u: RutaUmbrales): void {
+  if (typeof window === "undefined") return
+  try {
+    localStorage.setItem(`${UMBRALES_CACHE_KEY}_${rutaId}`, JSON.stringify(u))
+  } catch {
+    /* cuota de almacenamiento llena o modo privado: no es critico */
+  }
+}
+
 // Si la ruta no tiene fila configurada, no hay revisión (falla abierta hacia
 // "sin revisión" para no bloquear la operación normal si algo sale mal).
 export async function getRutaUmbrales(rutaId: number): Promise<RutaUmbrales> {
@@ -40,11 +68,14 @@ export async function getRutaUmbrales(rutaId: number): Promise<RutaUmbrales> {
       .select("venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral_cuotas, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas")
       .eq("ruta_id", rutaId)
       .maybeSingle()
-    if (error || !data) return DEFAULT_UMBRALES
-    return data as RutaUmbrales
+    if (error) return leerCache(rutaId) ?? DEFAULT_UMBRALES
+    if (!data) return DEFAULT_UMBRALES
+    const umbrales = data as RutaUmbrales
+    guardarCache(rutaId, umbrales)
+    return umbrales
   } catch (err) {
     console.error("[v0] Error fetching ruta_config_umbrales:", err)
-    return DEFAULT_UMBRALES
+    return leerCache(rutaId) ?? DEFAULT_UMBRALES
   }
 }
 

@@ -19,6 +19,7 @@ import { createClient } from "@/lib/supabase/client"
 import { todayColombia } from "@/lib/colombia-date"
 import { useToast } from "@/hooks/use-toast"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre } from "@/lib/ruta-umbrales"
+import { enviarOEncolar } from "@/lib/offline-queue"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   Dialog,
@@ -565,6 +566,46 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     }).format(value)
   }
 
+  // Limpieza del formulario tras registrar una venta. Se usa en los tres
+  // caminos de salida: creacion directa, envio a revision por umbral, y
+  // guardado en la cola cuando no hay conexion.
+  const resetFormularioVenta = () => {
+    setValor("")
+    setSaldo("")
+    setValorAPagar("")
+    setValorCuota("")
+    setTasaInteres("")
+    setDias("")
+    setTipoAmortizacion("")
+    setFrecuenciaPago("")
+    setDiaSemana("")
+    setEnrutarVenta("")
+    setAmortizacionTable([])
+    setShowAmortization(false)
+    setPagoAdelantado(false)
+    setNumeroCuotas(1)
+    setOtroValor(false)
+    setValorPago("")
+    setPrestamoEmpleado(false)
+    setSelectedClient("")
+    setClientSearch("")
+    setDocumento("")
+    setNombreCompleto("")
+    setApodo("")
+    setSector("")
+    setTelefono("")
+    setTelefono2("")
+    setTelefonoError("")
+    setTelefono2Error("")
+    setDireccion("")
+    setTipoComercio("")
+    setRef1Nombre("")
+    setRef1Telefono("")
+    setRef1Direccion("")
+    setFormErrors(new Set())
+    setCedulaImage(null)
+  }
+
   const handleCreateVenta = async () => {
     try {
       setIsCreating(true)
@@ -640,6 +681,19 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       // completo; si es existente, solo enviamos `is_new: false` y `id`.
       let p_cliente: Record<string, unknown>
       if (isNewClient) {
+        // Sin conexion no se pueden crear clientes nuevos: el escaneo de
+        // cedula necesita el servidor, y dos cobradores sin senal podrian
+        // registrar a la misma persona y duplicarla. Las renovaciones a
+        // clientes existentes si funcionan offline.
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          toast({
+            title: "Sin conexión",
+            description:
+              "No se pueden registrar clientes nuevos sin internet. Puedes hacer ventas a clientes que ya existen, o esperar a tener señal.",
+            variant: "destructive",
+          })
+          return
+        }
         if (!documento || !nombreCompleto) {
           toast({
             title: "Error",
@@ -937,41 +991,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         setFormAlert(null)
         setTimeout(() => setSuccessAlert(null), 6000)
 
-        // Reset form — mismo bloque que el camino de exito normal
-        setValor("")
-        setSaldo("")
-        setValorAPagar("")
-        setValorCuota("")
-        setTasaInteres("")
-        setDias("")
-        setTipoAmortizacion("")
-        setFrecuenciaPago("")
-        setDiaSemana("")
-        setEnrutarVenta("")
-        setAmortizacionTable([])
-        setShowAmortization(false)
-        setPagoAdelantado(false)
-        setNumeroCuotas(1)
-        setOtroValor(false)
-        setValorPago("")
-        setPrestamoEmpleado(false)
-        setSelectedClient("")
-        setClientSearch("")
-        setDocumento("")
-        setNombreCompleto("")
-        setApodo("")
-        setSector("")
-        setTelefono("")
-        setTelefono2("")
-        setTelefonoError("")
-        setTelefono2Error("")
-        setDireccion("")
-        setTipoComercio("")
-        setRef1Nombre("")
-        setRef1Telefono("")
-        setRef1Direccion("")
-        setFormErrors(new Set())
-        setCedulaImage(null)
+        resetFormularioVenta()
         return
       }
 
@@ -979,6 +999,25 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       // Toda la creacion (cliente + loan + payment_plan) corre en una sola
       // transaccion en la base; si algo falla, se hace rollback completo
       // y nunca quedan registros huerfanos.
+      // Sin conexion la venta queda en la cola del dispositivo y se envia sola
+      // despues. Las fechas del plan NO se recalculan al sincronizar: son las
+      // que se pactaron con el cliente al hacer la venta.
+      const { encolado: ventaEncolada } = await enviarOEncolar({
+        tipo: "venta",
+        descripcion: `Venta — ${apodo || nombreCompleto || "Cliente"} ($${valorNum.toLocaleString()})`,
+        payload: { p_cliente, p_loan, p_payment_plan },
+      })
+
+      if (ventaEncolada) {
+        showToastPill("Venta guardada sin conexión. Se enviará al volver la señal.")
+        setSuccessDialog({
+          open: true,
+          msg: "La venta quedó guardada en el teléfono y se enviará automáticamente cuando vuelva la señal.",
+        })
+        resetFormularioVenta()
+        return
+      }
+
       const supabase = createClient()
       const { data: rpcData, error: rpcError } = await supabase.rpc("crear_venta_atomica", {
         p_user_id,
