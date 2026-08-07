@@ -70,6 +70,7 @@ type PaymentPlanEntry = {
   fecha_pago_real: string | null
   monto_pagado: number
   ruta: number
+  es_extra?: boolean
 }
 
 type DisplayClient = {
@@ -80,8 +81,16 @@ type DisplayClient = {
   valorVenta: number
   valorCuota: number
   saldo: number
+  // Conteos sobre las cuotas BASE del plan (excluyen cuotas extra de
+  // extensiones/prorrogas/pagos de hoy). cuotasExtra cuenta esas aparte
+  // para mostrarlas como sufijo "+N extra".
   cuotasPagadas: number
   cuotasTotales: number
+  cuotasExtra: number
+  // True cuando la cuota objetivo esta pendiente Y es la unica pendiente
+  // del plan — es decir, resolverla agota el plan de pagos. Inmune a la
+  // numeracion y alineado con lo que evalua registrar_pago_atomico.
+  esUltimaCuotaPendiente: boolean
   mora: number
   ultimoPago: number
   ultimoPagoFecha: string
@@ -278,8 +287,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     }
     const esAmericano =
       selectedClient.tipoAmortizacion?.toLowerCase().trim() === "americano"
-    const esUltimaCuota =
-      selectedClient.nextPaymentNumero === selectedClient.cuotasTotales
+    const esUltimaCuota = selectedClient.esUltimaCuotaPendiente
     if (!esAmericano || !esUltimaCuota) {
       console.warn(
         "[v0] BLINDAJE-EXTENDER apagando flag espurio:",
@@ -314,6 +322,25 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     setShowRevisionDialog(false)
     revisionResolveRef.current?.(confirmado)
     revisionResolveRef.current = null
+  }
+
+  // Dialogo "fecha distinta a la cuota pendiente": cuando se va a pagar/no
+  // pagar en una fecha que no coincide con la cuota objetivo (tipico al
+  // ponerse al dia con un cliente atrasado), se pregunta si el pago se
+  // asocia a esa cuota pendiente (comportamiento de siempre) o si se
+  // registra como un pago de hoy en una linea nueva, dejando la cuota
+  // atrasada intacta.
+  const [fechaChoiceInfo, setFechaChoiceInfo] = useState<{ fechaOriginal: string; fechaHoy: string } | null>(null)
+  const fechaChoiceResolveRef = useRef<((v: "pendiente" | "hoy" | null) => void) | null>(null)
+  const askFechaChoice = (fechaOriginal: string, fechaHoy: string) =>
+    new Promise<"pendiente" | "hoy" | null>((resolve) => {
+      fechaChoiceResolveRef.current = resolve
+      setFechaChoiceInfo({ fechaOriginal, fechaHoy })
+    })
+  const handleFechaChoice = (choice: "pendiente" | "hoy" | null) => {
+    setFechaChoiceInfo(null)
+    fechaChoiceResolveRef.current?.(choice)
+    fechaChoiceResolveRef.current = null
   }
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [clientForShare, setClientForShare] = useState<DisplayClient | null>(null)
@@ -724,8 +751,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         }
 
         const paymentPlan = paymentPlansByLoan.get(loan.id) || []
-        const cuotasPagadas = paymentPlan.filter((p) => p.estado === "pagado").length
-        const cuotasTotales = paymentPlan.length
+        // Conteos sobre cuotas BASE (las extra de extensiones se muestran
+        // aparte como "+N extra" y no alteran el X/Y del prestamo).
+        const cuotasPagadas = paymentPlan.filter((p) => !p.es_extra && p.estado === "pagado").length
+        const cuotasTotales = paymentPlan.filter((p) => !p.es_extra).length
+        const cuotasExtra = paymentPlan.filter((p) => p.es_extra).length
 
         // Sort by fecha_pago to ensure correct order
         const sortedPlan = [...paymentPlan].sort((a, b) => a.fecha_pago.localeCompare(b.fecha_pago))
@@ -790,6 +820,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           !oldestOverduePending &&
           !!nextFuturePending
 
+        // "Ultima cuota": la cuota objetivo esta pendiente y es la UNICA
+        // pendiente del plan — resolverla agota el plan de pagos. Es el
+        // predicado que gobierna los checkboxes de extension/cuota
+        // adicional. Inmune a la numeracion (funciona igual con cuotas
+        // extra) y alineado con el NOT EXISTS(pendiente) que evalua la RPC.
+        const pendientesRestantes = paymentPlan.filter((p) => p.estado === "pendiente").length
+        const esUltimaCuotaPendiente =
+          targetEntry.estado === "pendiente" && pendientesRestantes === 1
+
         // Get mora from v_loan_mora_status view (fallback to calculated if not available)
         let mora = moraMap.get(loan.id) ?? 0
         if (!moraMap.has(loan.id)) {
@@ -835,6 +874,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           saldo: saldoReal,
           cuotasPagadas: cuotasPagadas,
           cuotasTotales: cuotasTotales,
+          cuotasExtra: cuotasExtra,
+          esUltimaCuotaPendiente,
           mora,
           ultimoPago: lastPaid?.monto_pagado || 0,
           ultimoPagoFecha: fechaUltimoPagoMap.get(loan.id) ?? lastPaid?.fecha_pago_real?.split("T")[0] ?? "",
@@ -1002,7 +1043,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     const extenderSnap =
       extenderCuotas &&
       clientSnapshot.tipoAmortizacion?.toLowerCase().trim() === "americano" &&
-      clientSnapshot.nextPaymentNumero === clientSnapshot.cuotasTotales
+      clientSnapshot.esUltimaCuotaPendiente
     const cantidadExtenderSnap = (() => {
       const n = Number.parseInt(cantidadCuotasExtender, 10)
       return Number.isFinite(n) && n > 0 ? n : 0
@@ -1023,7 +1064,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       agregarCuotaSiDebe &&
       !isCanceladaSnap &&
       !extenderSnap &&
-      clientSnapshot.nextPaymentNumero === clientSnapshot.cuotasTotales
+      clientSnapshot.esUltimaCuotaPendiente
 
     try {
       setSaving(true)
@@ -1110,55 +1151,24 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
       // -----------------------------------------------------------------
       // ── PAGO EXTRAORDINARIO desde "No Diarios" ───────────────────────
-      // Cuando un cobrador esta en la pestana "No Diarios" y registra un
-      // pago para un cliente cuya cuota objetivo NO es de hoy (p.ej. una
-      // cuota del miercoles 20 que se paga el jueves 21), el RPC
-      // `registrar_pago_atomico` no la reconoce como pago del dia. Para
-      // no tocar la RPC atomica, adelantamos la `fecha_pago` de esa
-      // cuota a HOY justo antes de invocarla. La RPC entonces la procesa
-      // como un pago normal del dia.
-      //
-      // Solo aplica cuando:
-      //   - estamos en la pestana "No Diarios" (`!isDiario`)
-      //   - la cuota objetivo tiene una fecha distinta a hoy
-      //
-      // Para clientes diarios (donde la cuota es de hoy o vencida) este
-      // bloque queda inactivo y el flujo es el de siempre.
+      // Cuando la cuota objetivo NO es de hoy (p.ej. una cuota del
+      // miercoles 20 que se paga el jueves 21, tipico en "No Diarios"),
+      // se pregunta al cobrador si el pago se asocia a esa cuota pendiente
+      // atrasada (comportamiento de siempre: se marca pagada con fecha de
+      // hoy) o si se registra como un pago de hoy en una linea nueva,
+      // dejando la cuota atrasada intacta para despues. La RPC
+      // `registrar_pago_atomico` maneja ambos casos segun `asociar_a_hoy`.
       const cuotaFechaOriginal = clientSnapshot.nextPaymentFecha
       const esPagoExtraordinario =
         !isDiario && !!cuotaFechaOriginal && cuotaFechaOriginal !== fechaPago
-      if (esPagoExtraordinario && clientSnapshot.nextPaymentId) {
-        try {
-          const supabase = await getSupabaseSafe()
-          const { error: fechaErr } = await supabase
-            .from("payment_plan")
-            .update({ fecha_pago: fechaPago })
-            .eq("id", clientSnapshot.nextPaymentId)
-          if (fechaErr) {
-            console.error(
-              "[v0] Error adelantando fecha_pago para pago extraordinario:",
-              fechaErr,
-            )
-            toast({
-              title: "Error",
-              description:
-                "No se pudo registrar el pago extraordinario: " + fechaErr.message,
-              variant: "destructive",
-            })
-            setSaving(false)
-            return
-          }
-          console.log("[v0] Pago extraordinario: cuota movida de", cuotaFechaOriginal, "a", fechaPago)
-        } catch (err) {
-          console.error("[v0] Excepcion en pago extraordinario:", err)
-          toast({
-            title: "Error",
-            description: err instanceof Error ? err.message : String(err),
-            variant: "destructive",
-          })
+      let asociarAHoySnap = false
+      if (esPagoExtraordinario) {
+        const choice = await askFechaChoice(cuotaFechaOriginal, fechaPago)
+        if (choice === null) {
           setSaving(false)
           return
         }
+        asociarAHoySnap = choice === "hoy"
       }
 
       // -----------------------------------------------------------------
@@ -1172,7 +1182,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       const debeExtender =
         extenderCuotas === true &&
         clientSnapshot.tipoAmortizacion?.toLowerCase().trim() === "americano" &&
-        clientSnapshot.nextPaymentNumero === clientSnapshot.cuotasTotales
+        clientSnapshot.esUltimaCuotaPendiente
 
       if (extenderSnap !== debeExtender) {
         console.warn(
@@ -1276,6 +1286,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         latitud,
         longitud,
         generar_cuota_si_debe: agregarCuotaSnap,
+        asociar_a_hoy: asociarAHoySnap,
       })
 
       // Valores derivados desde la respuesta autoritativa del RPC.
@@ -1378,6 +1389,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           title: "Pago registrado — cuota adicional agregada",
           description: `Se registró el pago para ${clientSnapshot.nombre}. Como aún debe, se agregó una cuota adicional al plan de pagos.`,
         })
+      } else if (rpcResult.fila_hoy_creada) {
+        // El cobrador eligió "Pago de hoy": se creó una línea nueva fechada
+        // hoy, la cuota atrasada original quedó intacta para después.
+        toast({
+          title: "Pago de hoy registrado",
+          description: `Se registró un pago de $${monto.toLocaleString()} para ${clientSnapshot.nombre} con fecha de hoy. La cuota atrasada del ${cuotaFechaOriginal} sigue pendiente.`,
+        })
       } else {
         const multaSuffix = multaCobrada && clientSnapshot.multaPendiente
           ? ` + multa de $${clientSnapshot.multaPendiente.valor.toLocaleString()}`
@@ -1425,7 +1443,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     // real, no solo el checkbox.
     const agregarCuotaSnapNoPago =
       agregarCuotaSiDebeNoPago &&
-      clientSnapshot.nextPaymentNumero === clientSnapshot.cuotasTotales
+      clientSnapshot.esUltimaCuotaPendiente
 
     try {
       setSaving(true)
@@ -1444,6 +1462,22 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       const fechaPagoReal = `${partsNp.year}-${partsNp.month}-${partsNp.day}T${partsNp.hour}:${partsNp.minute}:${partsNp.second}-05:00`
       const { latitud, longitud } = coords
 
+      // Igual que en handleRegisterPayment: si la cuota objetivo no es de
+      // hoy, preguntar si este no-pago se asocia a esa cuota atrasada o se
+      // registra como visita de hoy en una linea nueva.
+      const cuotaFechaOriginalNoPago = clientSnapshot.nextPaymentFecha
+      const esNoPagoExtraordinario =
+        !isDiario && !!cuotaFechaOriginalNoPago && cuotaFechaOriginalNoPago !== colombiaDateStr
+      let asociarAHoySnapNoPago = false
+      if (esNoPagoExtraordinario) {
+        const choice = await askFechaChoice(cuotaFechaOriginalNoPago, colombiaDateStr)
+        if (choice === null) {
+          setSaving(false)
+          return
+        }
+        asociarAHoySnapNoPago = choice === "hoy"
+      }
+
       // Mismo razonamiento que `handleRegisterPayment`: el RPC atomico
       // `registrar_pago_atomico` con tipo=no_pago corre dentro de UNA
       // transaccion que fija las session vars con `SET LOCAL`, eliminando
@@ -1461,6 +1495,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         latitud,
         longitud,
         generar_cuota_si_debe: agregarCuotaSnapNoPago,
+        asociar_a_hoy: asociarAHoySnapNoPago,
       })
 
       // Optimistic UI: quitar de pendientes y agregar a managedToday
@@ -1483,10 +1518,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               title: "No pago registrado — cuota adicional agregada",
               description: `Se registró que ${clientSnapshot.nombre} no realizó el pago. Como aún debe, se agregó una cuota adicional al plan de pagos.`,
             }
-          : {
-              title: "No pago registrado",
-              description: `Se registró que ${clientSnapshot.nombre} no realizó el pago`,
-            },
+          : rpcResultNoPago.fila_hoy_creada
+            ? {
+                title: "No pago de hoy registrado",
+                description: `Se registró la visita de hoy para ${clientSnapshot.nombre}. La cuota atrasada del ${cuotaFechaOriginalNoPago} sigue pendiente.`,
+              }
+            : {
+                title: "No pago registrado",
+                description: `Se registró que ${clientSnapshot.nombre} no realizó el pago`,
+              },
       )
 
       setNoPaymentClient(null)
@@ -1683,7 +1723,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       ["Total c/intereses:", fmt(saldo?.total_con_intereses)],
       ["Total recaudado:", fmt(saldo?.total_recaudado)],
       ["Saldo pendiente:", fmt(saldo?.saldo_pendiente ?? client.saldo)],
-      ["Cuotas:", `${client.cuotasPagadas} / ${client.cuotasTotales}`],
+      ["Cuotas:", `${client.cuotasPagadas} / ${client.cuotasTotales}${client.cuotasExtra > 0 ? ` (+${client.cuotasExtra} extra)` : ""}`],
       ["Frecuencia:", frecuenciaLabel(client.frecuenciaPago)],
     ]
 
@@ -1785,13 +1825,19 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     try {
       const supabase = await getSupabaseSafe()
       const today = todayColombia()
+      // Puede haber MAS de una fila con fecha de hoy (p.ej. una cuota extra
+      // de "pago de hoy" + la cuota del dia). Resolvemos solo entre filas
+      // GESTIONADAS (lo que se esta revirtiendo/editando nunca esta
+      // 'pendiente') y tomamos la mas reciente.
       const { data } = await supabase
         .from("payment_plan")
         .select("id")
         .eq("loan_id", m.loanId)
         .eq("fecha_pago", today)
+        .neq("estado", "pendiente")
+        .order("updated_at", { ascending: false })
         .limit(1)
-        .single()
+        .maybeSingle()
       return data?.id ?? null
     } catch (_e) {
       return null
@@ -1864,6 +1910,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         saldo: nuevoSaldo,
         cuotasPagadas: Math.max(0, m.cuotasPagadas - 1),
         cuotasTotales: m.cuotasTotales,
+        cuotasExtra: m.cuotasExtra,
+        // Al revertir vuelve a existir al menos una pendiente; el refetch
+        // silencioso de abajo corrige el valor exacto.
+        esUltimaCuotaPendiente: m.esUltimaCuotaPendiente,
         mora: m.mora,
         ultimoPago: m.ultimoPago,
         ultimoPagoFecha: m.ultimoPagoFecha,
@@ -2554,6 +2604,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                   <strong className="text-foreground tabular-nums">
                                     {client.cuotasPagadas}/{client.cuotasTotales}
                                   </strong>
+                                  {client.cuotasExtra > 0 && (
+                                    <span className="text-amber-700"> +{client.cuotasExtra} extra</span>
+                                  )}
                                 </span>
                                 <span className="whitespace-nowrap text-right">
                                   Vlr{" "}
@@ -2724,7 +2777,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           <CardContent className="space-y-2 md:space-y-3 p-3 md:p-6">
             {/* Alerta: última cuota programada de préstamo americano */}
             {selectedClient.tipoAmortizacion?.toLowerCase().trim() === "americano" &&
-              selectedClient.nextPaymentNumero === selectedClient.cuotasTotales && (
+              selectedClient.esUltimaCuotaPendiente && (
                 <div className="flex items-start gap-2 rounded-lg border border-warning bg-warning/10 px-3 py-2">
                   <AlertCircle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
                   <p className="text-sm font-semibold text-warning">
@@ -2894,7 +2947,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                     prestamos tipo "americano" en su ULTIMA cuota. */}
                 {selectedClient &&
                   selectedClient.tipoAmortizacion?.toLowerCase().trim() === "americano" &&
-                  selectedClient.nextPaymentNumero === selectedClient.cuotasTotales && (
+                  selectedClient.esUltimaCuotaPendiente && (
                     <div className="flex items-center space-x-1.5">
                       <Checkbox
                         id="extenderCuotas"
@@ -2951,7 +3004,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                     va a cancelar el prestamo por completo, para no mezclar
                     con esos flujos. */}
                 {selectedClient &&
-                  selectedClient.nextPaymentNumero === selectedClient.cuotasTotales &&
+                  selectedClient.esUltimaCuotaPendiente &&
                   !extenderCuotas &&
                   !isCancelada && (
                     <div className="flex items-center space-x-1.5">
@@ -3067,7 +3120,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             {/* Solo visible cuando la cuota actual es la ULTIMA del plan de
                 pagos: si el cliente aun debe tras este no-pago, agrega una
                 cuota adicional en vez de dejar el prestamo sin fechas. */}
-            {noPaymentClient && noPaymentClient.nextPaymentNumero === noPaymentClient.cuotasTotales && (
+            {noPaymentClient && noPaymentClient.esUltimaCuotaPendiente && (
               <div className="flex items-center space-x-1.5">
                 <Checkbox
                   id="agregarCuotaSiDebeNoPago"
@@ -3130,6 +3183,32 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           <div className="flex gap-2 md:gap-3 pt-2 md:pt-4">
             <Button variant="outline" onClick={() => handleRevisionChoice(false)} className="flex-1 h-8 md:h-10 text-xs md:text-base bg-transparent">Cancelar</Button>
             <Button onClick={() => handleRevisionChoice(true)} className="flex-1 h-8 md:h-10 text-xs md:text-base">Continuar</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: elegir a que fecha se asocia un pago/no-pago con atraso */}
+      <Dialog open={!!fechaChoiceInfo} onOpenChange={(open) => { if (!open) handleFechaChoice(null) }}>
+        <DialogContent className="p-4 md:p-6 max-w-[90vw] md:max-w-md">
+          <DialogHeader>
+            <div className="flex items-center justify-center h-12 w-12 rounded-full bg-amber-100 mx-auto mb-2">
+              <AlertCircle className="h-6 w-6 text-amber-600" />
+            </div>
+            <DialogTitle className="text-sm md:text-lg text-center">Tiene una cuota pendiente</DialogTitle>
+            <DialogDescription className="text-xs md:text-sm text-center">
+              La última cuota pendiente es del <strong>{fechaChoiceInfo?.fechaOriginal}</strong>. ¿Cómo quieres registrar esto?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2 pt-2 md:pt-4">
+            <Button variant="outline" onClick={() => handleFechaChoice("pendiente")} className="h-auto py-2 text-xs md:text-sm whitespace-normal">
+              Asociar a la cuota pendiente ({fechaChoiceInfo?.fechaOriginal}) — se marcará pagada con fecha de hoy
+            </Button>
+            <Button onClick={() => handleFechaChoice("hoy")} className="h-auto py-2 text-xs md:text-sm whitespace-normal">
+              Registrar como pago de hoy ({fechaChoiceInfo?.fechaHoy}) — la cuota pendiente sigue igual
+            </Button>
+            <Button variant="ghost" onClick={() => handleFechaChoice(null)} className="h-8 text-xs md:text-sm">
+              Cancelar
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

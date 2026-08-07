@@ -57,6 +57,9 @@ export type PaymentPlanEntry = {
   fecha_pago_real: string | null
   monto_pagado: number
   ruta?: number
+  // Cuota agregada por extension (prorroga, cuota adicional, pago de hoy).
+  // Cuenta completo en las metricas pero no forma parte de las cuotas base.
+  es_extra?: boolean
 }
 
 export type DashboardPagosResult = {
@@ -131,7 +134,7 @@ export async function loadDashboardPagos(
     supabase
       .from("payment_plan")
       .select(
-        "id, loan_id, numero_cuota, valor_cuota, capital, estado, fecha_pago, fecha_pago_real, monto_pagado",
+        "id, loan_id, numero_cuota, valor_cuota, capital, estado, fecha_pago, fecha_pago_real, monto_pagado, es_extra",
       )
       .in("loan_id", loanIds)
       .order("numero_cuota", { ascending: true }),
