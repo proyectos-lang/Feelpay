@@ -15,6 +15,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { guardarCache, leerCache } from "@/lib/offline-cache"
 
 export type LoanWithClient = {
   id: string
@@ -69,8 +70,10 @@ export type DashboardPagosResult = {
   /** Fecha del último pago registrado por loan_id (YYYY-MM-DD), según saldo_prestamos_clientes. */
   fechaUltimoPagoMap: Map<string, string>
   allPaymentPlans: PaymentPlanEntry[]
-  /** Conservado por compatibilidad. Siempre "direct" tras eliminar RPC. */
-  source: "direct"
+  /** "cache" cuando los datos vienen del dispositivo por falta de conexion. */
+  source: "direct" | "cache"
+  /** Momento en que se trajeron del servidor (solo si source === "cache"). */
+  cacheGuardadoEn?: string
 }
 
 /**
@@ -85,6 +88,18 @@ export async function loadDashboardPagos(
     rol?: string | null
   },
 ): Promise<DashboardPagosResult> {
+  // Sin conexion servimos lo ultimo que se trajo del servidor HOY para esta
+  // ruta, para que el cobrador pueda cerrar y reabrir la app en campo y
+  // seguir trabajando. Si el cache es de otro dia se descarta (mejor una
+  // pantalla vacia que mostrarle la ruta de ayer como si fuera la de hoy).
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    const guardado = await leerCache<DashboardPagosResult>("dashboard-pagos", args.rutaId)
+    if (guardado) {
+      console.log("[v0] Dashboard de pagos servido desde cache offline")
+      return { ...guardado.datos, source: "cache", cacheGuardadoEn: guardado.guardadoEn }
+    }
+  }
+
   // ── 1) Cargar loans filtrados por ruta ────────────────────────────
   const { data: loansData, error: loansError } = await supabase
     .from("loans")
@@ -94,6 +109,12 @@ export async function loadDashboardPagos(
 
   if (loansError) {
     console.error("[v0] loans error:", loansError.message)
+    // La red pudo caerse entre el chequeo de arriba y esta consulta.
+    const guardado = await leerCache<DashboardPagosResult>("dashboard-pagos", args.rutaId)
+    if (guardado) {
+      console.log("[v0] Fallo la consulta; sirviendo dashboard desde cache offline")
+      return { ...guardado.datos, source: "cache", cacheGuardadoEn: guardado.guardadoEn }
+    }
     throw new Error(`loans: ${loansError.message}`)
   }
 
@@ -109,7 +130,9 @@ export async function loadDashboardPagos(
   let allPaymentPlans: PaymentPlanEntry[] = []
 
   if (loanIds.length === 0) {
-    return { loans: activeLoans, saldoMap, moraMap, fechaUltimoPagoMap, allPaymentPlans, source: "direct" }
+    const vacio: DashboardPagosResult = { loans: activeLoans, saldoMap, moraMap, fechaUltimoPagoMap, allPaymentPlans, source: "direct" }
+    void guardarCache("dashboard-pagos", args.rutaId, vacio)
+    return vacio
   }
 
   // ── 2) Cargar saldos + mora + payment_plans en paralelo ───────────
@@ -166,5 +189,8 @@ export async function loadDashboardPagos(
     allPaymentPlans = (ppRes.data ?? []) as unknown as PaymentPlanEntry[]
   }
 
-  return { loans: activeLoans, saldoMap, moraMap, fechaUltimoPagoMap, allPaymentPlans, source: "direct" }
+  const resultado: DashboardPagosResult = { loans: activeLoans, saldoMap, moraMap, fechaUltimoPagoMap, allPaymentPlans, source: "direct" }
+  // Se guarda para que la app siga funcionando si el cobrador pierde senal.
+  void guardarCache("dashboard-pagos", args.rutaId, resultado)
+  return resultado
 }

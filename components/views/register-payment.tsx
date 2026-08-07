@@ -390,6 +390,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // GPS permission state
   type GpsStatus = "checking" | "granted" | "denied" | "unavailable"
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("checking")
+  // Cuando la lista se sirve desde el dispositivo (sin señal), guarda el
+  // momento en que esos datos se trajeron del servidor. null = datos frescos.
+  const [datosDesdeCache, setDatosDesdeCache] = useState<string | null>(null)
 
   // Estado para iniciar la ruta del dia desde el guard
   const [iniciandoRuta, setIniciandoRuta] = useState(false)
@@ -655,7 +658,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       if (fetchDataTokenRef.current !== myToken) return
 
       const { loans, saldoMap, moraMap, fechaUltimoPagoMap, allPaymentPlans } = dashboard
-      console.log(`[v0] dashboard cargado: ${loans.length} loans`)
+      console.log(`[v0] dashboard cargado: ${loans.length} loans (${dashboard.source})`)
+      // Si los datos vienen del dispositivo, avisamos desde cuándo son: el
+      // cobrador debe saber que puede haber gestiones de otros que aún no ve.
+      setDatosDesdeCache(dashboard.source === "cache" ? (dashboard.cacheGuardadoEn ?? null) : null)
 
       // El helper ya filtro activos + cancelados y armo los mapas. Alias
       // `activeLoans` para no tocar el resto del componente.
@@ -2101,6 +2107,23 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   return (
     <div className="space-y-3 md:space-y-6">
       {/* ── GPS permission banner ─────────────────────────────────────────── */}
+      {datosDesdeCache && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-semibold leading-tight">Trabajando sin conexión</p>
+            <p className="mt-0.5 text-xs text-amber-700">
+              Estás viendo los datos guardados en el teléfono desde las{" "}
+              {new Date(datosDesdeCache).toLocaleTimeString("es-CO", {
+                timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit",
+              })}
+              . Puede haber gestiones de otros cobradores que aún no ves. Lo que
+              registres se enviará solo cuando vuelva la señal.
+            </p>
+          </div>
+        </div>
+      )}
+
       {gpsStatus !== "granted" && gpsStatus !== "checking" && (
         <div className="flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           <MapPinOff className="h-5 w-5 shrink-0 mt-0.5" />

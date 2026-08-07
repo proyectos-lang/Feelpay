@@ -43,6 +43,7 @@ import { RouteSelector, type SelectedRuta } from "@/components/route-selector"
 import { LoginView, type AuthenticatedUser } from "@/components/views/login-view"
 import { LoginSplash } from "@/components/login-splash"
 import { SESSION_LOST_EVENT, getSupabaseSafe } from "@/lib/api-helper"
+import { limpiarCache } from "@/lib/offline-cache"
 import { createClient } from "@/lib/supabase/client"
 import { ALL_MODULES, isDefaultMobileNav, type PermissionsMap } from "@/lib/modules-catalog"
 import { Button } from "@/components/ui/button"
@@ -466,6 +467,9 @@ export default function Page() {
     setModuleBadgeCounts({})
     myConvIdsRef.current = new Set()
     myCarpetaIdsRef.current = new Set()
+    // Datos cacheados para trabajar sin señal: se borran para que el
+    // siguiente usuario no vea la ruta del anterior.
+    void limpiarCache()
   }, [])
 
   // ── Suscripción global de notificaciones (chat, documentos, reportes) ──────

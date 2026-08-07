@@ -13,6 +13,7 @@ import { TrendingDown, TrendingUp, Wallet, Camera, X, AlertCircle } from "lucide
 import { createClient } from "@/lib/supabase/client"
 import { getSessionIdentity } from "@/lib/api-helper"
 import { enviarOEncolar } from "@/lib/offline-queue"
+import { guardarCache, leerCache } from "@/lib/offline-cache"
 import { getRutaItemUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre, type ItemUmbral } from "@/lib/ruta-umbrales"
 import {
   Dialog,
@@ -124,6 +125,21 @@ export function RegisterTransaction({
 
   useEffect(() => {
     const fetchItems = async () => {
+      // Sin conexion usamos los catalogos guardados: sin ellos no se puede
+      // elegir concepto y no se podria registrar ningun movimiento offline.
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        const guardado = await leerCache<{
+          ingresos: ItemOption[]; gastos: ItemOption[]; retiros: ItemOption[]
+        }>("catalogos", ruta)
+        if (guardado) {
+          setIncomeItems(guardado.datos.ingresos)
+          setExpenseItems(guardado.datos.gastos)
+          setWithdrawalItems(guardado.datos.retiros)
+        }
+        setLoading(false)
+        return
+      }
+
       const supabase = createClient()
 
       try {
@@ -159,15 +175,30 @@ export function RegisterTransaction({
         } else {
           setWithdrawalItems(retiros || [])
         }
+
+        if (!ingresosError && !gastosError && !retirosError) {
+          void guardarCache("catalogos", ruta, {
+            ingresos: ingresos ?? [], gastos: gastos ?? [], retiros: retiros ?? [],
+          })
+        }
       } catch (error) {
         console.error("[v0] Error in fetchItems:", error)
+        // Ultimo recurso: si la red cayo a mitad, servir lo cacheado.
+        const guardado = await leerCache<{
+          ingresos: ItemOption[]; gastos: ItemOption[]; retiros: ItemOption[]
+        }>("catalogos", ruta)
+        if (guardado) {
+          setIncomeItems(guardado.datos.ingresos)
+          setExpenseItems(guardado.datos.gastos)
+          setWithdrawalItems(guardado.datos.retiros)
+        }
       } finally {
         setLoading(false)
       }
     }
 
     fetchItems()
-  }, [])
+  }, [ruta])
 
   const handleIncomeItemChange = (value: string) => {
     setSelectedIncomeItem(value)
