@@ -57,43 +57,55 @@ export async function GET(request: Request) {
   }
 }
 
-// PATCH - Update a single payment plan entry (register payment or no-payment)
+// PATCH - Actualiza UNA fila de payment_plan. Restringido por allowlist:
+// el unico caller de la app (editar monto de un pago gestionado en
+// register-payment.tsx) solo envia `monto_pagado`. Cualquier otra columna
+// se rechaza — antes este endpoint aceptaba columnas arbitrarias, lo que
+// permitia mutar fechas/estados/valores del plan sin pasar por las RPCs.
+const PATCH_ALLOWED_FIELDS = new Set(['monto_pagado'])
+
 export async function PATCH(request: Request) {
   try {
     const supabase = await getSupabaseServerClient()
     const body = await request.json()
     const { id, ...updateData } = body
-    
+
     if (!id) {
       return NextResponse.json({ error: 'Payment plan ID is required' }, { status: 400 })
     }
-    
-    // Convert empty strings and 0 values to null for specific fields that need to be cleared
+
+    const disallowed = Object.keys(updateData).filter((k) => !PATCH_ALLOWED_FIELDS.has(k))
+    if (disallowed.length > 0) {
+      return NextResponse.json(
+        { error: `Campos no permitidos: ${disallowed.join(', ')}` },
+        { status: 400 },
+      )
+    }
+
+    // Convert 0/null monto_pagado to null (clear the field)
     const processedData: Record<string, unknown> = { updated_at: new Date().toISOString() }
     for (const [key, value] of Object.entries(updateData)) {
-      if (key === 'fecha_pago_real' && (value === '' || value === null)) {
-        processedData[key] = null
-      } else if (key === 'monto_pagado' && (value === 0 || value === null)) {
+      if (key === 'monto_pagado' && (value === 0 || value === null)) {
         processedData[key] = null
       } else {
         processedData[key] = value
       }
     }
-    
+
     console.log('[v0] PATCH payment_plan - id:', id, 'data:', processedData)
-    
+
     const { data, error } = await supabase
       .from('payment_plan')
       .update(processedData)
       .eq('id', id)
       .select()
       .single()
-    
+
     if (error) {
       console.error('[v0] Supabase error updating payment plan:', error)
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
-    
+
     console.log('[v0] PATCH payment_plan - success, result:', data)
     return NextResponse.json(data)
   } catch (error) {
@@ -102,29 +114,6 @@ export async function PATCH(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
-  try {
-    const supabase = await getSupabaseServerClient()
-    const body = await request.json()
-    const { items } = body
-    
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return NextResponse.json({ error: 'Invalid payment plan items' }, { status: 400 })
-    }
-    
-    const { data, error } = await supabase
-      .from('payment_plan')
-      .insert(items)
-      .select()
-    
-    if (error) {
-      console.error('[v0] Supabase error creating payment plan:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-    
-    return NextResponse.json({ success: true, data })
-  } catch (error) {
-    console.error('[v0] Error creating payment plan:', error)
-    return NextResponse.json({ error: 'Failed to create payment plan' }, { status: 500 })
-  }
-}
+// NOTA: el handler POST (insert masivo sin validacion) fue eliminado en la
+// auditoria de agosto 2026 — no tenia ningun caller y permitia insertar
+// filas arbitrarias en payment_plan sin pasar por las RPCs atomicas.

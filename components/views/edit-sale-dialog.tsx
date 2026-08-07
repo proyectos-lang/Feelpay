@@ -10,7 +10,10 @@
  * 1. El usuario abre el dialogo desde `<SalesTodayList>`.
  * 2. Se cargan los datos actuales del loan en el formulario.
  * 3. Al guardar:
- *    a) Se BORRA el `payment_plan` actual del loan.
+ *    a) GUARD: si el plan ya tiene gestiones (pagos/no-pagos/abonos), se
+ *       bloquea la edicion — regenerar destruiria el historial de cobros.
+ *    b) Se BORRA el `payment_plan` actual del loan (solo cuotas pendientes
+ *       sin gestionar, garantizado por el guard).
  *    b) Se hace UPDATE a `loans` con los nuevos valores
  *       (`valor`, `tasa_interes`, `numero_cuotas`, `frecuencia_pago`,
  *       `tipo_amortizacion`, `valor_a_pagar`, `valor_cuota`, etc.).
@@ -174,6 +177,38 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDi
     try {
       const supabase = await getSupabaseSafe()
 
+      // Guard: si el plan ya tiene alguna gestion registrada (pago, parcial,
+      // no-pago, cancelada o cualquier monto abonado), NO se puede regenerar
+      // — el DELETE destruiria el historial de cobros (y cualquier cuota
+      // extra de extension). La edicion solo aplica a ventas sin gestionar.
+      const { data: gestionadas, error: gestErr } = await supabase
+        .from("payment_plan")
+        .select("id")
+        .eq("loan_id", sale.id)
+        .or("monto_pagado.gt.0,estado.neq.pendiente")
+        .limit(1)
+      if (gestErr) throw gestErr
+      if ((gestionadas ?? []).length > 0) {
+        toast({
+          title: "Venta con gestiones registradas",
+          description: "Esta venta ya tiene pagos o visitas registradas; no se puede regenerar el plan de pagos.",
+          variant: "destructive",
+        })
+        setSaving(false)
+        return
+      }
+
+      // Ruta del prestamo: las filas reinsertadas DEBEN llevarla — sin ella
+      // caen a ruta NULL y desaparecen de la meta diaria, el cierre de caja
+      // y los contadores por ruta.
+      const { data: loanRow, error: rutaErr } = await supabase
+        .from("loans")
+        .select("ruta")
+        .eq("id", sale.id)
+        .single()
+      if (rutaErr) throw rutaErr
+      const rutaLoan = (loanRow as { ruta: number | null })?.ruta ?? null
+
       // Recalcular cronograma usando la misma logica que `crear_venta_atomica`.
       // Para frecuencias no diarias, calcular la fechaInicio como el
       // proximo dia de la semana que coincida con `diaSemana`, a partir
@@ -205,9 +240,8 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDi
         fechaInicio,
       })
 
-      // 1) Borrar payment_plan existente. Filtramos por loan_id; cualquier
-      //    pago ya registrado tambien se borra (caso normal: la venta es de
-      //    HOY y aun no se le ha cobrado nada).
+      // 1) Borrar payment_plan existente. Seguro: el guard de arriba ya
+      //    verifico que no existe ninguna gestion registrada.
       const { error: delError } = await supabase
         .from("payment_plan")
         .delete()
@@ -243,6 +277,7 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDi
         saldo: row.saldo,
         estado: "pendiente" as const,
         monto_pagado: 0,
+        ruta: rutaLoan,
       }))
 
       const { error: insError } = await supabase.from("payment_plan").insert(planRows)

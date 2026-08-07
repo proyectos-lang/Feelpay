@@ -59,58 +59,8 @@ export async function GET(request: Request) {
   }
 }
 
-// PATCH - Update loan fields (saldo, estado, etc.)
-export async function PATCH(request: Request) {
-  try {
-    const supabase = await getSupabaseServerClient()
-    const body = await request.json()
-    const { id, ...updateData } = body
-    
-    if (!id) {
-      return NextResponse.json({ error: 'Loan ID is required' }, { status: 400 })
-    }
-    
-    const { data, error } = await supabase
-      .from('loans')
-      .update(updateData)
-      .eq('id', id)
-      .select()
-      .single()
-    
-    if (error) {
-      console.error('[v0] Supabase error updating loan:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-    
-    return NextResponse.json(data)
-  } catch (error) {
-    console.error('[v0] Error updating loan:', error)
-    return NextResponse.json({ error: 'Failed to update loan' }, { status: 500 })
-  }
-}
-
-export async function POST(request: Request) {
-  try {
-    const supabase = await getSupabaseServerClient()
-    const body = await request.json()
-    console.log('[v0] Received loan data:', body)
-    
-    const { data, error } = await supabase
-      .from('loans')
-      .insert([body])
-      .select()
-      .single()
-    
-    if (error) {
-      console.error('[v0] Supabase error creating loan:', error)
-      console.error('[v0] Supabase error details:', JSON.stringify(error, null, 2))
-      return NextResponse.json({ error: error.message, details: error }, { status: 500 })
-    }
-    
-    console.log('[v0] Loan created in Supabase:', data)
-    return NextResponse.json(data)
-  } catch (error) {
-    console.error('[v0] Error creating loan:', error)
-    return NextResponse.json({ error: 'Failed to create loan' }, { status: 500 })
-  }
-}
+// NOTA: los handlers PATCH y POST fueron eliminados (auditoria agosto
+// 2026): no tenian ningun caller en la app y permitian modificar/crear
+// prestamos con columnas arbitrarias sin validacion. La creacion de
+// ventas pasa EXCLUSIVAMENTE por la RPC atomica `crear_venta_atomica` y
+// las actualizaciones de saldo/estado por `registrar_pago_atomico`.
