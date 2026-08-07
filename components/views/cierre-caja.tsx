@@ -10,6 +10,7 @@ import {
   FileDown, Lock, AlertTriangle, CheckCircle2, Loader2,
 } from "lucide-react"
  import { createClient } from "@/lib/supabase/client"
+import { contarPendientes, suscribirCola } from "@/lib/offline-queue"
 
 interface CierreCajaProps {
   onBack: () => void
@@ -71,9 +72,20 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
     fetchPendientes()
   }, [rutaId])
 
+  // Operaciones capturadas sin conexion que aun no llegan al servidor. El
+  // cierre suma TODO el dia, asi que con pendientes en cola los totales
+  // estarian incompletos: no se puede cerrar hasta que la cola drene.
+  const [sinSincronizar, setSinSincronizar] = useState(0)
+  useEffect(() => {
+    const leer = () => { void contarPendientes().then(setSinSincronizar).catch(() => {}) }
+    leer()
+    return suscribirCola(leer)
+  }, [])
+
   const pagosCumple = pagosPendientes === 0
   const operacionesCumple = operacionesPendientes.length === 0
-  const puedesCerrar = pagosCumple && operacionesCumple && !loadingPagos
+  const colaCumple = sinSincronizar === 0
+  const puedesCerrar = pagosCumple && operacionesCumple && colaCumple && !loadingPagos
 
   // ── Datos reales del cierre ────────────────────────────────────────────
   // Fuentes: resumen_pagos_diarios (misma vista que Resumen del Día — los
@@ -509,6 +521,21 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
                     <p className="text-xs text-amber-700 mt-0.5">
                       Quedan <span className="font-bold">{pagosPendientes}</span> cobros del día sin marcar
                       como pagado o no pagado.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {!colaCumple && (
+                <div className="flex items-start gap-2.5 bg-amber-50 rounded-lg p-3 border border-amber-100">
+                  <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-semibold text-amber-800">Operaciones sin sincronizar</p>
+                    <p className="text-xs text-amber-700 mt-0.5">
+                      Hay <span className="font-bold">{sinSincronizar}</span> operación
+                      {sinSincronizar === 1 ? "" : "es"} registrada{sinSincronizar === 1 ? "" : "s"} sin
+                      conexión que aún no llegan al servidor. Los totales del cierre estarían
+                      incompletos. Conéctate a internet y espera a que terminen de enviarse.
                     </p>
                   </div>
                 </div>

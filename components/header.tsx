@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
+import { OfflineIndicator } from "@/components/offline-indicator"
 import { useState, useEffect } from "react"
 import type { SelectedRuta } from "./route-selector"
 import type { AuthenticatedUser } from "./views/login-view"
@@ -190,6 +191,10 @@ export function Header({
           ) : null}
           <span className="font-medium whitespace-nowrap">{formattedDateTime}</span>
         </div>
+
+        {/* Conexión y operaciones pendientes de sincronizar. Este componente
+            monta el motor de sincronización automática de la cola offline. */}
+        <OfflineIndicator />
 
         {/* Location status indicator */}
         {gpsStatus === "checking" && (

@@ -25,6 +25,7 @@ import { useToast } from "@/hooks/use-toast"
   // Supabase: RLS eliminado. `getSupabaseSafe` y `callRpcAtomic` se conservan
   // como atajos delgados sobre `createClient()`.
   import { getSupabaseSafe, callRpcAtomic, getSessionIdentity } from "@/lib/api-helper"
+import { enviarOEncolar } from "@/lib/offline-queue"
 import { SalesTodayList } from "@/components/views/sales-today-list"
 // Helper que centraliza la carga del dashboard: prueba la RPC atomica
 // `obtener_dashboard_pagos` primero (inmune al patron PgBouncer) y si no
@@ -1229,28 +1230,46 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       const tipoOperacion: "pago_normal" | "pago_parcial" | "cancelacion_total" =
         isCanceladaSnap ? "cancelacion_total" : isPartialSnap ? "pago_parcial" : "pago_normal"
 
-      const rpcResult = await callRpcAtomic("registrar_pago_atomico", {
-        tipo: tipoOperacion,
-        loan_id: clientSnapshot.loanId,
-        client_id: clientSnapshot.clientId,
-        monto,
-        num_cuotas: numCuotasSnap,
-        fecha_pago: fechaPago,
-        fecha_pago_real: fechaPagoReal,
-        latitud,
-        longitud,
-        generar_cuota_si_debe: agregarCuotaSnap,
-        asociar_a_hoy: asociarAHoySnap,
-        // Ancla: se cobra ESTA cuota, la que el cobrador vio en pantalla. Sin
-        // esto la RPC elegia "la mas antigua pendiente en este momento", que
-        // puede ser otra si alguien mas gestiono el prestamo entre medio.
-        payment_plan_id: clientSnapshot.nextPaymentId,
-        // La multa y la prorroga se aplican dentro de la misma transaccion.
-        multa_id: pagarMultaSnap ? clientSnapshot.multaPendiente?.id ?? null : null,
-        metodo_pago: paymentMethod,
-        cliente_nombre: clientSnapshot.nombre,
-        extender_cuotas: debeExtender ? cantidadExtenderSnap : 0,
+      // Si no hay conexion, la operacion queda en la cola del dispositivo y se
+      // sincroniza sola despues. La llave de idempotencia y el ancla de cuota
+      // (payment_plan_id) hacen que sincronizar horas despues sea seguro.
+      const { encolado, resultado } = await enviarOEncolar({
+        tipo: "pago",
+        descripcion: `Pago — ${clientSnapshot.nombre} ($${monto.toLocaleString()})`,
+        payload: {
+          tipo: tipoOperacion,
+          loan_id: clientSnapshot.loanId,
+          client_id: clientSnapshot.clientId,
+          monto,
+          num_cuotas: numCuotasSnap,
+          fecha_pago: fechaPago,
+          fecha_pago_real: fechaPagoReal,
+          latitud,
+          longitud,
+          generar_cuota_si_debe: agregarCuotaSnap,
+          asociar_a_hoy: asociarAHoySnap,
+          // Ancla: se cobra ESTA cuota, la que el cobrador vio en pantalla. Sin
+          // esto la RPC elegia "la mas antigua pendiente en este momento", que
+          // puede ser otra si alguien mas gestiono el prestamo entre medio.
+          payment_plan_id: clientSnapshot.nextPaymentId,
+          // La multa y la prorroga se aplican dentro de la misma transaccion.
+          multa_id: pagarMultaSnap ? clientSnapshot.multaPendiente?.id ?? null : null,
+          metodo_pago: paymentMethod,
+          cliente_nombre: clientSnapshot.nombre,
+          extender_cuotas: debeExtender ? cantidadExtenderSnap : 0,
+        },
       })
+
+      if (encolado) {
+        toast({
+          title: "Pago guardado sin conexión",
+          description: `Se registró el pago de ${clientSnapshot.nombre} en el teléfono. Se enviará solo cuando vuelva la señal.`,
+        })
+        handleBack()
+        return
+      }
+
+      const rpcResult = resultado!
 
       // Valores derivados desde la respuesta autoritativa del RPC.
       // Los usamos para el optimistic UI inmediato (sin esperar al refetch).
@@ -1414,22 +1433,37 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       // la carrera con PgBouncer. El RPC marca la cuota como `no_pago` y
       // NO modifica `loans.saldo` ni `clients` (eso lo maneja internamente
       // segun el contrato definido en scripts/010-fn-registrar-pago-atomico.sql).
-      const rpcResultNoPago = await callRpcAtomic("registrar_pago_atomico", {
+      const { encolado: encoladoNoPago, resultado: resNoPago } = await enviarOEncolar({
         tipo: "no_pago",
-        loan_id: clientSnapshot.loanId,
-        client_id: clientSnapshot.clientId,
-        monto: 0,
-        num_cuotas: 1,
-        fecha_pago: colombiaDateStr,
-        fecha_pago_real: fechaPagoReal,
-        latitud,
-        longitud,
-        generar_cuota_si_debe: agregarCuotaSnapNoPago,
-        asociar_a_hoy: asociarAHoySnapNoPago,
-        // Ancla: se marca ESTA cuota, la que el cobrador vio en pantalla.
-        payment_plan_id: clientSnapshot.nextPaymentId,
-        cliente_nombre: clientSnapshot.nombre,
+        descripcion: `No pago — ${clientSnapshot.nombre}`,
+        payload: {
+          tipo: "no_pago",
+          loan_id: clientSnapshot.loanId,
+          client_id: clientSnapshot.clientId,
+          monto: 0,
+          num_cuotas: 1,
+          fecha_pago: colombiaDateStr,
+          fecha_pago_real: fechaPagoReal,
+          latitud,
+          longitud,
+          generar_cuota_si_debe: agregarCuotaSnapNoPago,
+          asociar_a_hoy: asociarAHoySnapNoPago,
+          // Ancla: se marca ESTA cuota, la que el cobrador vio en pantalla.
+          payment_plan_id: clientSnapshot.nextPaymentId,
+          cliente_nombre: clientSnapshot.nombre,
+        },
       })
+
+      if (encoladoNoPago) {
+        toast({
+          title: "No pago guardado sin conexión",
+          description: `Se registró en el teléfono. Se enviará solo cuando vuelva la señal.`,
+        })
+        setNoPaymentClient(null)
+        return
+      }
+
+      const rpcResultNoPago = resNoPago!
 
       // Optimistic UI: quitar de pendientes y agregar a managedToday
       const gestionHora = now.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })

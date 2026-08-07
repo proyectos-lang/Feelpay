@@ -11,8 +11,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TrendingDown, TrendingUp, Wallet, Camera, X, AlertCircle } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
-import { saveTransaction } from "@/lib/actions/save-transaction"
 import { getSessionIdentity } from "@/lib/api-helper"
+import { enviarOEncolar } from "@/lib/offline-queue"
 import { getRutaItemUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre, type ItemUmbral } from "@/lib/ruta-umbrales"
 import {
   Dialog,
@@ -240,36 +240,36 @@ export function RegisterTransaction({
     setSaving(true)
     try {
       const requiresApproval = incomeLimite && valor > incomeLimite
-      const result = await saveTransaction({
-        concepto: conceptoName,
-        limite: incomeLimite,
-        valor,
-        observacion: incomeDescription,
-        foto: incomePhoto,
-        tipo: "Ingreso",
-        ruta,
-        adminid,
-        requiresApproval: requiresApproval || false,
-        idempotencyKey: crypto.randomUUID(),
-        fechaCaptura: new Date().toISOString(),
+      // Sin conexion queda en la cola del dispositivo y se envia solo despues.
+      const { encolado } = await enviarOEncolar({
+        tipo: "transaccion",
+        descripcion: `Ingreso — ${conceptoName} ($${valor.toLocaleString()})`,
+        payload: {
+          concepto: conceptoName,
+          limite: incomeLimite,
+          valor,
+          observacion: incomeDescription,
+          foto: incomePhoto,
+          tipo: "Ingreso",
+          ruta,
+          adminid,
+          requiresApproval: requiresApproval || false,
+        },
       })
 
-      if (result.success) {
-        const requiresApproval = incomeLimite && valor > incomeLimite
-        if (requiresApproval) {
-          setShowIncomeSuccessDialog(true)
-        } else {
-          showToast("Ingreso guardado exitosamente")
-        }
-        setIncomeAmount("")
-        setIncomeDescription("")
-        setIncomePhoto(null)
-        setSelectedIncomeItem("")
-        setIncomeLimite(null)
-        setShowIncomeWarning(false)
+      if (encolado) {
+        showToast("Ingreso guardado sin conexión. Se enviará al volver la señal.")
+      } else if (requiresApproval) {
+        setShowIncomeSuccessDialog(true)
       } else {
-        showToast(`Error: ${result.error}`, "error")
+        showToast("Ingreso guardado exitosamente")
       }
+      setIncomeAmount("")
+      setIncomeDescription("")
+      setIncomePhoto(null)
+      setSelectedIncomeItem("")
+      setIncomeLimite(null)
+      setShowIncomeWarning(false)
     } catch (error) {
       console.error("[v0] Error saving income:", error)
       showToast("Error al guardar el ingreso", "error")
@@ -297,36 +297,35 @@ export function RegisterTransaction({
     setSaving(true)
     try {
       const requiresApproval = expenseLimite && valor > expenseLimite
-      const result = await saveTransaction({
-        concepto: conceptoName,
-        limite: expenseLimite,
-        valor,
-        observacion: expenseDescription,
-        foto: expensePhoto,
-        tipo: "Gasto",
-        ruta,
-        adminid,
-        requiresApproval: requiresApproval || false,
-        idempotencyKey: crypto.randomUUID(),
-        fechaCaptura: new Date().toISOString(),
+      const { encolado } = await enviarOEncolar({
+        tipo: "transaccion",
+        descripcion: `Gasto — ${conceptoName} ($${valor.toLocaleString()})`,
+        payload: {
+          concepto: conceptoName,
+          limite: expenseLimite,
+          valor,
+          observacion: expenseDescription,
+          foto: expensePhoto,
+          tipo: "Gasto",
+          ruta,
+          adminid,
+          requiresApproval: requiresApproval || false,
+        },
       })
 
-      if (result.success) {
-        const requiresApproval = expenseLimite && valor > expenseLimite
-        if (requiresApproval) {
-          setShowExpenseSuccessDialog(true)
-        } else {
-          showToast("Gasto guardado exitosamente")
-        }
-        setExpenseAmount("")
-        setExpenseDescription("")
-        setExpensePhoto(null)
-        setSelectedExpenseItem("")
-        setExpenseLimite(null)
-        setShowExpenseWarning(false)
+      if (encolado) {
+        showToast("Gasto guardado sin conexión. Se enviará al volver la señal.")
+      } else if (requiresApproval) {
+        setShowExpenseSuccessDialog(true)
       } else {
-        showToast(`Error: ${result.error}`, "error")
+        showToast("Gasto guardado exitosamente")
       }
+      setExpenseAmount("")
+      setExpenseDescription("")
+      setExpensePhoto(null)
+      setSelectedExpenseItem("")
+      setExpenseLimite(null)
+      setShowExpenseWarning(false)
     } catch (error) {
       console.error("[v0] Error saving expense:", error)
       showToast("Error al guardar el gasto", "error")
@@ -354,36 +353,35 @@ export function RegisterTransaction({
     setSaving(true)
     try {
       const requiresApproval = withdrawalLimite && valor > withdrawalLimite
-      const result = await saveTransaction({
-        concepto: conceptoName,
-        limite: withdrawalLimite,
-        valor,
-        observacion: withdrawalDescription,
-        foto: withdrawalPhoto,
-        tipo: "Retiro",
-        ruta,
-        adminid,
-        requiresApproval: requiresApproval || false,
-        idempotencyKey: crypto.randomUUID(),
-        fechaCaptura: new Date().toISOString(),
+      const { encolado } = await enviarOEncolar({
+        tipo: "transaccion",
+        descripcion: `Retiro — ${conceptoName} ($${valor.toLocaleString()})`,
+        payload: {
+          concepto: conceptoName,
+          limite: withdrawalLimite,
+          valor,
+          observacion: withdrawalDescription,
+          foto: withdrawalPhoto,
+          tipo: "Retiro",
+          ruta,
+          adminid,
+          requiresApproval: requiresApproval || false,
+        },
       })
 
-      if (result.success) {
-        const requiresApproval = withdrawalLimite && valor > withdrawalLimite
-        if (requiresApproval) {
-          setShowWithdrawalSuccessDialog(true)
-        } else {
-          showToast("Retiro guardado exitosamente")
-        }
-        setWithdrawalAmount("")
-        setWithdrawalDescription("")
-        setWithdrawalPhoto(null)
-        setSelectedWithdrawalItem("")
-        setWithdrawalLimite(null)
-        setShowWithdrawalWarning(false)
+      if (encolado) {
+        showToast("Retiro guardado sin conexión. Se enviará al volver la señal.")
+      } else if (requiresApproval) {
+        setShowWithdrawalSuccessDialog(true)
       } else {
-        showToast(`Error: ${result.error}`, "error")
+        showToast("Retiro guardado exitosamente")
       }
+      setWithdrawalAmount("")
+      setWithdrawalDescription("")
+      setWithdrawalPhoto(null)
+      setSelectedWithdrawalItem("")
+      setWithdrawalLimite(null)
+      setShowWithdrawalWarning(false)
     } catch (error) {
       console.error("[v0] Error saving withdrawal:", error)
       showToast("Error al guardar el retiro", "error")
