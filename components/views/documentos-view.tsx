@@ -75,10 +75,10 @@ function initials(nombre: string): string {
 
 type IconSize = "sm" | "md" | "lg"
 
-const GRID_SIZE_CONFIG: Record<IconSize, { gridClass: string; thumbClass: string; label: string }> = {
-  sm: { gridClass: "grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8", thumbClass: "h-12", label: "Pequeño" },
-  md: { gridClass: "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5", thumbClass: "h-16", label: "Mediano" },
-  lg: { gridClass: "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4", thumbClass: "h-28", label: "Grande" },
+const GRID_SIZE_CONFIG: Record<IconSize, { gridClass: string; thumbClass: string; folderClass: string; label: string }> = {
+  sm: { gridClass: "grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8", thumbClass: "h-12", folderClass: "h-6 w-6", label: "Pequeño" },
+  md: { gridClass: "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5", thumbClass: "h-16", folderClass: "h-8 w-8", label: "Mediano" },
+  lg: { gridClass: "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4", thumbClass: "h-28", folderClass: "h-12 w-12", label: "Grande" },
 }
 
 const VIEW_MODE_KEY = "documentos_view_mode"
@@ -134,6 +134,9 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
   // Subir documento
   const [showUpload, setShowUpload] = useState(false)
   const [uploadFile, setUploadFile] = useState<File | null>(null)
+  // Nombre con el que se guardara el documento. Se precarga con el nombre
+  // del archivo elegido y el usuario puede cambiarlo antes de subirlo.
+  const [uploadNombre, setUploadNombre] = useState("")
   const [uploadCategoriaId, setUploadCategoriaId] = useState("")
   const [uploadNotas, setUploadNotas] = useState("")
   const [uploading, setUploading] = useState(false)
@@ -157,6 +160,11 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
   const [deletingCarpeta, setDeletingCarpeta] = useState(false)
 
   const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  // Renombrar documento sin abrir la vista previa (lapiz en la tarjeta/fila)
+  const [renameTarget, setRenameTarget] = useState<Documento | null>(null)
+  const [renameNombre, setRenameNombre] = useState("")
+  const [savingRename, setSavingRename] = useState(false)
 
   // Vista previa de documento (con navegacion prev/next) + edicion de nombre/notas
   const [previewDocId, setPreviewDocId] = useState<string | null>(null)
@@ -347,7 +355,7 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
       const { error } = await createClient().from("documentos").insert({
         carpeta_id: activeCarpetaId,
         categoria_id: uploadCategoriaId ? Number(uploadCategoriaId) : null,
-        nombre_archivo: uploadFile.name,
+        nombre_archivo: uploadNombre.trim() || uploadFile.name,
         url: json.url,
         tipo_mime: uploadFile.type || null,
         tamano_bytes: uploadFile.size,
@@ -360,6 +368,7 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
       toast({ title: "Documento subido" })
       setShowUpload(false)
       setUploadFile(null)
+      setUploadNombre("")
       setUploadCategoriaId("")
       setUploadNotas("")
       await loadDocumentos(activeCarpetaId)
@@ -582,6 +591,31 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
     closePreview()
   }
 
+  // ── Renombrar documento (desde la tarjeta/fila, sin abrir la preview) ────
+
+  const openRename = (doc: Documento) => {
+    setRenameTarget(doc)
+    setRenameNombre(doc.nombre_archivo)
+  }
+
+  const handleSaveRename = async () => {
+    if (!renameTarget || !renameNombre.trim()) return
+    setSavingRename(true)
+    try {
+      const nombre_archivo = renameNombre.trim()
+      const { error } = await createClient().from("documentos").update({ nombre_archivo }).eq("id", renameTarget.id)
+      if (error) throw error
+      setDocumentos((prev) => prev.map((d) => (d.id === renameTarget.id ? { ...d, nombre_archivo } : d)))
+      setRenameTarget(null)
+      toast({ title: "Documento renombrado" })
+    } catch (err) {
+      console.error("[v0] Error renombrando documento:", err)
+      toast({ title: "Error", description: err instanceof Error ? err.message : "No se pudo renombrar", variant: "destructive" })
+    } finally {
+      setSavingRename(false)
+    }
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   if (!activeCarpetaId) {
@@ -604,6 +638,28 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
           </Button>
         </div>
 
+        {/* Toolbar: tamaño de las carpetas */}
+        {!loadingCarpetas && topLevelCarpetas.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-muted-foreground">Tamaño</span>
+            <div className="flex items-center gap-0.5 rounded-lg border p-0.5">
+              {(["sm", "md", "lg"] as IconSize[]).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setIconSize(s)}
+                  title={GRID_SIZE_CONFIG[s].label}
+                  className={`h-7 px-2 rounded-md text-[10px] font-semibold transition-colors ${
+                    iconSize === s ? "bg-brand text-white" : "text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  {GRID_SIZE_CONFIG[s].label[0]}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {loadingCarpetas ? (
           <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
         ) : topLevelCarpetas.length === 0 ? (
@@ -616,7 +672,7 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
             </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          <div className={`grid ${GRID_SIZE_CONFIG[iconSize].gridClass} gap-3`}>
             {topLevelCarpetas.map((c) => (
               <button
                 key={c.id}
@@ -624,7 +680,7 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
                 onClick={() => openCarpeta(c.id)}
                 className="flex flex-col items-start gap-2 rounded-xl border bg-card p-3 text-left hover:border-brand hover:bg-brand/5 transition-colors"
               >
-                <Folder className="h-8 w-8 text-brand" />
+                <Folder className={`${GRID_SIZE_CONFIG[iconSize].folderClass} text-brand`} />
                 <div className="min-w-0 w-full">
                   <p className="text-sm font-semibold truncate">{c.nombre}</p>
                   {c.descripcion && <p className="text-[11px] text-muted-foreground truncate">{c.descripcion}</p>}
@@ -727,32 +783,6 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
         </div>
       </div>
 
-      {/* Subcarpetas */}
-      {subCarpetas.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-xs font-semibold text-muted-foreground">Carpetas</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-            {subCarpetas.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => openCarpeta(c.id)}
-                className="flex flex-col items-start gap-2 rounded-xl border bg-card p-3 text-left hover:border-brand hover:bg-brand/5 transition-colors"
-              >
-                <Folder className="h-8 w-8 text-brand" />
-                <div className="min-w-0 w-full">
-                  <p className="text-sm font-semibold truncate">{c.nombre}</p>
-                  {c.descripcion && <p className="text-[11px] text-muted-foreground truncate">{c.descripcion}</p>}
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    {docCounts.get(c.id) ?? 0} archivo{(docCounts.get(c.id) ?? 0) !== 1 ? "s" : ""} · {c.created_by_nombre ?? "—"}
-                  </p>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Toolbar: filtros + toggle de vista */}
       <div className="flex items-center gap-2 flex-wrap">
         <Select value={filterCategoria} onValueChange={setFilterCategoria}>
@@ -804,16 +834,33 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
         </div>
       </div>
 
-      {/* Documentos */}
+      {/* Contenido: subcarpetas y documentos juntos, con el mismo tamaño */}
       {loadingDocs ? (
         <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-      ) : filteredDocs.length === 0 ? (
+      ) : subCarpetas.length === 0 && filteredDocs.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">
           <FileIcon className="h-10 w-10 opacity-30" />
           <p className="text-sm">{documentos.length === 0 ? "Sin documentos aún" : "Ningún documento coincide con los filtros"}</p>
         </div>
       ) : viewMode === "grid" ? (
         <div className={`grid ${GRID_SIZE_CONFIG[iconSize].gridClass} gap-3`}>
+          {subCarpetas.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => openCarpeta(c.id)}
+              className="flex flex-col items-start gap-2 rounded-xl border bg-card p-3 text-left hover:border-brand hover:bg-brand/5 transition-colors"
+            >
+              <Folder className={`${GRID_SIZE_CONFIG[iconSize].folderClass} text-brand`} />
+              <div className="min-w-0 w-full">
+                <p className="text-sm font-semibold truncate">{c.nombre}</p>
+                {c.descripcion && <p className="text-[11px] text-muted-foreground truncate">{c.descripcion}</p>}
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  {docCounts.get(c.id) ?? 0} archivo{(docCounts.get(c.id) ?? 0) !== 1 ? "s" : ""}
+                </p>
+              </div>
+            </button>
+          ))}
           {filteredDocs.map((doc) => {
             const puedeEliminar = doc.uploaded_by === currentUser.id || esCreador
             const { Icon, className } = getFileIconMeta(doc.tipo_mime, doc.nombre_archivo)
@@ -833,22 +880,53 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
                 </button>
                 {cat && <Badge variant="outline" className="text-[9px] px-1.5 py-0 self-center">{cat}</Badge>}
                 <p className="text-[9px] text-muted-foreground text-center truncate">{doc.uploaded_by_nombre} · {formatFecha(doc.created_at)}</p>
-                {puedeEliminar && (
+                <div className="absolute top-1 right-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     type="button"
-                    onClick={() => handleDeleteDocumento(doc)}
-                    disabled={deletingId === doc.id}
-                    className="absolute top-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/40 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive"
+                    onClick={() => openRename(doc)}
+                    title="Renombrar documento"
+                    className="flex h-5 w-5 items-center justify-center rounded-full bg-black/40 text-white hover:bg-brand"
                   >
-                    {deletingId === doc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                    <Pencil className="h-3 w-3" />
                   </button>
-                )}
+                  {puedeEliminar && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteDocumento(doc)}
+                      disabled={deletingId === doc.id}
+                      title="Eliminar documento"
+                      className="flex h-5 w-5 items-center justify-center rounded-full bg-black/40 text-white hover:bg-destructive"
+                    >
+                      {deletingId === doc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                    </button>
+                  )}
+                </div>
               </div>
             )
           })}
         </div>
       ) : (
         <div className="divide-y divide-border rounded-xl border bg-card overflow-hidden">
+          {subCarpetas.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => openCarpeta(c.id)}
+              className="flex items-center gap-3 px-3 py-2.5 w-full text-left hover:bg-brand/5 transition-colors"
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-brand/10">
+                <Folder className="h-4 w-4 text-brand" />
+              </span>
+              <span className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{c.nombre}</p>
+                <p className="text-[11px] text-muted-foreground truncate">
+                  Carpeta · {docCounts.get(c.id) ?? 0} archivo{(docCounts.get(c.id) ?? 0) !== 1 ? "s" : ""}
+                  {c.descripcion ? ` · ${c.descripcion}` : ""}
+                </p>
+              </span>
+              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+            </button>
+          ))}
           {filteredDocs.map((doc) => {
             const puedeEliminar = doc.uploaded_by === currentUser.id || esCreador
             const { Icon, className } = getFileIconMeta(doc.tipo_mime, doc.nombre_archivo)
@@ -875,6 +953,15 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
                   </span>
                 </button>
                 {cat && <Badge variant="outline" className="text-[10px] shrink-0">{cat}</Badge>}
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-brand"
+                  onClick={() => openRename(doc)}
+                  title="Renombrar documento"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
                 {puedeEliminar && (
                   <Button
                     size="icon"
@@ -882,6 +969,7 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
                     className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
                     onClick={() => handleDeleteDocumento(doc)}
                     disabled={deletingId === doc.id}
+                    title="Eliminar documento"
                   >
                     {deletingId === doc.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                   </Button>
@@ -893,7 +981,7 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
       )}
 
       {/* Dialog subir documento */}
-      <Dialog open={showUpload} onOpenChange={(open) => { setShowUpload(open); if (!open) { setUploadFile(null); setShowNewCategoria(false) } }}>
+      <Dialog open={showUpload} onOpenChange={(open) => { setShowUpload(open); if (!open) { setUploadFile(null); setUploadNombre(""); setShowNewCategoria(false) } }}>
         <DialogContent className="max-w-sm rounded-2xl">
           <DialogHeader>
             <DialogTitle>Subir documento</DialogTitle>
@@ -902,7 +990,27 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label className="text-xs">Archivo</Label>
-              <Input type="file" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} className="text-sm" />
+              <Input
+                type="file"
+                onChange={(e) => {
+                  const f = e.target.files?.[0] ?? null
+                  setUploadFile(f)
+                  // Precargar el nombre con el del archivo elegido; el
+                  // usuario puede cambiarlo antes de subirlo.
+                  setUploadNombre(f?.name ?? "")
+                }}
+                className="text-sm"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs">Nombre del documento</Label>
+              <Input
+                value={uploadNombre}
+                onChange={(e) => setUploadNombre(e.target.value)}
+                placeholder="Con qué nombre se guardará"
+                className="h-9 text-sm"
+              />
             </div>
 
             <div className="space-y-1.5">
@@ -945,6 +1053,29 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
 
             <Button className="w-full" size="sm" onClick={handleUpload} disabled={uploading || !uploadFile}>
               {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Subir"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog renombrar documento (desde la tarjeta/fila) */}
+      <Dialog open={!!renameTarget} onOpenChange={(open) => { if (!open) setRenameTarget(null) }}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Renombrar documento</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Nombre</Label>
+              <Input
+                value={renameNombre}
+                onChange={(e) => setRenameNombre(e.target.value)}
+                className="h-9 text-sm"
+                onKeyDown={(e) => { if (e.key === "Enter" && renameNombre.trim()) handleSaveRename() }}
+              />
+            </div>
+            <Button className="w-full" size="sm" onClick={handleSaveRename} disabled={savingRename || !renameNombre.trim()}>
+              {savingRename ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar"}
             </Button>
           </div>
         </DialogContent>
