@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DollarSign, X, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play } from "lucide-react"
+import { DollarSign, X, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
@@ -127,6 +127,8 @@ type DisplayClient = {
   ordenvisita: number
   diaSemana: string | null
   valorPrestamo: number
+  /** Fecha de la venta (YYYY-MM-DD). Se imprime en el recibo. */
+  fechaVenta: string
   // Multa pendiente del prestamo (null si no tiene). Generada automaticamente
   // cuando el cliente cruza el umbral de cuotas en mora configurado por ruta.
   multaPendiente: { id: string; valor: number; cuotasMora: number | null } | null
@@ -346,6 +348,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [clientForShare, setClientForShare] = useState<DisplayClient | null>(null)
   const [sharingPdf, setSharingPdf] = useState(false)
+  // true = el dialogo se abrio tras registrar un pago (al cerrarlo hay que
+  // volver al listado). false = se abrio desde "Generar recibo" del menu,
+  // donde no hay formulario abierto que cerrar.
+  const [shareTrasPago, setShareTrasPago] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [paymentPhoto, setPaymentPhoto] = useState<string | null>(null)
   const [isDiario, setIsDiario] = useState(true)
@@ -364,7 +370,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const [paymentHistoryOpen, setPaymentHistoryOpen] = useState(false)
   const [paymentHistoryClient, setPaymentHistoryClient] = useState<DisplayClient | null>(null)
   const [paymentHistoryRows, setPaymentHistoryRows] = useState<{
-    id: string; fecha_pago: string; valor_cuota: number; estado: string; monto_pagado: number
+    id: string; fecha_pago: string; valor_cuota: number; estado: string
+    monto_pagado: number; fecha_pago_real: string | null; numero_cuota: number
   }[]>([])
   const [paymentHistoryLoading, setPaymentHistoryLoading] = useState(false)
 
@@ -707,8 +714,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             if (multasMap.has(loan.id)) continue
             if (loan.estado === "cancelado") continue
             const plan = paymentPlansByLoan.get(loan.id) || []
+            // Una FALLA es toda cuota que el cliente no pago: las marcadas
+            // como "no pago" por el cobrador Y las que vencieron sin que
+            // nadie las gestionara. Antes solo contaban las segundas, asi que
+            // al marcar no pago la cuota dejaba de contar y un cliente que
+            // incumplia a diario nunca acumulaba fallas ni se le generaba
+            // multa.
             const cuotasVencidasList = plan.filter(
-              (p) => p.estado === "pendiente" && p.fecha_pago < todayColombia,
+              (p) =>
+                p.estado === "no_pago" ||
+                (p.estado === "pendiente" && p.fecha_pago < todayColombia),
             )
             if (cuotasVencidasList.length < umbralesRuta.multa_cuotas_umbral) continue
 
@@ -877,6 +892,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             ? loan.valor
             : (loan.valor_a_pagar || loan.valor),
           valorPrestamo: loan.valor,
+          // Fecha en que se hizo la venta — se imprime en el recibo.
+          fechaVenta: (loan.fecha_creacion || loan.created_at || "").split("T")[0],
           valorCuota: loan.valor_cuota,
           saldo: saldoReal,
           cuotasPagadas: cuotasPagadas,
@@ -1368,6 +1385,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
       // Preguntar si desea compartir el comprobante antes de volver al listado.
       setClientForShare(clientSnapshot)
+      setShareTrasPago(true)
       setShowShareDialog(true)
     } catch (error) {
       console.error("[v0] Error registering payment:", error)
@@ -1553,7 +1571,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         const supabase = await getSupabaseSafe()
         const { data, error } = await supabase
           .from("payment_plan")
-          .select("id, fecha_pago, valor_cuota, estado, monto_pagado")
+          .select("id, fecha_pago, valor_cuota, estado, monto_pagado, fecha_pago_real, numero_cuota")
           .eq("loan_id", paymentHistoryClient.loanId)
           .order("numero_cuota", { ascending: true })
         if (cancelled) return
@@ -1630,33 +1648,94 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   }, [clientInfoDialogOpen, selectedClientInfo])
 
   // ── Generar recibo PDF con jspdf ──────────────────────────────────────
-  const buildReciboPdf = async (client: DisplayClient) => {
+  /**
+   * Convierte una imagen remota a base64. jsPDF no acepta URLs: necesita los
+   * bytes. Si falla (sin señal, URL rota), se devuelve null y el recibo se
+   * imprime sin logo en vez de fallar.
+   */
+  const cargarLogoBase64 = async (url: string): Promise<string | null> => {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) return null
+      const blob = await res.blob()
+      return await new Promise<string | null>((resolve) => {
+        const reader = new FileReader()
+        reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : null)
+        reader.onerror = () => resolve(null)
+        reader.readAsDataURL(blob)
+      })
+    } catch {
+      return null
+    }
+  }
+
+  // ── Generar recibo PDF con jspdf ──────────────────────────────────────
+  const buildReciboPdf = async (client: DisplayClient, gestionHoy?: ManagedClient) => {
     const supabase = await getSupabaseSafe()
     const [saldoRes, clientRes] = await Promise.all([
       supabase
         .from("saldo_prestamos_clientes")
-        .select("monto_original, total_con_intereses, total_recaudado, saldo_pendiente")
+        .select("total_con_intereses, total_recaudado, saldo_pendiente")
         .eq("loan_id", client.loanId)
-        .single(),
+        .maybeSingle(),
       supabase
         .from("clients")
         .select("nombre_completo")
         .eq("id", client.clientId)
-        .single(),
+        .maybeSingle(),
     ])
 
-    const saldo = saldoRes.data
+    const saldo = saldoRes.data as {
+      total_con_intereses?: number | null
+      total_recaudado?: number | null
+      saldo_pendiente?: number | null
+    } | null
     const nombreCompleto = clientRes.data?.nombre_completo ?? client.nombre
 
+    // Abono de hoy: si el cliente ya fue gestionado, viene en el objeto;
+    // si no, se consulta la cuota gestionada hoy.
+    let abonoHoy = gestionHoy?.valorAbonado ?? null
+    let fechaAbono: string | null = gestionHoy ? todayColombia() : null
+    if (abonoHoy == null) {
+      const { data: hoyRow } = await supabase
+        .from("payment_plan")
+        .select("monto_pagado, fecha_pago_real")
+        .eq("loan_id", client.loanId)
+        .eq("fecha_pago", todayColombia())
+        .neq("estado", "pendiente")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (hoyRow) {
+        abonoHoy = Number((hoyRow as { monto_pagado: number | null }).monto_pagado ?? 0)
+        const fpr = (hoyRow as { fecha_pago_real: string | null }).fecha_pago_real
+        fechaAbono = fpr ? fpr.split("T")[0] : todayColombia()
+      }
+    }
+
+    // Logo propio de la ruta; si no hay, el de la app.
+    const umbralesRuta = await getRutaUmbrales(currentRutaId)
+    const logoUrl = umbralesRuta.logo_url || `${window.location.origin}/opad-logo.png`
+    const logoBase64 = await cargarLogoBase64(logoUrl)
+
     const { jsPDF } = await import("jspdf")
-    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: [80, 140] })
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: [80, 160] })
 
     const now = new Date()
     const fechaStr = now.toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric" })
     const horaStr = now.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })
 
     const pageW = 80
-    let y = 8
+    let y = 6
+
+    if (logoBase64) {
+      try {
+        doc.addImage(logoBase64, "PNG", pageW / 2 - 9, y, 18, 18, undefined, "FAST")
+        y += 21
+      } catch {
+        /* formato de imagen no soportado: seguimos sin logo */
+      }
+    }
 
     doc.setFontSize(10)
     doc.setFont("helvetica", "bold")
@@ -1690,15 +1769,30 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
     const fmt = (n: number | null | undefined) =>
       n != null ? `$${Math.round(n).toLocaleString("es-CO")}` : "-"
+    const fmtFechaCorta = (iso: string | null | undefined) => {
+      if (!iso) return "-"
+      const [yy, mm, dd] = iso.split("-")
+      return dd && mm && yy ? `${dd}/${mm}/${yy}` : "-"
+    }
 
     const rows: [string, string][] = [
-      ["Monto original:", fmt(saldo?.monto_original)],
-      ["Total c/intereses:", fmt(saldo?.total_con_intereses)],
+      ["Fecha venta:", fmtFechaCorta(client.fechaVenta)],
+      ["Total a pagar:", fmt(saldo?.total_con_intereses)],
       ["Total recaudado:", fmt(saldo?.total_recaudado)],
       ["Saldo pendiente:", fmt(saldo?.saldo_pendiente ?? client.saldo)],
       ["Cuotas:", `${client.cuotasPagadas} / ${client.cuotasTotales}${client.cuotasExtra > 0 ? ` (+${client.cuotasExtra} extra)` : ""}`],
       ["Frecuencia:", frecuenciaLabel(client.frecuenciaPago)],
+      ["Fallas:", `${client.mora}`],
+      ["Saldo por sanción:", client.multaPendiente ? fmt(client.multaPendiente.valor) : "$0"],
     ]
+
+    // El abono solo aparece si hubo movimiento; un recibo de consulta no lo lleva.
+    if (abonoHoy != null && abonoHoy > 0) {
+      rows.splice(1, 0,
+        ["Fecha del abono:", fmtFechaCorta(fechaAbono)],
+        ["Valor pagado:", fmt(abonoHoy)],
+      )
+    }
 
     doc.setFontSize(8)
     for (const [label, val] of rows) {
@@ -1720,20 +1814,46 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     return { doc, filename }
   }
 
-  const handleGenerarRecibo = async (client: DisplayClient) => {
+  /**
+   * "Generar recibo" del menu: abre el mismo dialogo de compartir que sale
+   * tras registrar un pago, en vez de descargar el PDF directo. Funciona
+   * tambien para clientes sin gestion de hoy (recibo de consulta).
+   */
+  /** Cierra el dialogo; si venia de registrar un pago, vuelve al listado. */
+  const cerrarShare = () => {
+    setShowShareDialog(false)
+    setClientForShare(null)
+    if (shareTrasPago) handleBack()
+    setShareTrasPago(false)
+  }
+
+  const handleGenerarRecibo = (client: DisplayClient) => {
+    setClientForShare(client)
+    setShareTrasPago(false)
+    setShowShareDialog(true)
+  }
+
+  const handleDescargarRecibo = async (client: DisplayClient) => {
+    setSharingPdf(true)
     try {
-      const { doc, filename } = await buildReciboPdf(client)
+      const { doc, filename } = await buildReciboPdf(client, gestionDe(client))
       doc.save(filename)
     } catch (e) {
-      console.error("[v0] handleGenerarRecibo error:", e)
+      console.error("[v0] handleDescargarRecibo error:", e)
       toast({ title: "Error", description: "No se pudo generar el recibo.", variant: "destructive" })
+    } finally {
+      setSharingPdf(false)
     }
   }
+
+  /** Si el cliente ya fue gestionado hoy, devuelve esa gestion (trae el abono). */
+  const gestionDe = (client: DisplayClient): ManagedClient | undefined =>
+    managedToday.find((m) => m.loanId === client.loanId)
 
   const handleShareComprobante = async (client: DisplayClient) => {
     setSharingPdf(true)
     try {
-      const { doc, filename } = await buildReciboPdf(client)
+      const { doc, filename } = await buildReciboPdf(client, gestionDe(client))
       const pdfBlob = doc.output("blob")
       const file = new File([pdfBlob], filename, { type: "application/pdf" })
 
@@ -1878,6 +1998,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         clientId: m.clientId,
         nombre: m.nombre,
         documento: m.documento,
+        fechaVenta: m.fechaVenta,
         valorVenta: m.valorVenta,
         valorCuota: m.valorCuota,
         saldo: nuevoSaldo,
@@ -2561,12 +2682,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                     })()}
                                   </span>
                                 )}
-                                {/* Badge de multa pendiente por mora */}
-                                {client.multaPendiente && (
-                                  <span className="text-[9px] md:text-xs px-1.5 py-0.5 rounded font-semibold bg-red-100 text-red-700">
-                                    Multa ${client.multaPendiente.valor.toLocaleString("es-CO")}
-                                  </span>
-                                )}
                               </div>
                               <div className={`inline-flex items-center justify-center w-fit px-1.5 py-0.5 rounded text-[10px] md:text-sm font-semibold ${getMoraColor(client.mora)}`}>
                                 {client.mora}d mora
@@ -2797,15 +2912,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               </div>
             </div>
 
-            {/* Multa pendiente: valor y origen (cuotas en mora que la generaron).
+            {/* Multa pendiente: valor y origen (fallas que la generaron).
                 Informativo — se muestra siempre que exista, independientemente
                 de si el checkbox "Pagar multa" de abajo está marcado. */}
             {selectedClient.multaPendiente && (
               <div className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-3 py-1.5">
                 <span className="text-[11px] md:text-sm text-red-700">
-                  Multa por mora
+                  Multa por fallas
                   {selectedClient.multaPendiente.cuotasMora != null
-                    ? ` — generada por ${selectedClient.multaPendiente.cuotasMora} cuota${selectedClient.multaPendiente.cuotasMora !== 1 ? "s" : ""} vencida${selectedClient.multaPendiente.cuotasMora !== 1 ? "s" : ""}`
+                    ? ` — generada por ${selectedClient.multaPendiente.cuotasMora} falla${selectedClient.multaPendiente.cuotasMora !== 1 ? "s" : ""}`
                     : ""}
                 </span>
                 <span className="text-xs md:text-sm font-bold text-red-700 shrink-0">
@@ -3266,44 +3381,95 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           ) : paymentHistoryRows.length === 0 ? (
             <p className="text-xs text-muted-foreground py-4 text-center">Sin registros.</p>
           ) : (
-            <div className="overflow-auto max-h-[60vh]">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-[10px] md:text-xs px-1 md:px-3">Fecha</TableHead>
-                    <TableHead className="text-[10px] md:text-xs px-1 md:px-3 text-right">Cuota</TableHead>
-                    <TableHead className="text-[10px] md:text-xs px-1 md:px-3 text-right">Abono</TableHead>
-                    <TableHead className="text-[10px] md:text-xs px-1 md:px-3 text-center">Estado</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {paymentHistoryRows.map((row) => {
-                    const isNoPago = row.estado === "no_pago"
-                    const rowClass = isNoPago ? "bg-red-50 dark:bg-red-950/30" : ""
-                    const textClass = isNoPago ? "text-red-600 dark:text-red-400" : ""
-                    const [y, m, d] = row.fecha_pago.split("-")
-                    const fechaFmt = `${d}/${m}/${y.slice(2)}`
-                    const estadoLabel: Record<string, string> = {
-                      pagado: "Pagado", no_pago: "No pago", pendiente: "Pendiente",
-                      parcial: "Parcial", cancelada: "Cancelada",
-                    }
-                    return (
-                      <TableRow key={row.id} className={rowClass}>
-                        <TableCell className={`text-[10px] md:text-xs px-1 md:px-3 ${textClass}`}>{fechaFmt}</TableCell>
-                        <TableCell className={`text-[10px] md:text-xs px-1 md:px-3 text-right ${textClass}`}>
-                          ${Math.round(row.valor_cuota).toLocaleString("es-CO")}
-                        </TableCell>
-                        <TableCell className={`text-[10px] md:text-xs px-1 md:px-3 text-right ${textClass}`}>
-                          {row.monto_pagado > 0 ? `$${Math.round(row.monto_pagado).toLocaleString("es-CO")}` : "—"}
-                        </TableCell>
-                        <TableCell className={`text-[10px] md:text-xs px-1 md:px-3 text-center font-medium ${textClass}`}>
-                          {estadoLabel[row.estado] ?? row.estado}
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
+            <div className="overflow-auto max-h-[60vh] space-y-3">
+              {(() => {
+                // El historial se agrupa POR DIA, lo mas reciente primero. Se
+                // usa `fecha_pago_real` (cuando el cobrador hizo la gestion) y
+                // no `fecha_pago`: esta ultima se sobrescribe con el dia del
+                // cobro, asi que ordenar por numero de cuota hacia zigzaguear
+                // las fechas y repetirlas al pagar varias cuotas de una vez.
+                const gestionadas = paymentHistoryRows.filter((r) => r.estado !== "pendiente")
+                const pendientes = paymentHistoryRows
+                  .filter((r) => r.estado === "pendiente")
+                  .sort((a, b) => a.numero_cuota - b.numero_cuota)
+
+                const porDia = new Map<string, typeof gestionadas>()
+                for (const r of gestionadas) {
+                  const dia = (r.fecha_pago_real ?? "").split("T")[0] || r.fecha_pago
+                  if (!porDia.has(dia)) porDia.set(dia, [])
+                  porDia.get(dia)!.push(r)
+                }
+                const dias = [...porDia.entries()].sort((a, b) => b[0].localeCompare(a[0]))
+
+                const fechaLarga = (iso: string) => {
+                  const [yy, mm, dd] = iso.split("-")
+                  return dd && mm && yy ? `${dd}/${mm}/${yy}` : iso
+                }
+                const estadoLabel: Record<string, string> = {
+                  pagado: "Pagado", no_pago: "No pago", pendiente: "Pendiente",
+                  parcial: "Parcial", cancelada: "Cancelada",
+                }
+
+                return (
+                  <>
+                    {dias.map(([dia, filas]) => {
+                      const totalDia = filas.reduce((acc, r) => acc + (Number(r.monto_pagado) || 0), 0)
+                      return (
+                        <div key={dia} className="rounded-lg border overflow-hidden">
+                          <div className="flex items-center justify-between bg-muted px-3 py-1.5">
+                            <span className="text-[11px] md:text-sm font-semibold">{fechaLarga(dia)}</span>
+                            <span className="text-[11px] md:text-sm font-bold tabular-nums">
+                              {totalDia > 0 ? `$${Math.round(totalDia).toLocaleString("es-CO")}` : "Sin abono"}
+                            </span>
+                          </div>
+                          <div className="divide-y">
+                            {filas.map((r) => {
+                              const isNoPago = r.estado === "no_pago"
+                              return (
+                                <div
+                                  key={r.id}
+                                  className={`flex items-center justify-between gap-2 px-3 py-1.5 ${isNoPago ? "bg-red-50 dark:bg-red-950/30" : ""}`}
+                                >
+                                  <span className={`text-[10px] md:text-xs ${isNoPago ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}>
+                                    Cuota {r.numero_cuota} · {estadoLabel[r.estado] ?? r.estado}
+                                  </span>
+                                  <span className={`text-[10px] md:text-xs font-medium tabular-nums ${isNoPago ? "text-red-600 dark:text-red-400" : ""}`}>
+                                    {Number(r.monto_pagado) > 0
+                                      ? `$${Math.round(Number(r.monto_pagado)).toLocaleString("es-CO")}`
+                                      : "—"}
+                                  </span>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )
+                    })}
+
+                    {pendientes.length > 0 && (
+                      <div className="rounded-lg border overflow-hidden">
+                        <div className="bg-muted px-3 py-1.5">
+                          <span className="text-[11px] md:text-sm font-semibold text-muted-foreground">
+                            Cuotas pendientes ({pendientes.length})
+                          </span>
+                        </div>
+                        <div className="divide-y">
+                          {pendientes.map((r) => (
+                            <div key={r.id} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                              <span className="text-[10px] md:text-xs text-muted-foreground">
+                                Cuota {r.numero_cuota} · {fechaLarga(r.fecha_pago)}
+                              </span>
+                              <span className="text-[10px] md:text-xs tabular-nums">
+                                ${Math.round(r.valor_cuota).toLocaleString("es-CO")}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
             </div>
           )}
         </DialogContent>
@@ -3336,35 +3502,49 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       </Dialog>
 
       {/* Share Comprobante Dialog */}
-      <Dialog open={showShareDialog} onOpenChange={(open) => { if (!open) { setShowShareDialog(false); setClientForShare(null); handleBack() } }}>
+      <Dialog open={showShareDialog} onOpenChange={(open) => { if (!open) cerrarShare() }}>
         <DialogContent className="p-4 md:p-6 max-w-[90vw] md:max-w-sm">
           <DialogHeader>
-            <DialogTitle className="text-sm md:text-lg">¿Compartir comprobante?</DialogTitle>
+            <DialogTitle className="text-sm md:text-lg">Comprobante de {clientForShare?.nombre}</DialogTitle>
             <DialogDescription className="text-xs md:text-sm">
-              El pago de <span className="font-semibold">{clientForShare?.nombre}</span> fue registrado. ¿Deseas compartir el comprobante?
+              {shareTrasPago
+                ? "El pago fue registrado. ¿Deseas compartir el comprobante?"
+                : "Puedes compartirlo por WhatsApp, correo o cualquier app del teléfono, o descargarlo."}
             </DialogDescription>
           </DialogHeader>
-          <div className="flex gap-2 md:gap-3 pt-2 md:pt-4">
+          <div className="flex flex-col gap-2 pt-2 md:pt-4">
             <Button
-              variant="outline"
-              className="flex-1 h-8 md:h-10 text-xs md:text-base bg-transparent"
-              disabled={sharingPdf}
-              onClick={() => { setShowShareDialog(false); setClientForShare(null); handleBack() }}
-            >
-              No
-            </Button>
-            <Button
-              className="flex-1 h-8 md:h-10 text-xs md:text-base"
+              className="h-9 md:h-10 text-xs md:text-base gap-1.5"
               disabled={sharingPdf}
               onClick={async () => {
                 if (!clientForShare) return
                 await handleShareComprobante(clientForShare)
-                setShowShareDialog(false)
-                setClientForShare(null)
-                handleBack()
+                cerrarShare()
               }}
             >
-              {sharingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sí, compartir"}
+              {sharingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
+              Compartir
+            </Button>
+            <Button
+              variant="outline"
+              className="h-9 md:h-10 text-xs md:text-base gap-1.5"
+              disabled={sharingPdf}
+              onClick={async () => {
+                if (!clientForShare) return
+                await handleDescargarRecibo(clientForShare)
+                cerrarShare()
+              }}
+            >
+              <FileDown className="h-4 w-4" />
+              Descargar
+            </Button>
+            <Button
+              variant="ghost"
+              className="h-8 text-xs md:text-sm"
+              disabled={sharingPdf}
+              onClick={cerrarShare}
+            >
+              Cerrar
             </Button>
           </div>
         </DialogContent>

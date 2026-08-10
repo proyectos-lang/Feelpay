@@ -170,7 +170,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
     viewId: "multas",
     label: "Multas",
     mobileLabel: "Multas",
-    description: "Ver multas por mora vigentes y cancelarlas manualmente",
+    description: "Ver multas por fallas vigentes y cancelarlas manualmente",
     defaultRoles: ["secretaria", "secretario"],
     defaultMobileNavRoles: [],
     iconName: "AlertTriangle",

@@ -42,6 +42,7 @@ type MultaConfigRow = {
   multa_tipo_valor: "fijo" | "cuotas"
   multa_valor: number | null
   multa_cantidad_cuotas: number | null
+  logo_url: string | null
 }
 
 function formatMonto(n: number): string {
@@ -67,6 +68,7 @@ function ConfiguracionMultasTab() {
   const [fTipoValor, setFTipoValor] = useState<"fijo" | "cuotas">("fijo")
   const [fValor, setFValor] = useState("")
   const [fCantidadCuotas, setFCantidadCuotas] = useState("")
+  const [fLogoUrl, setFLogoUrl] = useState("")
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
@@ -74,7 +76,7 @@ function ConfiguracionMultasTab() {
       const supabase = createClient()
       const [{ data: rutasData }, { data: configsData }] = await Promise.all([
         supabase.from("rutas").select("id, nombre").order("id"),
-        supabase.from("ruta_config_umbrales").select("ruta_id, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas"),
+        supabase.from("ruta_config_umbrales").select("ruta_id, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas, logo_url"),
       ])
       setRutas((rutasData as RutaOption[]) ?? [])
       setConfigs(new Map(((configsData as MultaConfigRow[]) ?? []).map((c) => [c.ruta_id, c])))
@@ -95,6 +97,7 @@ function ConfiguracionMultasTab() {
     setFTipoValor(c?.multa_tipo_valor ?? "fijo")
     setFValor(c?.multa_valor?.toString() ?? "")
     setFCantidadCuotas(c?.multa_cantidad_cuotas?.toString() ?? "")
+    setFLogoUrl(c?.logo_url ?? "")
   }
 
   const handleGuardar = async () => {
@@ -108,6 +111,7 @@ function ConfiguracionMultasTab() {
         multa_tipo_valor: fTipoValor,
         multa_valor: fTipoValor === "fijo" && fValor ? Number.parseFloat(fValor) : null,
         multa_cantidad_cuotas: fTipoValor === "cuotas" && fCantidadCuotas ? Number.parseFloat(fCantidadCuotas) : null,
+        logo_url: fLogoUrl.trim() || null,
         updated_at: new Date().toISOString(),
       }
       const { error } = await createClient().from("ruta_config_umbrales").upsert(payload, { onConflict: "ruta_id" })
@@ -162,7 +166,7 @@ function ConfiguracionMultasTab() {
         ) : (
           <>
             <div>
-              <p className="font-semibold text-sm">Política de multas por mora</p>
+              <p className="font-semibold text-sm">Política de multas por fallas</p>
               <p className="text-xs text-muted-foreground">{selectedRuta.nombre}</p>
             </div>
 
@@ -178,7 +182,7 @@ function ConfiguracionMultasTab() {
                 disabled={!fHabilitada}
                 value={fCuotas}
                 onChange={(e) => setFCuotas(e.target.value)}
-                placeholder="Cuotas en mora para generar multa (ej. 3)"
+                placeholder="Cantidad de fallas para generar multa (ej. 3)"
                 className="h-9 text-sm"
               />
 
@@ -231,6 +235,33 @@ function ConfiguracionMultasTab() {
                 <p className="text-[11px] text-muted-foreground">
                   La multa valdrá esa cantidad de cuotas del préstamo (ej. 1 cuota = el valor de una cuota normal).
                 </p>
+              )}
+            </div>
+
+            {/* Logo de la ruta: se imprime en el recibo de pago. Vive aqui
+                porque esta es la pantalla de configuración por ruta. */}
+            <div className="space-y-1.5 pt-3 border-t">
+              <Label className="text-sm">Logo de la ruta (opcional)</Label>
+              <Input
+                value={fLogoUrl}
+                onChange={(e) => setFLogoUrl(e.target.value)}
+                placeholder="https://... (dirección de la imagen)"
+                className="h-9 text-sm"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Aparece en el recibo de pago de esta ruta. Si se deja vacío se usa el logo de la app.
+              </p>
+              {fLogoUrl.trim() && (
+                <div className="flex items-center gap-2 pt-1">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={fLogoUrl}
+                    alt="Vista previa del logo"
+                    className="h-10 w-10 rounded object-contain ring-1 ring-border bg-white"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none" }}
+                  />
+                  <span className="text-[11px] text-muted-foreground">Vista previa</span>
+                </div>
               )}
             </div>
 
@@ -344,7 +375,7 @@ export function MultasView() {
         </div>
         <div>
           <h2 className="text-base md:text-lg font-bold leading-tight">Multas</h2>
-          <p className="text-[11px] text-muted-foreground">Multas por mora generadas automáticamente por ruta</p>
+          <p className="text-[11px] text-muted-foreground">Multas por fallas generadas automáticamente por ruta</p>
         </div>
       </div>
 
@@ -399,7 +430,7 @@ export function MultasView() {
                           <p className="text-sm font-semibold truncate">{m.cliente_nombre ?? "Cliente"}</p>
                           <p className="text-[11px] text-muted-foreground">
                             {rutaNombre(m.ruta_id)}
-                            {m.cuotas_mora != null && ` · ${m.cuotas_mora} cuotas en mora`}
+                            {m.cuotas_mora != null && ` · ${m.cuotas_mora} falla${m.cuotas_mora !== 1 ? "s" : ""}`}
                             {` · ${formatFecha(m.created_at)}`}
                           </p>
                         </div>

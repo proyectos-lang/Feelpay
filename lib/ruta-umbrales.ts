@@ -21,6 +21,8 @@ export interface RutaUmbrales {
   multa_tipo_valor: "fijo" | "cuotas"
   multa_valor: number | null
   multa_cantidad_cuotas: number | null
+  // Logo propio de la ruta para el recibo. null = se usa el de la app.
+  logo_url: string | null
 }
 
 const DEFAULT_UMBRALES: RutaUmbrales = {
@@ -29,6 +31,7 @@ const DEFAULT_UMBRALES: RutaUmbrales = {
   abono_habilitado: false, abono_umbral_cuotas: null,
   multa_habilitada: false, multa_cuotas_umbral: null,
   multa_tipo_valor: "fijo", multa_valor: null, multa_cantidad_cuotas: null,
+  logo_url: null,
 }
 
 // Cache local de los umbrales por ruta.
@@ -65,7 +68,7 @@ export async function getRutaUmbrales(rutaId: number): Promise<RutaUmbrales> {
   try {
     const { data, error } = await createClient()
       .from("ruta_config_umbrales")
-      .select("venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral_cuotas, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas")
+      .select("venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral_cuotas, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas, logo_url")
       .eq("ruta_id", rutaId)
       .maybeSingle()
     if (error) return leerCache(rutaId) ?? DEFAULT_UMBRALES
