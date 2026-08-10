@@ -242,6 +242,69 @@ SELECT pp.ruta,
  ORDER BY (pp.ruta IS NULL) DESC, (r.id IS NULL) DESC, 3 DESC;
 
 
+-- ── 11) Verificación después de correr 033, 034 y 035 ─────────────────────
+-- Confirma que cada pieza quedó realmente instalada. Todo debe decir "ok".
+SELECT 'geocerca: columnas en clients' AS pieza, '033' AS script,
+       CASE WHEN (SELECT count(*) FROM information_schema.columns
+                   WHERE table_schema='public' AND table_name='clients'
+                     AND column_name IN ('latitud','longitud','ubicacion_capturada_at')) = 3
+            THEN 'ok' ELSE '*** FALTA ***' END AS estado
+UNION ALL
+SELECT 'geocerca: config por ruta', '033',
+       CASE WHEN (SELECT count(*) FROM information_schema.columns
+                   WHERE table_schema='public' AND table_name='ruta_config_umbrales'
+                     AND column_name IN ('geocerca_habilitada','geocerca_radio_metros')) = 2
+            THEN 'ok' ELSE '*** FALTA ***' END
+UNION ALL
+SELECT 'geocerca: resultado en payment_plan', '033',
+       CASE WHEN (SELECT count(*) FROM information_schema.columns
+                   WHERE table_schema='public' AND table_name='payment_plan'
+                     AND column_name IN ('geocerca_estado','geocerca_distancia_m','geocerca_motivo')) = 3
+            THEN 'ok' ELSE '*** FALTA ***' END
+UNION ALL
+SELECT 'ajuste manual: funcion', '034',
+       CASE WHEN EXISTS (SELECT 1 FROM pg_proc
+                          WHERE proname='ajustar_cuota_control_pagos'
+                            AND pronamespace='public'::regnamespace)
+            THEN 'ok' ELSE '*** FALTA ***' END
+UNION ALL
+SELECT 'ajuste manual: bitacora', '034',
+       CASE WHEN to_regclass('public.ajustes_manuales_cuota') IS NOT NULL
+            THEN 'ok' ELSE '*** FALTA ***' END
+UNION ALL
+SELECT 'estados: CHECK admin', '035',
+       CASE WHEN EXISTS (SELECT 1 FROM pg_constraint
+                          WHERE conname='gastosregistros_estadoadmin_check')
+            THEN 'ok' ELSE '*** FALTA ***' END
+UNION ALL
+SELECT 'estados: CHECK secretaria', '035',
+       CASE WHEN EXISTS (SELECT 1 FROM pg_constraint
+                          WHERE conname='gastosregistros_estadosecre_check')
+            THEN 'ok' ELSE '*** FALTA ***' END
+UNION ALL
+-- Sin REPLICA IDENTITY FULL el evento de realtime llega sin los valores
+-- anteriores y el aviso al cobrador nunca se dispara.
+SELECT 'aviso al cobrador: replica identity', '035',
+       CASE WHEN (SELECT relreplident FROM pg_class
+                   WHERE oid='public.gastosregistros'::regclass) = 'f'
+            THEN 'ok' ELSE '*** FALTA (no es FULL) ***' END
+UNION ALL
+SELECT 'aviso al cobrador: en la publicacion', '035',
+       CASE WHEN EXISTS (SELECT 1 FROM pg_publication_tables
+                          WHERE pubname='supabase_realtime'
+                            AND schemaname='public' AND tablename='gastosregistros')
+            THEN 'ok' ELSE '*** FALTA ***' END
+UNION ALL
+-- Estado de los datos: sirve para saber si el reset de pruebas ya corrio.
+SELECT 'datos: cuotas antes del 10-ago', '—',
+       (SELECT count(*)::text FROM payment_plan WHERE fecha_pago < DATE '2026-08-10')
+UNION ALL
+SELECT 'datos: movimientos de caja', '—', (SELECT count(*)::text FROM gastosregistros)
+UNION ALL
+SELECT 'datos: prestamos activos', '—', (SELECT count(*)::text FROM loans WHERE estado='activo')
+ ORDER BY 2, 1;
+
+
 -- ── 10) Ventas duplicadas por la regresión del 7 de agosto ────────────────
 -- Para limpiarlas usa scripts/limpiar-venta-duplicada.sql, que muestra cuál
 -- de las dos conservar antes de borrar nada.
