@@ -33,6 +33,7 @@ import { SalesTodayList } from "@/components/views/sales-today-list"
 import { loadDashboardPagos } from "@/lib/dashboard-data"
 import { todayColombia } from "@/lib/colombia-date"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre, type RutaUmbrales } from "@/lib/ruta-umbrales"
+import { obtenerUbicacion, evaluarGeocerca, formatearDistancia, type ResultadoGeocerca, type UbicacionMedida } from "@/lib/geo"
 
 // Types matching DB schema
 type LoanWithClient = {
@@ -132,6 +133,10 @@ type DisplayClient = {
   // Multa pendiente del prestamo (null si no tiene). Generada automaticamente
   // cuando el cliente cruza el umbral de cuotas en mora configurado por ruta.
   multaPendiente: { id: string; valor: number; cuotasMora: number | null } | null
+  // Ubicacion de referencia del cliente para la geocerca. null mientras no
+  // haya sido georreferenciado — su proximo cobro se la captura.
+  clienteLatitud: number | null
+  clienteLongitud: number | null
 }
 
 type RegisterPaymentProps = {
@@ -192,33 +197,9 @@ const isPaymentDayToday = (diaSemana: string | null) => {
 
 type ManagedClient = DisplayClient & { gestionTipo: "pago" | "no_pago"; gestionHora: string; valorAbonado: number; paymentPlanId?: string }
 
-// Helper function to get current geolocation — rejects when unavailable so callers can block.
-//
-// IMPORTANTE: Para registro de pagos necesitamos coordenadas con alta precision
-// (chip GPS) porque sirven como evidencia de gestion en campo. NO cacheamos
-// posiciones entre pagos (maximumAge: 0) porque cada gestion es en un punto
-// geografico distinto y no queremos persistir la coordenada de un cliente
-// anterior. El timeout de 10s da margen al warm-up del chip GPS en moviles.
-const getCurrentLocation = (): Promise<{ latitud: number; longitud: number }> => {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error("GPS_UNAVAILABLE"))
-      return
-    }
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        resolve({
-          latitud: position.coords.latitude,
-          longitud: position.coords.longitude,
-        })
-      },
-      (error) => {
-        reject(new Error(error.code === 1 ? "GPS_DENIED" : "GPS_UNAVAILABLE"))
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
-    )
-  })
-}
+// La obtencion de la posicion vive en lib/geo.ts porque Nueva Venta tambien
+// la necesita (para dejar la ubicacion de referencia del cliente) y ahi mismo
+// esta la regla de la geocerca.
 
 export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = "", rutaActivaEstado, rutaActivaResolved = true, onRouteStateChange }: RegisterPaymentProps) {
   const { toast } = useToast()
@@ -327,6 +308,114 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     revisionResolveRef.current = null
   }
 
+  // ── Geocerca ──────────────────────────────────────────────────────────
+  // Cuando el cobrador esta lejos del cliente, la gestion se detiene y solo
+  // continua si escribe un motivo, que queda guardado junto con la distancia
+  // real para que secretaria lo revise.
+  const [geocercaBloqueo, setGeocercaBloqueo] = useState<{ nombre: string; distancia: number; radio: number } | null>(null)
+  const [geocercaMotivo, setGeocercaMotivo] = useState("")
+  // Ultima posicion tomada al abrir una gestion, para no volver a encender el
+  // GPS al confirmar. Se guarda con el cliente y el momento para no reusarla
+  // con otro cliente ni cuando ya envejecio.
+  const ubicacionRecienteRef = useRef<{ loanId: string; coords: UbicacionMedida; tomadaEn: number } | null>(null)
+  const geocercaResolveRef = useRef<((motivo: string | null) => void) | null>(null)
+  const pedirJustificacionGeocerca = (nombre: string, distancia: number, radio: number) =>
+    new Promise<string | null>((resolve) => {
+      geocercaResolveRef.current = resolve
+      setGeocercaMotivo("")
+      setGeocercaBloqueo({ nombre, distancia, radio })
+    })
+  const handleGeocercaChoice = (motivo: string | null) => {
+    setGeocercaBloqueo(null)
+    geocercaResolveRef.current?.(motivo)
+    geocercaResolveRef.current = null
+  }
+
+  /**
+   * Toma la posicion actual y decide si la gestion puede seguir.
+   *
+   * Devuelve null cuando hay que detenerse: el GPS no responde, o el cobrador
+   * esta fuera de rango y no quiso justificar.
+   */
+  const resolverGeocerca = async (
+    cliente: DisplayClient,
+    accion: "pagos" | "no pagos",
+  ): Promise<{ coords: UbicacionMedida; geo: ResultadoGeocerca; motivo: string | null } | null> => {
+    let coords: UbicacionMedida
+    try {
+      // Se reusa la lectura que se tomo al ABRIR la gestion si es del mismo
+      // cliente y tiene menos de 45s: entre abrir la pantalla y confirmar el
+      // cobro el cobrador no se movio, y encender el chip GPS dos veces por
+      // cliente cuesta segundos y bateria en un telefono de gama baja.
+      const previa = ubicacionRecienteRef.current
+      const fresca =
+        previa &&
+        previa.loanId === cliente.loanId &&
+        Date.now() - previa.tomadaEn < 45_000
+      coords = fresca ? previa.coords : await obtenerUbicacion()
+    } catch {
+      toast({
+        title: "GPS no disponible",
+        description: `Activa el GPS del dispositivo para registrar ${accion}.`,
+        variant: "destructive",
+      })
+      return null
+    }
+
+    const radio = umbrales?.geocerca_radio_metros ?? 100
+    const geo = evaluarGeocerca({
+      cobrador: coords,
+      cliente:
+        cliente.clienteLatitud != null && cliente.clienteLongitud != null
+          ? { latitud: cliente.clienteLatitud, longitud: cliente.clienteLongitud }
+          : null,
+      radioMetros: radio,
+    })
+
+    // Se evalua aunque la geocerca este apagada: asi la distancia queda
+    // registrada desde el primer dia y secretaria puede ver, con datos
+    // reales de la ruta, que radio le sirve antes de encenderla.
+    if (!umbrales?.geocerca_habilitada || !geo.bloquea) {
+      return { coords, geo, motivo: null }
+    }
+
+    const motivo = await pedirJustificacionGeocerca(cliente.nombre, geo.distancia ?? 0, radio)
+    if (!motivo) return null
+    return { coords, geo, motivo }
+  }
+
+  // Aviso de proximidad que se muestra al ABRIR la gestion, para que el
+  // cobrador sepa como esta parado antes de llenar el formulario. Es
+  // informativo: la decision que manda es la que se toma al guardar, con
+  // una lectura fresca del GPS.
+  const [geocercaAviso, setGeocercaAviso] = useState<ResultadoGeocerca | null>(null)
+
+  const renderAvisoGeocerca = () => {
+    if (!umbrales?.geocerca_habilitada || !geocercaAviso) return null
+    const { estado, distancia } = geocercaAviso
+    const texto =
+      estado === "dentro"
+        ? `Ubicación verificada — estás a ${formatearDistancia(distancia ?? 0)} del cliente.`
+        : estado === "fuera"
+          ? `Estás a ${formatearDistancia(distancia ?? 0)} del cliente. Para registrar tendrás que justificarlo.`
+          : estado === "sin_referencia"
+            ? "Este cliente aún no tiene ubicación guardada. Se tomará la de esta gestión."
+            : "No se pudo verificar la ubicación: la señal del GPS es demasiado imprecisa aquí."
+    const estilo =
+      estado === "dentro"
+        ? "border-green-200 bg-green-50 text-green-800"
+        : estado === "fuera"
+          ? "border-red-200 bg-red-50 text-red-800"
+          : "border-amber-200 bg-amber-50 text-amber-800"
+    const Icono = estado === "dentro" ? MapPin : MapPinOff
+    return (
+      <div className={`flex items-start gap-2 rounded-md border px-3 py-2 text-[11px] md:text-xs ${estilo}`}>
+        <Icono className="h-4 w-4 shrink-0 mt-px" />
+        <span>{texto}</span>
+      </div>
+    )
+  }
+
   // Dialogo "fecha distinta a la cuota pendiente": cuando se va a pagar/no
   // pagar en una fecha que no coincide con la cuota objetivo (tipico al
   // ponerse al dia con un cliente atrasado), se pregunta si el pago se
@@ -361,6 +450,44 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const [noPaymentClient, setNoPaymentClient] = useState<DisplayClient | null>(null)
   const [noPaymentObservation, setNoPaymentObservation] = useState("")
   const [noPaymentPhoto, setNoPaymentPhoto] = useState<string | null>(null)
+
+  // Al abrir una gestion (pago o no pago) se mide la proximidad para avisar
+  // de entrada. Si el GPS falla aca no se dice nada: el guard de guardar ya
+  // avisa, y no tiene sentido molestar dos veces por lo mismo.
+  const clienteEnGestion = selectedClient ?? noPaymentClient
+  const loanEnGestion = clienteEnGestion?.loanId ?? null
+  useEffect(() => {
+    setGeocercaAviso(null)
+    ubicacionRecienteRef.current = null
+    if (!clienteEnGestion) return
+    let cancelado = false
+    // La lectura se toma SIEMPRE, este la geocerca encendida o no: de todos
+    // modos el cobro necesita coordenadas, y adelantarla aqui hace que al
+    // confirmar no haya que esperar otra vez al chip GPS.
+    obtenerUbicacion()
+      .then((coords) => {
+        if (cancelado) return
+        ubicacionRecienteRef.current = {
+          loanId: clienteEnGestion.loanId,
+          coords,
+          tomadaEn: Date.now(),
+        }
+        if (!umbrales?.geocerca_habilitada) return
+        setGeocercaAviso(
+          evaluarGeocerca({
+            cobrador: coords,
+            cliente:
+              clienteEnGestion.clienteLatitud != null && clienteEnGestion.clienteLongitud != null
+                ? { latitud: clienteEnGestion.clienteLatitud, longitud: clienteEnGestion.clienteLongitud }
+                : null,
+            radioMetros: umbrales.geocerca_radio_metros,
+          }),
+        )
+      })
+      .catch(() => {})
+    return () => { cancelado = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loanEnGestion, umbrales?.geocerca_habilitada, umbrales?.geocerca_radio_metros])
 
   // Client info dialog
   const [clientInfoDialogOpen, setClientInfoDialogOpen] = useState(false)
@@ -692,17 +819,32 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       // parcial (idx_multas_unica_pendiente) garantiza una sola multa
       // pendiente por prestamo aunque varios dispositivos carguen a la vez.
       const multasMap = new Map<string, { id: string; valor: number; cuotasMora: number | null }>()
+      // Fecha de la ultima multa de cada prestamo, sin importar como quedo.
+      // Las fallas anteriores a esa fecha YA fueron sancionadas y no se
+      // vuelven a contar (ver el filtro de cuotasVencidasList mas abajo).
+      const ultimaMultaMap = new Map<string, string>()
       try {
         const [umbralesRuta, multasRes] = await Promise.all([
           getRutaUmbrales(currentRutaId),
+          // Se traen TODAS, no solo las pendientes: las pagadas y canceladas
+          // son justamente las que marcan hasta donde ya se sanciono.
           supabase
             .from("multas")
-            .select("id, loan_id, valor, cuotas_mora")
-            .eq("ruta_id", currentRutaId)
-            .eq("estado", "pendiente"),
+            .select("id, loan_id, valor, cuotas_mora, estado, created_at")
+            .eq("ruta_id", currentRutaId),
         ])
-        for (const m of (multasRes.data ?? []) as { id: string; loan_id: string; valor: number; cuotas_mora: number | null }[]) {
-          multasMap.set(m.loan_id, { id: m.id, valor: m.valor, cuotasMora: m.cuotas_mora })
+        for (const m of (multasRes.data ?? []) as { id: string; loan_id: string; valor: number; cuotas_mora: number | null; estado: string; created_at: string }[]) {
+          if (m.estado === "pendiente") {
+            multasMap.set(m.loan_id, { id: m.id, valor: m.valor, cuotasMora: m.cuotas_mora })
+          }
+          // created_at es timestamptz; se compara contra fecha_pago (una
+          // fecha), asi que se lleva al dia calendario de Colombia.
+          const dia = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "America/Bogota",
+            year: "numeric", month: "2-digit", day: "2-digit",
+          }).format(new Date(m.created_at))
+          const previa = ultimaMultaMap.get(m.loan_id)
+          if (!previa || dia > previa) ultimaMultaMap.set(m.loan_id, dia)
         }
 
         const multaValorConfigurado = umbralesRuta.multa_tipo_valor === "cuotas"
@@ -720,10 +862,19 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             // al marcar no pago la cuota dejaba de contar y un cliente que
             // incumplia a diario nunca acumulaba fallas ni se le generaba
             // multa.
+            //
+            // Solo cuentan las fallas POSTERIORES a la ultima multa del
+            // prestamo. Sin este corte, las fallas viejas seguian contando
+            // para siempre: el cliente pagaba la multa, la fila en `no_pago`
+            // se quedaba ahi, y en la siguiente carga de esta pantalla se le
+            // generaba otra multa identica. Lo mismo pasaba cuando secretaria
+            // cancelaba una a mano — volvia sola.
+            const desde = ultimaMultaMap.get(loan.id)
             const cuotasVencidasList = plan.filter(
               (p) =>
-                p.estado === "no_pago" ||
-                (p.estado === "pendiente" && p.fecha_pago < todayColombia),
+                (p.estado === "no_pago" ||
+                  (p.estado === "pendiente" && p.fecha_pago < todayColombia)) &&
+                (!desde || p.fecha_pago > desde),
             )
             if (cuotasVencidasList.length < umbralesRuta.multa_cuotas_umbral) continue
 
@@ -922,6 +1073,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           ordenvisita: loan.ordenvisita || 0,
           diaSemana: loan.dia_semana || null,
           multaPendiente: multasMap.get(loan.id) ?? null,
+          clienteLatitud: loan.clients?.latitud ?? null,
+          clienteLongitud: loan.clients?.longitud ?? null,
         }
 
         // Check if target entry has been managed (pagado, no_pago, parcial, or cancelada)
@@ -1041,18 +1194,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       return
     }
 
-    // GPS primero (puede tardar 1-2s en moviles): si no esta, no abrimos saving.
-    let coords: { latitud: number; longitud: number }
-    try {
-      coords = await getCurrentLocation()
-    } catch {
-      toast({
-        title: "GPS no disponible",
-        description: "Activa el GPS del dispositivo para registrar pagos.",
-        variant: "destructive",
-      })
-      return
-    }
+    // GPS y geocerca primero (el GPS puede tardar 1-2s en moviles): si no
+    // esta, o el cobrador esta lejos y no justifica, no abrimos saving.
+    const geocerca = await resolverGeocerca(selectedClient, "pagos")
+    if (!geocerca) return
+    const coords = geocerca.coords
 
     const clientSnapshot = selectedClient
     const isCanceladaSnap = isCancelada
@@ -1134,32 +1280,54 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         if (!confirmado) { setSaving(false); return }
 
         try {
-          const identity = getSessionIdentity()
-          const supabase = await getSupabaseSafe()
-          const { error: insertError } = await supabase.from("solicitudes_revision").insert({
-            tipo: "abono",
-            ruta_id: currentRutaId,
-            solicitado_por: identity.user_id,
-            solicitado_por_nombre: getSolicitanteNombre(),
-            monto,
-            descripcion: `Abono — ${clientSnapshot.nombre} (${numCuotasSnap} cuotas de una vez)`,
+          // Por la cola: sin senal queda en el dispositivo en vez de
+          // perderse. Un abono grande es plata que el cobrador ya recibio.
+          const { encolado: encoladoRevision } = await enviarOEncolar({
+            tipo: "revision",
+            descripcion: `Abono a revisión — ${clientSnapshot.nombre} ($${monto.toLocaleString()})`,
             payload: {
-              p_payload: {
-                tipo: tipoOperacionUmbral,
-                loan_id: clientSnapshot.loanId,
-                client_id: clientSnapshot.clientId,
-                monto,
-                num_cuotas: numCuotasSnap,
-                fecha_pago: fechaPago,
-                fecha_pago_real: fechaPagoReal,
-                latitud,
-                longitud,
+              tipo: "abono",
+              solicitado_por_nombre: getSolicitanteNombre(),
+              monto,
+              descripcion: `Abono — ${clientSnapshot.nombre} (${numCuotasSnap} cuotas de una vez)`,
+              payload: {
+                p_payload: {
+                  tipo: tipoOperacionUmbral,
+                  loan_id: clientSnapshot.loanId,
+                  client_id: clientSnapshot.clientId,
+                  monto,
+                  num_cuotas: numCuotasSnap,
+                  fecha_pago: fechaPago,
+                  fecha_pago_real: fechaPagoReal,
+                  latitud,
+                  longitud,
+                  geocerca_estado: geocerca.geo.estado,
+                  geocerca_motivo: geocerca.motivo,
+                  // Estos cuatro faltaban y el abono aprobado se comportaba
+                  // distinto al directo:
+                  //  - sin `payment_plan_id` la RPC cobraba "las mas antiguas
+                  //    pendientes al momento de aprobar", no las que vio el
+                  //    cobrador;
+                  //  - sin `generar_cuota_si_debe` en true, agotar el plan
+                  //    CANCELABA el prestamo sin mirar el saldo, dejando ir
+                  //    deuda viva;
+                  //  - sin `cliente_nombre` los conflictos que la RPC manda a
+                  //    revision salian como "Cliente".
+                  payment_plan_id: clientSnapshot.nextPaymentId,
+                  generar_cuota_si_debe: agregarCuotaSnap,
+                  cliente_nombre: clientSnapshot.nombre,
+                  metodo_pago: paymentMethod,
+                },
               },
             },
           })
-          if (insertError) throw insertError
 
-          toast({ title: "Enviado a revisión", description: MENSAJE_REVISION })
+          toast({
+            title: encoladoRevision ? "Guardado sin conexión" : "Enviado a revisión",
+            description: encoladoRevision
+              ? "Se enviará a revisión de la secretaria al volver la señal."
+              : MENSAJE_REVISION,
+          })
           handleBack()
         } catch (err) {
           toast({
@@ -1269,6 +1437,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           fecha_pago_real: fechaPagoReal,
           latitud,
           longitud,
+          // Resultado de la geocerca al momento de capturar. La distancia NO
+          // se manda: el servidor la recalcula contra la ubicacion guardada
+          // del cliente, porque un numero venido del dispositivo no prueba
+          // nada (el payload offline se guarda tal cual y nadie lo revisa).
+          geocerca_estado: geocerca.geo.estado,
+          geocerca_motivo: geocerca.motivo,
           generar_cuota_si_debe: agregarCuotaSnap,
           asociar_a_hoy: asociarAHoySnap,
           // Ancla: se cobra ESTA cuota, la que el cobrador vio en pantalla. Sin
@@ -1398,18 +1572,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const handleRegisterNoPayment = async () => {
     if (!noPaymentClient || !noPaymentClient.nextPaymentId) return
 
-    // GPS antes de mostrar saving para no bloquear la UI si falla
-    let coords: { latitud: number; longitud: number }
-    try {
-      coords = await getCurrentLocation()
-    } catch {
-      toast({
-        title: "GPS no disponible",
-        description: "Activa el GPS del dispositivo para registrar no pagos.",
-        variant: "destructive",
-      })
-      return
-    }
+    // GPS y geocerca antes de mostrar saving para no bloquear la UI si falla
+    const geocerca = await resolverGeocerca(noPaymentClient, "no pagos")
+    if (!geocerca) return
+    const coords = geocerca.coords
 
     const clientSnapshot = noPaymentClient
     // Igual que en handleRegisterPayment: recalculado desde la condicion
@@ -1470,6 +1636,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           fecha_pago_real: fechaPagoReal,
           latitud,
           longitud,
+          geocerca_estado: geocerca.geo.estado,
+          geocerca_motivo: geocerca.motivo,
           generar_cuota_si_debe: agregarCuotaSnapNoPago,
           asociar_a_hoy: asociarAHoySnapNoPago,
           // Ancla: se marca ESTA cuota, la que el cobrador vio en pantalla.
@@ -2025,6 +2193,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         multaPendiente: m.multaPendiente,
         ordenvisita: m.ordenvisita,
         diaSemana: m.diaSemana,
+        clienteLatitud: m.clienteLatitud,
+        clienteLongitud: m.clienteLongitud,
       }
       setManagedToday((prev) => prev.filter((x) => x.loanId !== m.loanId))
       setClients((prev) => {
@@ -2356,6 +2526,36 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 </Button>
               </div>
             </div>
+
+            {/* Avance de la ruta.
+                Antes, para saber cuanto llevaba recaudado y cuantos clientes
+                le faltaban, el cobrador tenia que salirse a Resumen del Dia y
+                volver. Esto se lo deja a la vista sin dejar la pantalla. */}
+            {(() => {
+              const gestionados = managedToday.length
+              const total = gestionados + displayClients.length
+              if (total === 0) return null
+              const recaudado = managedToday.reduce((s, m) => s + (m.valorAbonado || 0), 0)
+              const pct = Math.round((gestionados / total) * 100)
+              return (
+                <div className="px-1 pb-2 space-y-1">
+                  <div className="flex items-baseline justify-between text-[11px] md:text-xs">
+                    <span className="text-muted-foreground">
+                      <strong className="text-foreground">{gestionados}</strong> de {total} gestionados
+                    </span>
+                    <span className="font-semibold tabular-nums">
+                      ${recaudado.toLocaleString("es-CO")}
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-green-500 transition-all duration-500"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* Tab bar: Pendientes / Gestionados / Ventas
                 Los dots debajo de la barra (solo en móvil) refuerzan la
@@ -2880,6 +3080,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             <CardTitle className="text-sm md:text-lg">Informacion del Pago</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 md:space-y-3 p-3 md:p-6">
+            {renderAvisoGeocerca()}
             {/* Alerta: última cuota programada de préstamo americano */}
             {selectedClient.tipoAmortizacion?.toLowerCase().trim() === "americano" &&
               selectedClient.esUltimaCuotaPendiente && (
@@ -3184,9 +3385,19 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               <Button variant="outline" className="flex-1 h-8 md:h-10 text-xs md:text-base bg-transparent" onClick={handleBack}>
                 Cancelar
               </Button>
+              {/* El monto va EN el boton: es lo ultimo que ve el cobrador
+                  antes de confirmar y evita cobrar una cifra distinta a la
+                  que acordo con el cliente. Incluye la multa si la va a
+                  cobrar en el mismo movimiento. */}
               <Button className="flex-1 h-8 md:h-10 text-xs md:text-base bg-green-600 hover:bg-green-700 text-white" onClick={handleRegisterPayment} disabled={saving}>
                 {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-                {extenderCuotas ? "Registrar Pago y Extender Plazo" : "Registrar Pago"}
+                {(() => {
+                  const base = Number.parseFloat(paymentAmount) || 0
+                  const conMulta = base + (pagarMulta && selectedClient?.multaPendiente ? selectedClient.multaPendiente.valor : 0)
+                  if (conMulta <= 0) return extenderCuotas ? "Registrar y extender plazo" : "Registrar pago"
+                  const monto = `$${conMulta.toLocaleString("es-CO")}`
+                  return extenderCuotas ? `Cobrar ${monto} y extender` : `Cobrar ${monto}`
+                })()}
               </Button>
             </div>
           </CardContent>
@@ -3203,6 +3414,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 md:space-y-4 py-2 md:py-4">
+            {renderAvisoGeocerca()}
             <div className="space-y-1.5 md:space-y-2">
               <Label htmlFor="last-payment-date" className="text-xs md:text-sm">Fecha del Ultimo Pago</Label>
               <Input id="last-payment-date" type="text" value={noPaymentClient?.ultimoPagoFecha || "N/A"} readOnly className="bg-muted text-xs md:text-sm h-7 md:h-10" />
@@ -3288,6 +3500,48 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           <div className="flex gap-2 md:gap-3 pt-2 md:pt-4">
             <Button variant="outline" onClick={() => handleRevisionChoice(false)} className="flex-1 h-8 md:h-10 text-xs md:text-base bg-transparent">Cancelar</Button>
             <Button onClick={() => handleRevisionChoice(true)} className="flex-1 h-8 md:h-10 text-xs md:text-base">Continuar</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: el cobrador esta fuera del rango del cliente */}
+      <Dialog open={!!geocercaBloqueo} onOpenChange={(open) => { if (!open) handleGeocercaChoice(null) }}>
+        <DialogContent className="p-4 md:p-6 max-w-[90vw] md:max-w-md">
+          <DialogHeader>
+            <div className="flex items-center justify-center h-12 w-12 rounded-full bg-red-100 mx-auto mb-2">
+              <MapPinOff className="h-6 w-6 text-red-600" />
+            </div>
+            <DialogTitle className="text-sm md:text-lg text-center">Estás fuera del rango del cliente</DialogTitle>
+            <DialogDescription className="text-xs md:text-sm text-center">
+              Estás a <strong>{geocercaBloqueo ? formatearDistancia(geocercaBloqueo.distancia) : ""}</strong> de donde
+              quedó ubicado <strong>{geocercaBloqueo?.nombre}</strong>, y el máximo permitido en esta ruta es de{" "}
+              {geocercaBloqueo?.radio} m. Si aun así necesitas registrar la gestión, escribe por qué.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="geocerca-motivo" className="text-xs md:text-sm">Motivo</Label>
+            <Textarea
+              id="geocerca-motivo"
+              placeholder="Ej: el cliente se trasladó de local, o me pagó en otro punto"
+              value={geocercaMotivo}
+              onChange={(e) => setGeocercaMotivo(e.target.value)}
+              className="min-h-[70px] text-xs md:text-sm"
+            />
+            <p className="text-[11px] md:text-xs text-muted-foreground">
+              Queda registrado junto con la distancia real para que secretaría lo revise.
+            </p>
+          </div>
+          <div className="flex gap-2 md:gap-3 pt-2">
+            <Button variant="outline" onClick={() => handleGeocercaChoice(null)} className="flex-1 h-8 md:h-10 text-xs md:text-base bg-transparent">
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => handleGeocercaChoice(geocercaMotivo.trim())}
+              disabled={geocercaMotivo.trim().length < 10}
+              className="flex-1 h-8 md:h-10 text-xs md:text-base"
+            >
+              Continuar
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

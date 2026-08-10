@@ -22,7 +22,13 @@ type Transaction = {
   limite: string
 }
 
-export function ViewExpensesIncome() {
+interface ViewExpensesIncomeProps {
+  /** Ruta activa. Sin esto la pantalla mostraba los movimientos de TODAS
+   *  las rutas: no hay RLS, el filtro tiene que ponerlo la consulta. */
+  currentRutaId: number
+}
+
+export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [filteredTransactions, setFilteredTransactions] = useState<Transaction[]>([])
   const [loading, setLoading] = useState(true)
@@ -36,7 +42,8 @@ export function ViewExpensesIncome() {
 
   useEffect(() => {
     fetchTransactions()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentRutaId])
 
   useEffect(() => {
     applyFilters()
@@ -50,6 +57,7 @@ export function ViewExpensesIncome() {
       const { data, error } = await supabase
         .from("gastosregistros")
         .select("*")
+        .eq("ruta", currentRutaId)
         .order("fechahorasol", { ascending: false })
 
       if (error) {
@@ -107,11 +115,11 @@ export function ViewExpensesIncome() {
 
   const getTypeIcon = (tipo: string) => {
     switch (tipo) {
-      case "ingreso":
+      case "Ingreso":
         return <TrendingUp className="h-4 w-4 md:h-5 md:w-5 text-green-600" />
-      case "gasto":
+      case "Gasto":
         return <TrendingDown className="h-4 w-4 md:h-5 md:w-5 text-red-600" />
-      case "retiro":
+      case "Retiro":
         return <Wallet className="h-4 w-4 md:h-5 md:w-5 text-blue-600" />
       default:
         return null
@@ -221,13 +229,16 @@ export function ViewExpensesIncome() {
                   <SelectItem value="all" className="text-xs md:text-sm">
                     Todos
                   </SelectItem>
-                  <SelectItem value="ingreso" className="text-xs md:text-sm">
+                  {/* Los valores tienen que coincidir EXACTO con lo que
+                      guarda saveTransaction ("Ingreso"/"Gasto"/"Retiro").
+                      En minuscula el filtro no devolvia jamas una fila. */}
+                  <SelectItem value="Ingreso" className="text-xs md:text-sm">
                     Ingresos
                   </SelectItem>
-                  <SelectItem value="gasto" className="text-xs md:text-sm">
+                  <SelectItem value="Gasto" className="text-xs md:text-sm">
                     Gastos
                   </SelectItem>
-                  <SelectItem value="retiro" className="text-xs md:text-sm">
+                  <SelectItem value="Retiro" className="text-xs md:text-sm">
                     Retiros
                   </SelectItem>
                 </SelectContent>

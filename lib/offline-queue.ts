@@ -39,7 +39,11 @@ const DB_NAME = "feelpay-offline"
 const DB_VERSION = 1
 const STORE = "cola"
 
-export type TipoOperacion = "pago" | "no_pago" | "transaccion" | "venta"
+// "revision" = una fila para solicitudes_revision (un movimiento que supero
+// el umbral de su ruta y necesita el visto bueno de secretaria). Antes se
+// insertaba directo y sin senal se perdia — justo los movimientos mas
+// grandes, que son los que menos se pueden perder.
+export type TipoOperacion = "pago" | "no_pago" | "transaccion" | "venta" | "revision"
 
 export type EstadoItem = "pendiente" | "enviando" | "fallido"
 
@@ -195,6 +199,25 @@ async function enviarItem(item: ItemCola): Promise<AtomicRpcResult> {
     })
     if (error) throw error
     return (data ?? { ok: true }) as AtomicRpcResult
+  }
+
+  if (item.tipo === "revision") {
+    // La llave de idempotencia se usa como id de la fila: si el envio se
+    // repite, la llave primaria rechaza el duplicado y no entran dos
+    // solicitudes por el mismo movimiento.
+    const { error } = await supabase.from("solicitudes_revision").insert({
+      id: item.id,
+      ...(item.payload as Record<string, unknown>),
+      ruta_id: item.identidad.ruta_id,
+      solicitado_por: item.identidad.user_id,
+      created_at: item.capturadoEn,
+    })
+    if (error) {
+      // 23505 = ya se habia insertado en un intento anterior.
+      if ((error as { code?: string }).code === "23505") return { ok: true } as AtomicRpcResult
+      throw error
+    }
+    return { ok: true } as AtomicRpcResult
   }
 
   if (item.tipo === "transaccion") {

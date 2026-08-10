@@ -16,8 +16,10 @@ export async function approveTransactionSecretary(
 
     const fechahoraaprobosecretaria = new Date().toISOString()
 
+    // El `.eq("estadosecre", "por aprobar")` es la guarda: sin el, una
+    // pantalla vieja podia voltear un movimiento que ya se habia resuelto.
     if (params.status === "aprobado") {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("gastosregistros")
         .update({
           estadosecre: "aprobado",
@@ -25,15 +27,20 @@ export async function approveTransactionSecretary(
           fechahoraaprobosecretaria,
         })
         .eq("id", params.id)
+        .eq("estadosecre", "por aprobar")
+        .select("id")
 
       if (error) {
         console.error("[v0] Error approving transaction:", error)
         return { success: false, error: error.message }
       }
+      if (!data || data.length === 0) {
+        return { success: false, error: "Este movimiento ya fue resuelto por otra persona" }
+      }
 
       return { success: true, message: "Transacción aprobada exitosamente" }
     } else if (params.status === "rechazado") {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("gastosregistros")
         .update({
           estadosecre: "rechazado",
@@ -41,10 +48,15 @@ export async function approveTransactionSecretary(
           fechahoraaprobosecretaria,
         })
         .eq("id", params.id)
+        .eq("estadosecre", "por aprobar")
+        .select("id")
 
       if (error) {
         console.error("[v0] Error rejecting transaction:", error)
         return { success: false, error: error.message }
+      }
+      if (!data || data.length === 0) {
+        return { success: false, error: "Este movimiento ya fue resuelto por otra persona" }
       }
 
       return { success: true, message: "Transacción rechazada exitosamente" }

@@ -1533,6 +1533,8 @@ type RutaConfigRow = {
   venta_renovacion_umbral: number | null
   abono_habilitado: boolean
   abono_umbral_cuotas: number | null
+  geocerca_habilitada: boolean
+  geocerca_radio_metros: number | null
 }
 
 type CatalogItem = { id: number; nombre: string }
@@ -1566,6 +1568,8 @@ function ControlAprobacionesTab() {
   const [fVentaRenovacionUmbral, setFVentaRenovacionUmbral] = useState("")
   const [fAbonoHab, setFAbonoHab] = useState(false)
   const [fAbonoUmbralCuotas, setFAbonoUmbralCuotas] = useState("")
+  const [fGeocercaHab, setFGeocercaHab] = useState(false)
+  const [fGeocercaRadio, setFGeocercaRadio] = useState("100")
   const [itemForm, setItemForm] = useState<Map<string, ItemFormRow>>(new Map())
 
   const itemsByTipo: Record<string, CatalogItem[]> = {
@@ -1607,6 +1611,8 @@ function ControlAprobacionesTab() {
     setFVentaRenovacionUmbral(c?.venta_renovacion_umbral?.toString() ?? "")
     setFAbonoHab(c?.abono_habilitado ?? false)
     setFAbonoUmbralCuotas(c?.abono_umbral_cuotas?.toString() ?? "")
+    setFGeocercaHab(c?.geocerca_habilitada ?? false)
+    setFGeocercaRadio(c?.geocerca_radio_metros?.toString() ?? "100")
 
     setLoadingItems(true)
     try {
@@ -1654,6 +1660,10 @@ function ControlAprobacionesTab() {
         venta_renovacion_umbral: fVentaRenovacionUmbral ? Number.parseFloat(fVentaRenovacionUmbral) : null,
         abono_habilitado: fAbonoHab,
         abono_umbral_cuotas: fAbonoUmbralCuotas ? Number.parseInt(fAbonoUmbralCuotas, 10) : null,
+        geocerca_habilitada: fGeocercaHab,
+        // La columna es NOT NULL: si el campo queda vacio se guarda el
+        // default en vez de mandar null y romper el upsert.
+        geocerca_radio_metros: Number.parseInt(fGeocercaRadio, 10) || 100,
         updated_at: new Date().toISOString(),
       }
       const { error: configErr } = await supabase.from("ruta_config_umbrales").upsert(configPayload, { onConflict: "ruta_id" })
@@ -1838,6 +1848,29 @@ function ControlAprobacionesTab() {
                 placeholder="Cantidad de cuotas (ej. 3)"
                 className="h-9 text-sm"
               />
+            </div>
+
+            {/* Geocerca: el cobro solo se puede registrar cerca del cliente */}
+            <div className="space-y-1.5 border-t pt-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm">Geocerca (cobrar solo donde está el cliente)</Label>
+                <Switch checked={fGeocercaHab} onCheckedChange={setFGeocercaHab} />
+              </div>
+              <Input
+                type="number"
+                min={20}
+                step={10}
+                disabled={!fGeocercaHab}
+                value={fGeocercaRadio}
+                onChange={(e) => setFGeocercaRadio(e.target.value)}
+                placeholder="Radio en metros (ej. 100)"
+                className="h-9 text-sm"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Por debajo de 50 m el GPS de un celular falla seguido: entre edificios o bajo techo el error puede pasar
+                de los 50 m y bloquearía cobros válidos. Empieza en 100 m y bájalo si en campo funciona. Los clientes sin
+                ubicación guardada se pueden cobrar normal — la ubicación se captura en ese primer cobro.
+              </p>
             </div>
 
             <div className="flex justify-end pt-1">

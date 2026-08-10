@@ -20,6 +20,7 @@ import { todayColombia } from "@/lib/colombia-date"
 import { useToast } from "@/hooks/use-toast"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre } from "@/lib/ruta-umbrales"
 import { enviarOEncolar } from "@/lib/offline-queue"
+import { obtenerUbicacion } from "@/lib/geo"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   Dialog,
@@ -29,6 +30,41 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog"
+
+// ── Fechas del cronograma ───────────────────────────────────────────────
+// En frecuencia diaria NO se cobra los domingos: la semana de cobro es de
+// lunes a sabado, seis dias.
+//
+// La regla anterior calculaba `inicio + (i-1)` y, si caia domingo, corria
+// esa cuota un dia — pero sin mover las siguientes. La cuota del domingo y
+// la del lunes terminaban el MISMO dia y el cliente amanecia debiendo dos.
+// Ahora la cuota i cae en el i-esimo dia de cobro, saltando los domingos de
+// corrido, asi que nunca se doblan.
+//
+// `inicio` nunca debe ser domingo (se ajusta con `siguienteDiaDeCobro`).
+function fechaCuotaDiaria(inicio: Date, i: number): Date {
+  const posicionEnLaSemana = (inicio.getDay() + 6) % 7 // lunes=0 … sabado=5
+  const k = i - 1
+  const d = new Date(inicio)
+  d.setDate(d.getDate() + k + Math.floor((posicionEnLaSemana + k) / 6))
+  return d
+}
+
+/** Corre la fecha al lunes si cae domingo. Solo aplica a frecuencia diaria. */
+function siguienteDiaDeCobro(d: Date, diasEntrePagos: number): Date {
+  if (diasEntrePagos !== 1 || d.getDay() !== 0) return d
+  const ajustada = new Date(d)
+  ajustada.setDate(ajustada.getDate() + 1)
+  return ajustada
+}
+
+/** Fecha de la cuota `i` (1-based) segun la frecuencia. */
+function fechaDeCuota(inicio: Date, i: number, diasEntrePagos: number): Date {
+  if (diasEntrePagos === 1) return fechaCuotaDiaria(inicio, i)
+  const d = new Date(inicio)
+  d.setDate(d.getDate() + diasEntrePagos * (i - 1))
+  return d
+}
 
 interface AmortizationRow {
   cuota: number
@@ -447,7 +483,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     const numeroCuotas = Number.parseInt(dias)
     const todayStr = todayColombia()
     const [y, m, d] = todayStr.split("-").map(Number)
-    const fechaInicio = new Date(y, m - 1, d + 1)
+    const fechaInicioCruda = new Date(y, m - 1, d + 1)
 
     if (!valorPrestamo || !numeroCuotas) {
       alert("Por favor complete los campos de valor y número de cuotas")
@@ -477,14 +513,18 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       }
     }
 
+    // La previsualizacion tiene que salir IDENTICA al plan que se guarda:
+    // antes esta tabla no aplicaba la regla de domingos y el cobrador le
+    // mostraba al cliente unas fechas y se guardaban otras.
+    const fechaInicio = siguienteDiaDeCobro(fechaInicioCruda, diasEntrePagos)
+
     const schedule: AmortizationRow[] = []
 
     if (prestamoEmpleado) {
       // Employee loan: no interest, divide valor evenly by number of installments (daily)
       const cuotaDiaria = valorPrestamo / numeroCuotas
       for (let i = 1; i <= numeroCuotas; i++) {
-        const fechaPago = new Date(fechaInicio)
-        fechaPago.setDate(fechaPago.getDate() + (i - 1))
+        const fechaPago = fechaDeCuota(fechaInicio, i, diasEntrePagos)
         schedule.push({
           cuota: i,
           fecha: fechaPago.toLocaleDateString("es-ES"),
@@ -505,8 +545,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         const interesPorPeriodo = valorPrestamo * tasa
         const interesRound = Math.round(interesPorPeriodo * 100) / 100
         for (let i = 1; i <= numeroPagos; i++) {
-          const fechaPago = new Date(fechaInicio)
-          fechaPago.setDate(fechaPago.getDate() + diasEntrePagos * (i - 1))
+          const fechaPago = fechaDeCuota(fechaInicio, i, diasEntrePagos)
           const esUltimaCuota = i === numeroPagos
           const capitalCuota = esUltimaCuota ? valorPrestamo : 0
           const cuotaPago = interesRound + capitalCuota
@@ -536,8 +575,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         const capitalPorCuota = Math.round((valorPrestamo / numeroPagos) * 100) / 100
         let saldoRestante = saldoTotal
         for (let i = 1; i <= numeroPagos; i++) {
-          const fechaPago = new Date(fechaInicio)
-          fechaPago.setDate(fechaPago.getDate() + diasEntrePagos * (i - 1))
+          const fechaPago = fechaDeCuota(fechaInicio, i, diasEntrePagos)
           const saldoInicial = Math.round(saldoRestante * 100) / 100
           saldoRestante = Math.max(0, saldoRestante - cuotaFija)
           schedule.push({
@@ -810,20 +848,6 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         const day = String(d.getDate()).padStart(2, "0")
         return `${y}-${m}-${day}`
       }
-      // Para prestamos de cobro DIARIO no se cobra los domingos: si la fecha
-      // calculada cae en domingo, se corre al lunes. Solo aplica cuando
-      // diasEntrePagos === 1; para frecuencias semanal/quincenal/mensual
-      // se respeta la fecha tal cual.
-      const skipDomingoSiDiario = (d: Date): Date => {
-        if (diasEntrePagos !== 1) return d
-        if (d.getDay() === 0) {
-          const ajustada = new Date(d)
-          ajustada.setDate(ajustada.getDate() + 1)
-          return ajustada
-        }
-        return d
-      }
-
       // REGLA DE NEGOCIO: el plan de pagos SIEMPRE inicia al dia siguiente
       // de la fecha en que se registra la venta (hoy + 1).
       // - Construimos `hoy` desde partes locales para no arrastrar UTC.
@@ -833,7 +857,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       const todayStr2 = todayColombia()
       const [y2, m2, d2] = todayStr2.split("-").map(Number)
       let fechaInicio = new Date(y2, m2 - 1, d2 + 1)
-      fechaInicio = skipDomingoSiDiario(fechaInicio)
+      fechaInicio = siguienteDiaDeCobro(fechaInicio, diasEntrePagos)
 
       const paymentSchedule: Array<{
         numero_cuota: number
@@ -848,9 +872,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         // Employee loan: no interest, simple daily division
         const cuotaDiaria = Math.round((valorNum / numeroCuotasNum) * 100) / 100
         for (let i = 1; i <= numeroCuotasNum; i++) {
-          let fechaPago = new Date(fechaInicio)
-          fechaPago.setDate(fechaPago.getDate() + (i - 1))
-          fechaPago = skipDomingoSiDiario(fechaPago)
+          const fechaPago = fechaDeCuota(fechaInicio, i, diasEntrePagos)
           paymentSchedule.push({
             numero_cuota: i,
             fecha_pago: toLocalDateStr(fechaPago),
@@ -867,9 +889,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         // capital + intereses de las cuotas que aun faltan.
         const interesPorCuota = Math.round(valorNum * tasaNum * 100) / 100
         for (let i = 1; i <= numeroCuotasNum; i++) {
-          let fechaPago = new Date(fechaInicio)
-          fechaPago.setDate(fechaPago.getDate() + diasEntrePagos * (i - 1))
-          fechaPago = skipDomingoSiDiario(fechaPago)
+          const fechaPago = fechaDeCuota(fechaInicio, i, diasEntrePagos)
           const esUltima = i === numeroCuotasNum
           const capitalCuota = esUltima ? valorNum : 0
           const cuotaPago = interesPorCuota + capitalCuota
@@ -894,9 +914,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         const capitalPorCuota = Math.round((valorNum / numeroCuotasNum) * 100) / 100
         let saldoRestante = saldoTotalNum
         for (let i = 1; i <= numeroCuotasNum; i++) {
-          let fechaPago = new Date(fechaInicio)
-          fechaPago.setDate(fechaPago.getDate() + diasEntrePagos * (i - 1))
-          fechaPago = skipDomingoSiDiario(fechaPago)
+          const fechaPago = fechaDeCuota(fechaInicio, i, diasEntrePagos)
           saldoRestante = Math.max(0, saldoRestante - cuotaFija)
           paymentSchedule.push({
             numero_cuota: i,
@@ -969,6 +987,26 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
           variant: "destructive",
         })
         return
+      }
+
+      // ── Ubicacion de la venta ─────────────────────────────────────────
+      // Queda como referencia del cliente para la geocerca: al cobrarle se
+      // compara contra este punto. Tambien viaja en las renovaciones — si
+      // el cliente venia sin ubicacion la RPC la llena con esta, y si ya
+      // tenia no la pisa.
+      //
+      // Es de MEJOR ESFUERZO a proposito. Una venta es plata entrando; no
+      // puede quedar bloqueada porque el chip GPS no engancho o el permiso
+      // esta en prompt. Si no se captura aca, el primer cobro la captura.
+      //
+      // Va DESPUES de las validaciones para no hacerle esperar hasta 10s de
+      // GPS a un formulario que igual iba a rebotar.
+      try {
+        const pos = await obtenerUbicacion()
+        p_cliente.latitud = pos.latitud
+        p_cliente.longitud = pos.longitud
+      } catch (err) {
+        console.warn("[v0] Venta sin ubicacion (se capturara en el primer cobro):", err)
       }
 
       // ── Umbral de aprobacion por ruta (venta nueva vs renovacion) ──────

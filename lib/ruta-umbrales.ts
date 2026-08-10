@@ -23,6 +23,15 @@ export interface RutaUmbrales {
   multa_cantidad_cuotas: number | null
   // Logo propio de la ruta para el recibo. null = se usa el de la app.
   logo_url: string | null
+  // Geocerca: el cobro solo se puede registrar cerca de donde quedo
+  // ubicado el cliente. Llega apagada; se enciende ruta por ruta cuando ya
+  // hay ubicaciones capturadas con que comparar.
+  //
+  // El radio NO puede ser muy chico: el GPS de un celular tiene 5-20m de
+  // error con buena senal y 50-100m+ bajo techo o entre edificios, asi que
+  // un radio de 20m bloquearia cobros validos.
+  geocerca_habilitada: boolean
+  geocerca_radio_metros: number
 }
 
 const DEFAULT_UMBRALES: RutaUmbrales = {
@@ -32,6 +41,7 @@ const DEFAULT_UMBRALES: RutaUmbrales = {
   multa_habilitada: false, multa_cuotas_umbral: null,
   multa_tipo_valor: "fijo", multa_valor: null, multa_cantidad_cuotas: null,
   logo_url: null,
+  geocerca_habilitada: false, geocerca_radio_metros: 100,
 }
 
 // Cache local de los umbrales por ruta.
@@ -47,7 +57,11 @@ function leerCache(rutaId: number): RutaUmbrales | null {
   if (typeof window === "undefined") return null
   try {
     const raw = localStorage.getItem(`${UMBRALES_CACHE_KEY}_${rutaId}`)
-    return raw ? (JSON.parse(raw) as RutaUmbrales) : null
+    if (!raw) return null
+    // Se mezcla sobre los defaults: un cache guardado antes de que existiera
+    // un campo nuevo no lo trae, y sin esto llegaria `undefined` a quien lo
+    // use (el radio de la geocerca, por ejemplo).
+    return { ...DEFAULT_UMBRALES, ...(JSON.parse(raw) as Partial<RutaUmbrales>) }
   } catch {
     return null
   }
@@ -68,12 +82,12 @@ export async function getRutaUmbrales(rutaId: number): Promise<RutaUmbrales> {
   try {
     const { data, error } = await createClient()
       .from("ruta_config_umbrales")
-      .select("venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral_cuotas, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas, logo_url")
+      .select("venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral_cuotas, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas, logo_url, geocerca_habilitada, geocerca_radio_metros")
       .eq("ruta_id", rutaId)
       .maybeSingle()
     if (error) return leerCache(rutaId) ?? DEFAULT_UMBRALES
     if (!data) return DEFAULT_UMBRALES
-    const umbrales = data as RutaUmbrales
+    const umbrales = { ...DEFAULT_UMBRALES, ...(data as Partial<RutaUmbrales>) }
     guardarCache(rutaId, umbrales)
     return umbrales
   } catch (err) {
@@ -92,10 +106,19 @@ export interface ItemUmbral {
 export async function getRutaItemUmbrales(rutaId: number): Promise<Map<string, ItemUmbral>> {
   const map = new Map<string, ItemUmbral>()
   try {
-    const { data } = await createClient()
+    const { data, error } = await createClient()
       .from("ruta_item_umbrales")
       .select("item_tipo, item_id, habilitado, umbral")
       .eq("ruta_id", rutaId)
+    // OJO: supabase-js NO lanza excepcion ante un error de PostgREST, lo
+    // devuelve en `error` con `data` en null. Sin revisarlo, una tabla que no
+    // existe (script sin correr) devolvia un mapa vacio en silencio y NINGUN
+    // movimiento superaba nunca su umbral: la revision de secretaria quedaba
+    // apagada sin que nadie se enterara.
+    if (error) {
+      console.error("[v0] No se pudieron leer los umbrales por item — la revision de secretaria NO se aplicara:", error.message)
+      return map
+    }
     for (const row of (data ?? []) as { item_tipo: string; item_id: number; habilitado: boolean; umbral: number | null }[]) {
       map.set(`${row.item_tipo}:${row.item_id}`, { habilitado: row.habilitado, umbral: row.umbral })
     }

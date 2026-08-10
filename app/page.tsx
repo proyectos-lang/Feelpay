@@ -611,6 +611,34 @@ export default function Page() {
           }
         }
       )
+      .on(
+        // Cierre del circuito de gastos: quien registro el movimiento se
+        // entera de si se lo aprobaron o se lo rechazaron. Antes lo mandaba
+        // y quedaba a ciegas, sin mas remedio que ir a buscarlo a mano.
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "gastosregistros" },
+        (payload: {
+          new: { adminid: number; tipo: string; concepto: string; valor: number; estadoadmin: string; estadosecre: string }
+          old: { estadoadmin?: string; estadosecre?: string }
+        }) => {
+          const row = payload.new
+          if (row.adminid !== currentUser.id) return
+
+          // Solo interesa el momento en que pasa de "por aprobar" a resuelto.
+          const eraPendiente = payload.old?.estadoadmin === "por aprobar" || payload.old?.estadosecre === "por aprobar"
+          const rechazado = row.estadoadmin === "rechazado" || row.estadosecre === "rechazado"
+          const aprobado = row.estadoadmin !== "por aprobar" && row.estadosecre !== "por aprobar" && !rechazado
+          if (!eraPendiente || (!rechazado && !aprobado)) return
+
+          const monto = `$${Math.round(row.valor ?? 0).toLocaleString("es-CO")}`
+          if (currentViewRef.current !== "view-expenses-income") bumpBadge("view-expenses-income")
+          toast({
+            title: rechazado ? `❌ ${row.tipo} rechazado` : `✅ ${row.tipo} aprobado`,
+            description: `${row.concepto} — ${monto}`,
+            variant: rechazado ? "destructive" : undefined,
+          })
+        }
+      )
       .subscribe()
 
     return () => { channel.unsubscribe() }
@@ -746,7 +774,7 @@ export default function Page() {
       case "register-transaction":
         return <RegisterTransaction onViewChange={handleViewChange} currentRutaId={rutaId} />
       case "view-expenses-income":
-        return <ViewExpensesIncome />
+        return <ViewExpensesIncome currentRutaId={rutaId} />
       case "movements":
         return <Movements />
       case "manage-users":

@@ -42,6 +42,10 @@ export type LoanWithClient = {
     nombre_completo: string
     apodo: string | null
     documento: string
+    // Ubicacion de referencia para la geocerca. null mientras el cliente no
+    // haya sido georreferenciado (su primer cobro se la captura).
+    latitud: number | null
+    longitud: number | null
   }
 }
 
@@ -103,7 +107,7 @@ export async function loadDashboardPagos(
   // ── 1) Cargar loans filtrados por ruta ────────────────────────────
   const { data: loansData, error: loansError } = await supabase
     .from("loans")
-    .select("*, clients(nombre_completo, apodo, documento)")
+    .select("*, clients(nombre_completo, apodo, documento, latitud, longitud)")
     .eq("ruta", args.rutaId)
     .order("ordenvisita", { ascending: true })
 

@@ -14,6 +14,7 @@ import { createClient } from "@/lib/supabase/client"
 import { getSessionIdentity } from "@/lib/api-helper"
 import { enviarOEncolar } from "@/lib/offline-queue"
 import { guardarCache, leerCache } from "@/lib/offline-cache"
+import { todayColombia } from "@/lib/colombia-date"
 import { getRutaItemUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre, type ItemUmbral } from "@/lib/ruta-umbrales"
 import {
   Dialog,
@@ -121,6 +122,31 @@ export function RegisterTransaction({
 
   useEffect(() => {
     getRutaItemUmbrales(ruta).then(setItemUmbrales)
+  }, [ruta])
+
+  // Efectivo disponible de la ruta hoy. Se muestra al registrar un gasto o
+  // un retiro para que el cobrador no saque mas de lo que tiene en la mano:
+  // antes el descuadre solo aparecia al cierre de caja, cuando ya no habia
+  // como reconstruir que paso.
+  const [efectivo, setEfectivo] = useState<number | null>(null)
+  useEffect(() => {
+    let cancelado = false
+    const cargar = async () => {
+      if (typeof navigator !== "undefined" && !navigator.onLine) return
+      try {
+        const { data } = await createClient()
+          .from("resumen_pagos_diarios")
+          .select("efectivo")
+          .eq("ruta", ruta)
+          .eq("fecha_pago", todayColombia())
+          .maybeSingle()
+        if (!cancelado) setEfectivo((data as { efectivo?: number | null } | null)?.efectivo ?? null)
+      } catch (err) {
+        console.error("[v0] No se pudo leer el efectivo de la ruta:", err)
+      }
+    }
+    cargar()
+    return () => { cancelado = true }
   }, [ruta])
 
   useEffect(() => {
@@ -436,21 +462,38 @@ export function RegisterTransaction({
     const concepto = getSelectedItemName(type)
     const observacion = type === "income" ? incomeDescription : type === "expense" ? expenseDescription : withdrawalDescription
     const foto = type === "income" ? incomePhoto : type === "expense" ? expensePhoto : withdrawalPhoto
+    // El limite del item se conserva en el payload. Antes se mandaba null y
+    // el movimiento terminaba guardado con estadoadmin 'NA': el admin nunca
+    // lo veia, aunque el monto tambien superara su limite. Con el limite
+    // puesto, tras el visto bueno de secretaria sigue esperando al admin.
+    const limiteItem = type === "income" ? incomeLimite : type === "expense" ? expenseLimite : withdrawalLimite
 
     setConfirmingRevision(true)
     try {
-      const { error } = await createClient().from("solicitudes_revision").insert({
-        tipo: "gasto",
-        ruta_id: ruta,
-        solicitado_por: adminid,
-        solicitado_por_nombre: getSolicitanteNombre(),
-        monto: amount,
-        descripcion: `${tipoTransaccion}: ${concepto}`,
-        payload: { concepto, limite: null, valor: amount, observacion, foto, tipo: tipoTransaccion, ruta, adminid },
+      // Va por la cola: sin senal queda en el dispositivo y se envia sola.
+      const { encolado } = await enviarOEncolar({
+        tipo: "revision",
+        descripcion: `${tipoTransaccion} a revisión — ${concepto} ($${amount.toLocaleString()})`,
+        payload: {
+          tipo: "gasto",
+          solicitado_por_nombre: getSolicitanteNombre(),
+          monto: amount,
+          descripcion: `${tipoTransaccion}: ${concepto}`,
+          payload: {
+            concepto,
+            limite: limiteItem,
+            valor: amount,
+            observacion,
+            foto,
+            tipo: tipoTransaccion,
+            ruta,
+            adminid,
+            requiresApproval: true,
+          },
+        },
       })
-      if (error) throw error
 
-      showToast(MENSAJE_REVISION)
+      showToast(encolado ? "Guardado sin conexión. Se enviará a revisión al volver la señal." : MENSAJE_REVISION)
 
       if (type === "income") {
         setIncomeAmount("")
@@ -512,6 +555,20 @@ export function RegisterTransaction({
             Retiros
           </TabsTrigger>
         </TabsList>
+
+        {/* Efectivo disponible. Solo se muestra al sacar plata (gasto o
+            retiro): al registrar un ingreso no aporta y solo hace ruido. */}
+        {efectivo !== null && activeTab !== "income" && (
+          <div className={`mt-3 flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${
+            efectivo <= 0 ? "border-red-200 bg-red-50 text-red-800" : "border-slate-200 bg-slate-50 text-slate-700"
+          }`}>
+            <span className="flex items-center gap-1.5">
+              <Wallet className="h-3.5 w-3.5" />
+              Efectivo disponible en la ruta
+            </span>
+            <strong className="tabular-nums">${Math.round(efectivo).toLocaleString("es-CO")}</strong>
+          </div>
+        )}
 
         <TabsContent value="income" className="mt-3 md:mt-6">
           <Card>
