@@ -569,6 +569,25 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   // Limpieza del formulario tras registrar una venta. Se usa en los tres
   // caminos de salida: creacion directa, envio a revision por umbral, y
   // guardado en la cola cuando no hay conexion.
+  // Limpia SOLO los datos del cliente. Se usa al elegir otro cliente, donde
+  // los valores del prestamo que el cobrador ya digito deben conservarse.
+  const limpiarDatosCliente = () => {
+    setDocumento("")
+    setNombreCompleto("")
+    setApodo("")
+    setSector("")
+    setTelefono("")
+    setTelefono2("")
+    setTelefonoError("")
+    setTelefono2Error("")
+    setDireccion("")
+    setTipoComercio("")
+    setRef1Nombre("")
+    setRef1Telefono("")
+    setRef1Direccion("")
+    setCedulaImage(null)
+  }
+
   const resetFormularioVenta = () => {
     setValor("")
     setSaldo("")
@@ -589,24 +608,21 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     setPrestamoEmpleado(false)
     setSelectedClient("")
     setClientSearch("")
-    setDocumento("")
-    setNombreCompleto("")
-    setApodo("")
-    setSector("")
-    setTelefono("")
-    setTelefono2("")
-    setTelefonoError("")
-    setTelefono2Error("")
-    setDireccion("")
-    setTipoComercio("")
-    setRef1Nombre("")
-    setRef1Telefono("")
-    setRef1Direccion("")
+    limpiarDatosCliente()
     setFormErrors(new Set())
-    setCedulaImage(null)
   }
 
+  // Candado de re-entrada. `disabled={isCreating}` en el boton no alcanza:
+  // solo aplica despues del re-render, y un doble toque rapido en el celular
+  // vuelve a entrar antes de eso — creando dos ventas.
+  const creandoVentaRef = useRef(false)
+
   const handleCreateVenta = async () => {
+    if (creandoVentaRef.current) {
+      console.warn("[v0] Venta ya en curso: se ignora el segundo envio")
+      return
+    }
+    creandoVentaRef.current = true
     try {
       setIsCreating(true)
 
@@ -1002,11 +1018,39 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       // Sin conexion la venta queda en la cola del dispositivo y se envia sola
       // despues. Las fechas del plan NO se recalculan al sincronizar: son las
       // que se pactaron con el cliente al hacer la venta.
-      const { encolado: ventaEncolada } = await enviarOEncolar({
-        tipo: "venta",
-        descripcion: `Venta — ${apodo || nombreCompleto || "Cliente"} ($${valorNum.toLocaleString()})`,
-        payload: { p_cliente, p_loan, p_payment_plan },
-      })
+      const nombreParaEtiqueta = isNewClient
+        ? (apodo || nombreCompleto || "Cliente")
+        : (clientOptions.find((c) => c.id === selectedClient)?.apodo
+            || clientOptions.find((c) => c.id === selectedClient)?.nombre_completo
+            || "Cliente")
+
+      let ventaEncolada = false
+      let resultadoVenta: unknown = null
+      try {
+        const r = await enviarOEncolar({
+          tipo: "venta",
+          descripcion: `Venta — ${nombreParaEtiqueta} ($${valorNum.toLocaleString()})`,
+          payload: { p_cliente, p_loan, p_payment_plan },
+        })
+        ventaEncolada = r.encolado
+        resultadoVenta = r.resultado ?? null
+      } catch (err) {
+        // Documento repetido: mensaje claro en vez del generico. Antes este
+        // caso solo se veia por la llamada duplicada que ya se elimino.
+        const msg = err instanceof Error ? err.message : String(err)
+        const code = (err as { code?: string })?.code
+        const esDocDuplicado =
+          code === "23505" || /documento/i.test(msg) || /clients_documento/i.test(msg)
+        console.error("[v0] Error creando venta:", err)
+        toast({
+          title: esDocDuplicado ? "Documento ya registrado" : "Error al crear la venta",
+          description: esDocDuplicado
+            ? `Ya existe un cliente con el documento ${documento}. Búscalo en "Cliente Existente" para registrarle otra venta.`
+            : msg || "No se pudo completar la operación",
+          variant: "destructive",
+        })
+        return
+      }
 
       if (ventaEncolada) {
         showToastPill("Venta guardada sin conexión. Se enviará al volver la señal.")
@@ -1018,89 +1062,22 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         return
       }
 
-      const supabase = createClient()
-      const { data: rpcData, error: rpcError } = await supabase.rpc("crear_venta_atomica", {
-        p_user_id,
-        p_ruta_id,
-        p_rol,
-        p_cliente,
-        p_loan,
-        p_payment_plan,
-      })
+      // NOTA: `enviarOEncolar` de arriba YA envio la venta al servidor. Aqui
+      // antes habia una segunda llamada directa a `crear_venta_atomica` que
+      // quedo por error al agregar el soporte offline: creaba un SEGUNDO
+      // prestamo, ademas sin llave de idempotencia, asi que la proteccion
+      // contra duplicados no podia detectarlo. Ese bloque se elimino.
 
-      if (rpcError) {
-        console.error("[v0] Error RPC crear_venta_atomica:", rpcError)
-        // Detectar el caso de documento duplicado para mostrar un mensaje
-        // amigable. Postgres devuelve code "23505" (unique_violation) y el
-        // mensaje suele incluir el nombre de la columna/constraint
-        // (`clients_documento_key`, `clients.documento`, etc.).
-        const errMsg = rpcError.message || ""
-        const isDocDuplicado =
-          rpcError.code === "23505" ||
-          /documento/i.test(errMsg) ||
-          /clients_documento/i.test(errMsg)
-        toast({
-          title: isDocDuplicado ? "Documento ya registrado" : "Error al crear la venta",
-          description: isDocDuplicado
-            ? `Ya existe un cliente con el documento ${documento}. Búscalo en "Cliente Existente" para registrar otra venta.`
-            : errMsg || "No se pudo completar la operación",
-          variant: "destructive",
-        })
-        return
-      }
+      console.log("[v0] crear_venta_atomica OK:", resultadoVenta)
 
-      console.log("[v0] crear_venta_atomica OK:", rpcData)
-
-      // Success
-      const successMsg = `Se registró la venta de $${Number(valor || 0).toLocaleString()} para ${apodo || nombreCompleto}.`
-      // Toast pill flotante: feedback inmediato igual que en gastos/ingresos.
+      const successMsg = `Se registró la venta de $${Number(valor || 0).toLocaleString()} para ${nombreParaEtiqueta}.`
       showToastPill("Venta registrada exitosamente")
-      // Dialog modal: requiere que el usuario lo cierre explicitamente
-      // para que no se pierda el feedback de confirmacion.
       setSuccessDialog({ open: true, msg: successMsg })
-      // Banner persistente en cabecera (respaldo visual mientras el dialog
-      // este cerrado y el formulario aun visible).
       setSuccessAlert(successMsg)
       setFormAlert(null)
       setTimeout(() => setSuccessAlert(null), 6000)
 
-      // Reset form — all fields regardless of new/existing client
-      setValor("")
-      setSaldo("")
-      setValorAPagar("")
-      setValorCuota("")
-      setTasaInteres("")
-      setDias("")
-      setTipoAmortizacion("")
-      setFrecuenciaPago("")
-      setDiaSemana("")
-      setEnrutarVenta("")
-      setAmortizacionTable([])
-      setShowAmortization(false)
-      setPagoAdelantado(false)
-      setNumeroCuotas(1)
-      setOtroValor(false)
-      setValorPago("")
-      setPrestamoEmpleado(false)
-      // Reset client selection
-      setSelectedClient("")
-      setClientSearch("")
-      // Reset new-client fields always
-      setDocumento("")
-      setNombreCompleto("")
-      setApodo("")
-      setSector("")
-      setTelefono("")
-      setTelefono2("")
-      setTelefonoError("")
-      setTelefono2Error("")
-      setDireccion("")
-      setTipoComercio("")
-      setRef1Nombre("")
-      setRef1Telefono("")
-      setRef1Direccion("")
-      setFormErrors(new Set())
-      setCedulaImage(null)
+      resetFormularioVenta()
     } catch (error) {
       console.error('[v0] Error creating venta:', error)
       toast({
@@ -1110,6 +1087,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       })
     } finally {
       setIsCreating(false)
+      creandoVentaRef.current = false
     }
   }
 
@@ -1255,7 +1233,14 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         <h2 className="text-base md:text-2xl font-bold text-card-foreground">Nueva Venta</h2>
         <button
           type="button"
-          onClick={() => setIsNewClient(!isNewClient)}
+          onClick={() => {
+            // Se cambia de cliente: el formulario se limpia por completo.
+            // Antes los datos del cliente anterior quedaban vivos en el
+            // estado (solo dejaban de verse), y el mensaje de exito podia
+            // anunciar la venta a nombre del cliente equivocado.
+            resetFormularioVenta()
+            setIsNewClient(!isNewClient)
+          }}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-semibold text-sm md:text-base transition-all ${
             isNewClient
               ? "bg-primary text-primary-foreground shadow-md"
@@ -1547,6 +1532,9 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
               <Select
                 value={selectedClient}
                 onValueChange={(val) => {
+                  // Al elegir otro cliente se limpian los datos del anterior
+                  // (incluidos los de un intento de cliente nuevo abandonado).
+                  limpiarDatosCliente()
                   setSelectedClient(val)
                   const found = clientOptions.find((c) => c.id === val)
                   if (found) setClientSearch((found.apodo || found.nombre_completo).toUpperCase())
