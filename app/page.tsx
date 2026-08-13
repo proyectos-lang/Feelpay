@@ -322,9 +322,40 @@ export default function Page() {
         day: "2-digit",
       }).format(new Date())
 
+      // El ultimo estado conocido para ESTA ruta y ESTE dia. Es lo que se
+      // usa cuando no se puede preguntar al servidor.
+      const leerCacheRuta = (): "abierta" | "cerrada" | null => {
+        try {
+          const raw = localStorage.getItem(RUTA_ACTIVA_CACHE_KEY)
+          if (!raw) return null
+          const c = JSON.parse(raw) as RutaActivaCache
+          if (c?.rutaId !== selectedRuta.id || c?.fecha !== fechaHoy) return null
+          return c.estado === "abierta" || c.estado === "cerrada" ? c.estado : null
+        } catch {
+          return null
+        }
+      }
+
+      // SIN CONEXION no se pregunta: se trabaja con lo ultimo que se supo.
+      //
+      // Antes se intentaba igual, la consulta fallaba, el resultado quedaba
+      // en null y eso hacia dos danos: aparecia "Ruta no iniciada" sobre una
+      // ruta que si estaba abierta, y ademas se BORRABA el cache. Con el
+      // cache borrado ya no habia forma de recuperarlo sin señal, asi que el
+      // cobrador quedaba encerrado fuera del modulo de pagos en pleno campo.
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        if (cancelled) return
+        setRutaActivaEstado(leerCacheRuta())
+        setRutaActivaResolved(true)
+        return
+      }
+
       // SELECT directo sobre `rutas_diarias` filtrando por ruta_id + fecha.
       // RLS eliminado: el filtro por ruta es 100% a nivel app.
       let result: "abierta" | "cerrada" | null = null
+      // Distingue "el servidor dijo que no hay fila" de "no pude preguntar".
+      // Solo lo primero justifica borrar el cache.
+      let respondioElServidor = false
       try {
         const supabase = await getSupabaseSafe()
         const { data, error } = await supabase
@@ -338,18 +369,23 @@ export default function Page() {
           console.error("[v0] rutas_diarias error:", error.message)
         } else {
           result = (data?.estado ?? null) as "abierta" | "cerrada" | null
+          respondioElServidor = true
         }
       } catch (err) {
         if (cancelled) return
         console.warn("[v0] rutas_diarias excepcion:", err)
       }
+
+      // Si no hubo respuesta, se conserva lo ultimo que se supo en vez de
+      // caer a null y mostrar el guard sobre una ruta abierta.
+      if (!respondioElServidor) {
+        setRutaActivaEstado(leerCacheRuta())
+        setRutaActivaResolved(true)
+        return
+      }
+
       setRutaActivaEstado(result)
-      // Una vez tenemos respuesta definitiva del servidor (sea cual sea),
-      // marcamos resolved=true para que el guard pueda evaluar.
       setRutaActivaResolved(true)
-      // Persistimos el resultado en cache cuando es un estado conocido
-      // (abierta/cerrada). Si es null lo limpiamos para no hidratar
-      // optimistamente con datos viejos.
       try {
         if (result === "abierta" || result === "cerrada") {
           const cache: RutaActivaCache = {
@@ -359,6 +395,8 @@ export default function Page() {
           }
           localStorage.setItem(RUTA_ACTIVA_CACHE_KEY, JSON.stringify(cache))
         } else {
+          // El servidor confirmo que no hay jornada abierta hoy: aqui si
+          // corresponde limpiar.
           localStorage.removeItem(RUTA_ACTIVA_CACHE_KEY)
         }
       } catch (err) {
@@ -366,8 +404,16 @@ export default function Page() {
       }
     }
     fetchRutaActiva()
+
+    // Al volver la señal se vuelve a preguntar: mientras estuvo sin conexion
+    // se trabajo con el ultimo estado conocido y pudo haber cambiado (otro
+    // dispositivo cerro la jornada, por ejemplo).
+    const alVolverLaRed = () => { fetchRutaActiva() }
+    window.addEventListener("online", alVolverLaRed)
+
     return () => {
       cancelled = true
+      window.removeEventListener("online", alVolverLaRed)
     }
   }, [selectedRuta, sesionFixed])
 

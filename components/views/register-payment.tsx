@@ -1895,7 +1895,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         .maybeSingle(),
       supabase
         .from("clients")
-        .select("nombre_completo")
+        .select("nombre_completo, apodo")
         .eq("id", client.clientId)
         .maybeSingle(),
     ])
@@ -1905,7 +1905,32 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       total_recaudado?: number | null
       saldo_pendiente?: number | null
     } | null
-    const nombreCompleto = clientRes.data?.nombre_completo ?? client.nombre
+    // El recibo lleva el nombre del cliente, sin el apodo.
+    //
+    // En muchos registros el apodo (el oficio o el negocio) quedo guardado
+    // DENTRO de `nombre_completo`, y salia impreso en la mitad del nombre:
+    // "EDUARDO MECANICO RODRIGUEZ". Aca se le quita si esta como palabra
+    // aparte, sin tocar la base.
+    //
+    // Dos salvaguardas para no dejar a nadie sin nombre: si el apodo ES el
+    // nombre completo no hay nada que quitar, y si al quitarlo queda una
+    // sola palabra se prefiere el original. Ver
+    // scripts/diagnostico-nombres-clientes.sql para limpiar el dato de raiz.
+    const sinApodo = (completo: string, apodo: string | null | undefined): string => {
+      const a = (apodo ?? "").trim()
+      if (!a || a.toLowerCase() === completo.trim().toLowerCase()) return completo
+      const escapado = a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      const limpio = completo
+        .replace(new RegExp(escapado, "gi"), " ")
+        .replace(/\s+/g, " ")
+        .trim()
+      return limpio.split(" ").filter(Boolean).length >= 2 ? limpio : completo
+    }
+
+    const datosCliente = clientRes.data as { nombre_completo?: string | null; apodo?: string | null } | null
+    const nombreCompleto = datosCliente?.nombre_completo
+      ? sinApodo(datosCliente.nombre_completo, datosCliente.apodo)
+      : client.nombre
 
     // Abono de hoy: si el cliente ya fue gestionado viene en el objeto (que
     // ya trae la SUMA del dia); si no, se consulta lo gestionado hoy.
@@ -2330,6 +2355,19 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // estado real con SELECT y sincroniza el guard, en vez de fallar al usuario.
   const handleIniciarRutaInline = async () => {
     if (iniciandoRuta) return
+    // Abrir la jornada SI necesita servidor: es la fila que despues consultan
+    // el cierre de caja y el monitoreo del admin, y encolarla dejaria a dos
+    // dispositivos creyendo cada uno que abrio la ruta. Lo que si funciona
+    // sin señal es SEGUIR trabajando una ruta ya abierta: el estado queda
+    // guardado en el dispositivo.
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      toast({
+        title: "Sin conexión",
+        description: "Para iniciar la ruta necesitas señal. Si ya la habías iniciado hoy, vuelve a abrir la app con señal una vez y podrás seguir trabajando sin conexión.",
+        variant: "destructive",
+      })
+      return
+    }
     try {
       setIniciandoRuta(true)
       // Centralizado en `safeQuery`: garantiza RLS lista o redirige al login.
