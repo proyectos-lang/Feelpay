@@ -2706,6 +2706,22 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               )
             })()}
 
+            {/* Buscador.
+                Va DENTRO de la cabecera fija a proposito. Estaba dentro del
+                panel, debajo de todo esto, y como la cabecera es `sticky` con
+                fondo opaco, apenas el cobrador hacia scroll para ver la lista
+                la cabecera se le montaba encima: el campo quedaba tapado y el
+                toque se lo comia la cabecera. Aca queda siempre a la mano,
+                que es justo para lo que sirve buscar en una lista larga. */}
+            {activeTab === "pendientes" && (
+              <Input
+                placeholder="Buscar cliente por nombre o documento..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="mt-2 h-8 md:h-10 text-[12px] md:text-sm md:max-w-sm"
+              />
+            )}
+
             {/* Tab bar: Pendientes / Gestionados / Ventas
                 Los dots debajo de la barra (solo en móvil) refuerzan la
                 affordance de swipe horizontal. */}
@@ -2798,16 +2814,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
           {/* ── Panel 0: Pendientes ────────────────────────────────────── */}
           <div className="w-full shrink-0 p-2 md:p-6">
-            {(
-              <div className="mb-3 md:mb-4">
-                <Input
-                  placeholder="Buscar cliente por nombre o documento..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="max-w-sm h-8 md:h-10 text-[12px] md:text-sm"
-                />
-              </div>
-            )}
             {loading && (
               <div className="flex items-center justify-center py-10">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
