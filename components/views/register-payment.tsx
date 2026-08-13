@@ -934,7 +934,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         const paymentPlan = paymentPlansByLoan.get(loan.id) || []
         // Conteos sobre cuotas BASE (las extra de extensiones se muestran
         // aparte como "+N extra" y no alteran el X/Y del prestamo).
-        const cuotasPagadas = paymentPlan.filter((p) => !p.es_extra && p.estado === "pagado").length
+        // Una cuota saldada por CANCELACION TOTAL queda en estado 'cancelada',
+        // no en 'pagado'. Contando solo 'pagado', un cliente que pagaba su
+        // prestamo completo aparecia con "0 de 24 cuotas" — como si no
+        // hubiera abonado nunca. Se cuentan las dos: en ambos casos la cuota
+        // quedo saldada.
+        const cuotasPagadas = paymentPlan.filter(
+          (p) => !p.es_extra && (p.estado === "pagado" || p.estado === "cancelada"),
+        ).length
         const cuotasTotales = paymentPlan.filter((p) => !p.es_extra).length
         const cuotasExtra = paymentPlan.filter((p) => p.es_extra).length
 
@@ -1021,10 +1028,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           mora = Math.max(0, diff)
         }
 
-        // Find last paid entry
-        const pagados = paymentPlan.filter((p) => p.estado === "pagado").sort(
-          (a, b) => b.numero_cuota - a.numero_cuota
-        )
+        // Ultimo abono. Por lo mismo se incluyen las canceladas, y se exige
+        // que tengan monto: en una cancelacion total solo UNA fila lleva la
+        // plata y las demas quedan en null, asi que sin este filtro el
+        // "ultimo pago" salia en blanco justo despues de cancelar.
+        const pagados = paymentPlan
+          .filter(
+            (p) =>
+              (p.estado === "pagado" || p.estado === "cancelada") &&
+              Number(p.monto_pagado) > 0,
+          )
+          .sort((a, b) => b.numero_cuota - a.numero_cuota)
         const lastPaid = pagados[0]
 
         // Fuente UNICA de verdad para el saldo: `saldo_prestamos_clientes`.
