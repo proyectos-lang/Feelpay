@@ -6,6 +6,15 @@ interface ApproveTransactionParams {
   id: number
   status: "aprobado" | "rechazado"
   adminName: string
+  /**
+   * true cuando quien resuelve es secretaria y no el admin.
+   *
+   * El limite del item existe para que el admin revise el monto, asi que
+   * dejarlo pasar por secretaria salta ese control a proposito. Se marca en
+   * `adminaprobo` para que despues se distinga de una aprobacion real del
+   * admin: si no, en la auditoria las dos se ven igual.
+   */
+  enLugarDelAdmin?: boolean
 }
 
 export async function approveTransaction(params: ApproveTransactionParams) {
@@ -13,6 +22,9 @@ export async function approveTransaction(params: ApproveTransactionParams) {
     const supabase = await getSupabaseServer()
 
     const fechahoraaproboadm = new Date().toISOString()
+    const quienAprobo = params.enLugarDelAdmin
+      ? `${params.adminName} (secretaria, en lugar del admin)`
+      : params.adminName
 
     // El `.eq("estadoadmin", "por aprobar")` es la guarda: sin el, una
     // pantalla vieja podia volver a aprobar (o voltear a rechazado) algo que
@@ -38,7 +50,7 @@ export async function approveTransaction(params: ApproveTransactionParams) {
       const { data, error } = await supabase.from("gastosregistros").update({
         estadoadmin: "aprobado",
         estadosecre: yaAprobadaPorSecretaria ? "aprobado" : "por aprobar",
-        adminaprobo: params.adminName,
+        adminaprobo: quienAprobo,
         fechahoraaproboadm,
       }).eq("id", params.id).eq("estadoadmin", "por aprobar").select("id")
 
@@ -54,7 +66,7 @@ export async function approveTransaction(params: ApproveTransactionParams) {
     } else if (params.status === "rechazado") {
       const { data, error } = await supabase.from("gastosregistros").update({
         estadoadmin: "rechazado",
-        adminaprobo: params.adminName,
+        adminaprobo: quienAprobo,
         fechahoraaproboadm,
       }).eq("id", params.id).eq("estadoadmin", "por aprobar").select("id")
 

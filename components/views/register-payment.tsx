@@ -195,7 +195,15 @@ const isPaymentDayToday = (diaSemana: string | null) => {
   return diaSemana.toLowerCase() === today
 }
 
-type ManagedClient = DisplayClient & { gestionTipo: "pago" | "no_pago"; gestionHora: string; valorAbonado: number; paymentPlanId?: string }
+type ManagedClient = DisplayClient & {
+  gestionTipo: "pago" | "no_pago"
+  gestionHora: string
+  /** Suma de lo cobrado HOY en este prestamo, no el monto de una sola cuota. */
+  valorAbonado: number
+  /** Cuantas cuotas cubrio el cobro de hoy. Se imprime en el recibo. */
+  cuotasAbonadas: number
+  paymentPlanId?: string
+}
 
 // La obtencion de la posicion vive en lib/geo.ts porque Nueva Venta tambien
 // la necesita (para dejar la ubicacion de referencia del cliente) y ahi mismo
@@ -1086,11 +1094,35 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             ? new Date(targetEntry.fecha_pago_real).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })
             : ""
 
+          // El abono se SUMA sobre todas las cuotas gestionadas hoy, no se lee
+          // de `targetEntry`.
+          //
+          // Una sola gestion puede tocar varias filas y solo una lleva la
+          // plata: en un abono de varias cuotas la RPC pone el monto en la
+          // cuota ancla y deja las demas en 0, y en una cancelacion total la
+          // primera lleva el saldo y el resto quedan en NULL. Ademas, desde
+          // el script 032 TODAS quedan con `fecha_pago` = hoy, asi que el
+          // `.find()` que elige la cuota objetivo las ve empatadas y devuelve
+          // cualquiera. Cuando caia en una de las que quedaron en cero, el
+          // cobrador veia "Abonado: $0" sobre un pago que si habia entrado.
+          const gestionadasHoy = paymentPlan.filter(
+            (p) =>
+              p.estado !== "pendiente" &&
+              p.fecha_pago_real &&
+              p.fecha_pago_real.startsWith(todayColombia),
+          )
+          const abonadoHoy = gestionadasHoy.reduce((s, p) => s + (Number(p.monto_pagado) || 0), 0)
+          const cuotasConAbono = gestionadasHoy.filter((p) => p.estado !== "no_pago").length
+
           managedClientsFromDB.push({
             ...clientData,
-            gestionTipo: targetEntry.estado === "no_pago" ? "no_pago" : "pago",
+            // Por lo mismo, el tipo tampoco se decide con una sola fila: si
+            // hoy entro plata la gestion es un pago, aunque el desempate
+            // hubiera devuelto la fila de un no pago del mismo dia.
+            gestionTipo: cuotasConAbono > 0 ? "pago" : "no_pago",
             gestionHora,
-            valorAbonado: targetEntry.monto_pagado || 0,
+            valorAbonado: abonadoHoy,
+            cuotasAbonadas: cuotasConAbono,
             paymentPlanId: targetEntry.id,
           })
         } else {
@@ -1509,6 +1541,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           gestionTipo: "pago",
           gestionHora,
           valorAbonado: isCanceladaSnap ? clientSnapshot.saldo : monto,
+          // Una cancelacion total salda todas las cuotas que quedaban.
+          cuotasAbonadas: isCanceladaSnap
+            ? Math.max(1, clientSnapshot.cuotasTotales + clientSnapshot.cuotasExtra - clientSnapshot.cuotasPagadas)
+            : numCuotasSnap,
           paymentPlanId: clientSnapshot.nextPaymentId ?? undefined,
         },
         ...prev,
@@ -1666,6 +1702,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           gestionTipo: "no_pago",
           gestionHora,
           valorAbonado: 0,
+          cuotasAbonadas: 0,
           paymentPlanId: clientSnapshot.nextPaymentId ?? undefined,
         },
         ...prev,
@@ -1741,6 +1778,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           .from("payment_plan")
           .select("id, fecha_pago, valor_cuota, estado, monto_pagado, fecha_pago_real, numero_cuota")
           .eq("loan_id", paymentHistoryClient.loanId)
+          // Solo lo GESTIONADO: el historial muestra los dias en que hubo un
+          // pago o un no pago, no la programacion completa del prestamo. Para
+          // ver lo que falta esta Control de Pagos.
+          .neq("estado", "pendiente")
           .order("numero_cuota", { ascending: true })
         if (cancelled) return
         if (error) throw error
@@ -1815,12 +1856,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     return () => { cancelled = true }
   }, [clientInfoDialogOpen, selectedClientInfo])
 
-  // ── Generar recibo PDF con jspdf ──────────────────────────────────────
-  /**
-   * Convierte una imagen remota a base64. jsPDF no acepta URLs: necesita los
-   * bytes. Si falla (sin señal, URL rota), se devuelve null y el recibo se
-   * imprime sin logo en vez de fallar.
-   */
+  /** Descarga el logo y lo devuelve como data URL para poder pintarlo. */
   const cargarLogoBase64 = async (url: string): Promise<string | null> => {
     try {
       const res = await fetch(url)
@@ -1837,8 +1873,19 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     }
   }
 
-  // ── Generar recibo PDF con jspdf ──────────────────────────────────────
-  const buildReciboPdf = async (client: DisplayClient, gestionHoy?: ManagedClient) => {
+  // -- Generar recibo como IMAGEN ---------------------------------------
+  // Se dibuja en un canvas y se exporta PNG, en vez del PDF de antes.
+  //
+  // Por que imagen: compartido por WhatsApp o correo, un PNG se ve dentro
+  // del chat y el cliente lo lee de una; un PDF llega como adjunto que hay
+  // que abrir aparte. Se usa Canvas 2D y no una libreria: el recibo son
+  // filas de texto, dos lineas y el logo, o sea lo mismo que se hacia con
+  // jsPDF pero con fillText/drawImage. Sin dependencias nuevas y sigue
+  // funcionando sin senal.
+  const buildReciboImagen = async (
+    client: DisplayClient,
+    gestionHoy?: ManagedClient,
+  ): Promise<{ blob: Blob; filename: string; dataUrl: string }> => {
     const supabase = await getSupabaseSafe()
     const [saldoRes, clientRes] = await Promise.all([
       supabase
@@ -1860,23 +1907,23 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     } | null
     const nombreCompleto = clientRes.data?.nombre_completo ?? client.nombre
 
-    // Abono de hoy: si el cliente ya fue gestionado, viene en el objeto;
-    // si no, se consulta la cuota gestionada hoy.
+    // Abono de hoy: si el cliente ya fue gestionado viene en el objeto (que
+    // ya trae la SUMA del dia); si no, se consulta lo gestionado hoy.
     let abonoHoy = gestionHoy?.valorAbonado ?? null
+    let cuotasAbonadas = gestionHoy?.cuotasAbonadas ?? 0
     let fechaAbono: string | null = gestionHoy ? todayColombia() : null
     if (abonoHoy == null) {
-      const { data: hoyRow } = await supabase
+      const { data: filasHoy } = await supabase
         .from("payment_plan")
-        .select("monto_pagado, fecha_pago_real")
+        .select("monto_pagado, fecha_pago_real, estado")
         .eq("loan_id", client.loanId)
         .eq("fecha_pago", todayColombia())
         .neq("estado", "pendiente")
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      if (hoyRow) {
-        abonoHoy = Number((hoyRow as { monto_pagado: number | null }).monto_pagado ?? 0)
-        const fpr = (hoyRow as { fecha_pago_real: string | null }).fecha_pago_real
+      const filas = (filasHoy ?? []) as { monto_pagado: number | null; fecha_pago_real: string | null; estado: string }[]
+      if (filas.length > 0) {
+        abonoHoy = filas.reduce((acc, f) => acc + (Number(f.monto_pagado) || 0), 0)
+        cuotasAbonadas = filas.filter((f) => f.estado !== "no_pago").length
+        const fpr = filas.find((f) => f.fecha_pago_real)?.fecha_pago_real
         fechaAbono = fpr ? fpr.split("T")[0] : todayColombia()
       }
     }
@@ -1885,55 +1932,18 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     const umbralesRuta = await getRutaUmbrales(currentRutaId)
     const logoUrl = umbralesRuta.logo_url || `${window.location.origin}/opad-logo.png`
     const logoBase64 = await cargarLogoBase64(logoUrl)
-
-    const { jsPDF } = await import("jspdf")
-    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: [80, 160] })
+    const logoImg = logoBase64
+      ? await new Promise<HTMLImageElement | null>((resolve) => {
+          const img = new Image()
+          img.onload = () => resolve(img)
+          img.onerror = () => resolve(null)
+          img.src = logoBase64
+        })
+      : null
 
     const now = new Date()
     const fechaStr = now.toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric" })
     const horaStr = now.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })
-
-    const pageW = 80
-    let y = 6
-
-    if (logoBase64) {
-      try {
-        doc.addImage(logoBase64, "PNG", pageW / 2 - 9, y, 18, 18, undefined, "FAST")
-        y += 21
-      } catch {
-        /* formato de imagen no soportado: seguimos sin logo */
-      }
-    }
-
-    doc.setFontSize(10)
-    doc.setFont("helvetica", "bold")
-    doc.text("RECIBO DE PAGO", pageW / 2, y, { align: "center" })
-    y += 6
-
-    doc.setFontSize(7)
-    doc.setFont("helvetica", "normal")
-    doc.text(`Fecha: ${fechaStr}  Hora: ${horaStr}`, pageW / 2, y, { align: "center" })
-    y += 5
-
-    doc.setLineWidth(0.3)
-    doc.line(5, y, pageW - 5, y)
-    y += 4
-
-    doc.setFontSize(8)
-    doc.setFont("helvetica", "bold")
-    doc.text("Cliente:", 5, y)
-    doc.setFont("helvetica", "normal")
-    doc.text(nombreCompleto, 25, y)
-    y += 5
-
-    doc.setFont("helvetica", "bold")
-    doc.text("Documento:", 5, y)
-    doc.setFont("helvetica", "normal")
-    doc.text(client.documento || "-", 25, y)
-    y += 5
-
-    doc.line(5, y, pageW - 5, y)
-    y += 4
 
     const fmt = (n: number | null | undefined) =>
       n != null ? `$${Math.round(n).toLocaleString("es-CO")}` : "-"
@@ -1951,35 +1961,117 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       ["Cuotas:", `${client.cuotasPagadas} / ${client.cuotasTotales}${client.cuotasExtra > 0 ? ` (+${client.cuotasExtra} extra)` : ""}`],
       ["Frecuencia:", frecuenciaLabel(client.frecuenciaPago)],
       ["Fallas:", `${client.mora}`],
-      ["Saldo por sanción:", client.multaPendiente ? fmt(client.multaPendiente.valor) : "$0"],
+      ["Saldo por sancion:", client.multaPendiente ? fmt(client.multaPendiente.valor) : "$0"],
     ]
 
-    // El abono solo aparece si hubo movimiento; un recibo de consulta no lo lleva.
+    // El bloque del abono solo aparece si hubo movimiento; un recibo de
+    // consulta no lo lleva. Aca va cuantas cuotas cubrio el cobro de hoy.
     if (abonoHoy != null && abonoHoy > 0) {
       rows.splice(1, 0,
         ["Fecha del abono:", fmtFechaCorta(fechaAbono)],
+        ["Cuotas abonadas:", `${cuotasAbonadas}`],
         ["Valor pagado:", fmt(abonoHoy)],
       )
     }
 
-    doc.setFontSize(8)
-    for (const [label, val] of rows) {
-      doc.setFont("helvetica", "bold")
-      doc.text(label, 5, y)
-      doc.setFont("helvetica", "normal")
-      doc.text(val, pageW - 5, y, { align: "right" })
-      y += 5
+    // -- Dibujo ---------------------------------------------------------
+    // Medidas en puntos logicos (ancho de tirilla 80mm ~ 300pt) y se escala
+    // x3 al pintar para que se vea nitido en la pantalla del celular.
+    const ESCALA = 3
+    const W = 300
+    const PAD = 18
+    const ALTO_FILA = 20
+    const ALTO_LOGO = logoImg ? 72 : 0
+
+    const H =
+      PAD + ALTO_LOGO + 30 + 20 + 14 +
+      ALTO_FILA * 2 + 14 +
+      ALTO_FILA * rows.length + 14 +
+      26 + PAD
+
+    const canvas = document.createElement("canvas")
+    canvas.width = W * ESCALA
+    canvas.height = H * ESCALA
+    const ctx = canvas.getContext("2d")
+    if (!ctx) throw new Error("No se pudo preparar el lienzo del recibo")
+    ctx.scale(ESCALA, ESCALA)
+
+    ctx.fillStyle = "#ffffff"
+    ctx.fillRect(0, 0, W, H)
+    ctx.fillStyle = "#000000"
+    ctx.textBaseline = "alphabetic"
+
+    const linea = (yy: number) => {
+      ctx.strokeStyle = "#000000"
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(PAD, yy)
+      ctx.lineTo(W - PAD, yy)
+      ctx.stroke()
     }
 
-    doc.line(5, y, pageW - 5, y)
-    y += 4
+    const parLabelValor = (label: string, valor: string, yy: number) => {
+      ctx.font = "bold 12.5px Helvetica, Arial, sans-serif"
+      ctx.textAlign = "left"
+      ctx.fillText(label, PAD, yy)
+      // Se mide la etiqueta con SU fuente (negrita, mas ancha) antes de
+      // cambiarla, para saber cuanto espacio queda de verdad.
+      const anchoLibre = W - PAD * 2 - ctx.measureText(label).width - 8
+      ctx.font = "12.5px Helvetica, Arial, sans-serif"
+      ctx.textAlign = "right"
+      // El ancho maximo evita que un nombre largo se monte sobre la etiqueta
+      // o se salga del recibo: el navegador lo condensa para que quepa.
+      ctx.fillText(valor, W - PAD, yy, Math.max(40, anchoLibre))
+      ctx.textAlign = "left"
+    }
 
-    doc.setFontSize(6.5)
-    doc.setFont("helvetica", "italic")
-    doc.text("Este documento es un comprobante informativo.", pageW / 2, y, { align: "center" })
+    let y = PAD
 
-    const filename = `recibo_${client.nombre.replace(/\s+/g, "_")}_${fechaStr.replace(/\//g, "-")}.pdf`
-    return { doc, filename }
+    if (logoImg) {
+      const lado = 64
+      ctx.drawImage(logoImg, W / 2 - lado / 2, y, lado, lado)
+      y += ALTO_LOGO
+    }
+
+    ctx.font = "bold 17px Helvetica, Arial, sans-serif"
+    ctx.textAlign = "center"
+    ctx.fillText("RECIBO DE PAGO", W / 2, y + 14)
+    y += 30
+
+    ctx.font = "12px Helvetica, Arial, sans-serif"
+    ctx.fillText(`Fecha: ${fechaStr}   Hora: ${horaStr}`, W / 2, y + 10)
+    y += 20
+
+    linea(y)
+    y += 14
+
+    parLabelValor("Cliente:", nombreCompleto, y + 11)
+    y += ALTO_FILA
+    parLabelValor("Documento:", client.documento || "-", y + 11)
+    y += ALTO_FILA
+
+    linea(y)
+    y += 14
+
+    for (const [label, val] of rows) {
+      parLabelValor(label, val, y + 11)
+      y += ALTO_FILA
+    }
+
+    linea(y)
+    y += 14
+
+    ctx.font = "italic 10.5px Helvetica, Arial, sans-serif"
+    ctx.textAlign = "center"
+    ctx.fillStyle = "#444444"
+    ctx.fillText("Este documento es un comprobante informativo.", W / 2, y + 9)
+
+    const filename = `recibo_${client.nombre.replace(/\s+/g, "_")}_${fechaStr.replace(/\//g, "-")}.png`
+    const dataUrl = canvas.toDataURL("image/png")
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("No se pudo generar la imagen del recibo"))), "image/png")
+    })
+    return { blob, filename, dataUrl }
   }
 
   /**
@@ -2004,8 +2096,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const handleDescargarRecibo = async (client: DisplayClient) => {
     setSharingPdf(true)
     try {
-      const { doc, filename } = await buildReciboPdf(client, gestionDe(client))
-      doc.save(filename)
+      const { dataUrl, filename } = await buildReciboImagen(client, gestionDe(client))
+      const a = document.createElement("a")
+      a.href = dataUrl
+      a.download = filename
+      a.click()
     } catch (e) {
       console.error("[v0] handleDescargarRecibo error:", e)
       toast({ title: "Error", description: "No se pudo generar el recibo.", variant: "destructive" })
@@ -2021,9 +2116,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const handleShareComprobante = async (client: DisplayClient) => {
     setSharingPdf(true)
     try {
-      const { doc, filename } = await buildReciboPdf(client, gestionDe(client))
-      const pdfBlob = doc.output("blob")
-      const file = new File([pdfBlob], filename, { type: "application/pdf" })
+      const { blob, dataUrl, filename } = await buildReciboImagen(client, gestionDe(client))
+      const file = new File([blob], filename, { type: "image/png" })
 
       if (
         typeof navigator !== "undefined" &&
@@ -2034,7 +2128,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         await navigator.share({ files: [file], title: "Recibo de pago" })
       } else {
         // Fallback: descarga directa si Web Share API no soporta archivos
-        doc.save(filename)
+        const a = document.createElement("a")
+        a.href = dataUrl
+        a.download = filename
+        a.click()
       }
     } catch (e: unknown) {
       // El usuario canceló el share — no es un error real
@@ -3627,7 +3724,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           <DialogHeader>
             <DialogTitle className="text-sm md:text-lg">Historial de Pagos</DialogTitle>
             <DialogDescription className="text-xs md:text-sm">
-              {paymentHistoryClient?.nombre} — todas las cuotas del préstamo
+              {paymentHistoryClient?.nombre} — días con pago o no pago registrado
             </DialogDescription>
           </DialogHeader>
           {paymentHistoryLoading ? (
@@ -3642,10 +3739,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 // no `fecha_pago`: esta ultima se sobrescribe con el dia del
                 // cobro, asi que ordenar por numero de cuota hacia zigzaguear
                 // las fechas y repetirlas al pagar varias cuotas de una vez.
-                const gestionadas = paymentHistoryRows.filter((r) => r.estado !== "pendiente")
-                const pendientes = paymentHistoryRows
-                  .filter((r) => r.estado === "pendiente")
-                  .sort((a, b) => a.numero_cuota - b.numero_cuota)
+                const gestionadas = paymentHistoryRows
 
                 const porDia = new Map<string, typeof gestionadas>()
                 for (const r of gestionadas) {
@@ -3699,28 +3793,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                         </div>
                       )
                     })}
-
-                    {pendientes.length > 0 && (
-                      <div className="rounded-lg border overflow-hidden">
-                        <div className="bg-muted px-3 py-1.5">
-                          <span className="text-[11px] md:text-sm font-semibold text-muted-foreground">
-                            Cuotas pendientes ({pendientes.length})
-                          </span>
-                        </div>
-                        <div className="divide-y">
-                          {pendientes.map((r) => (
-                            <div key={r.id} className="flex items-center justify-between gap-2 px-3 py-1.5">
-                              <span className="text-[10px] md:text-xs text-muted-foreground">
-                                Cuota {r.numero_cuota} · {fechaLarga(r.fecha_pago)}
-                              </span>
-                              <span className="text-[10px] md:text-xs tabular-nums">
-                                ${Math.round(r.valor_cuota).toLocaleString("es-CO")}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </>
                 )
               })()}
