@@ -328,8 +328,16 @@ export function RegisterTransaction({
       setIncomeLimite(null)
       setShowIncomeWarning(false)
     } catch (error) {
+      // Se muestra el motivo REAL. Antes salia solo "Error al guardar",
+      // que obliga a adivinar: el cobrador no puede ver la consola del
+      // servidor y quien soporta tampoco sabe por donde empezar.
       console.error("[v0] Error saving income:", error)
-      showToast("Error al guardar el ingreso", "error")
+      showToast(
+        error instanceof Error && error.message
+          ? `No se pudo guardar el ingreso: ${error.message}`
+          : "Error al guardar el ingreso",
+        "error",
+      )
     } finally {
       setSaving(false)
     }
@@ -384,8 +392,16 @@ export function RegisterTransaction({
       setExpenseLimite(null)
       setShowExpenseWarning(false)
     } catch (error) {
+      // Se muestra el motivo REAL. Antes salia solo "Error al guardar",
+      // que obliga a adivinar: el cobrador no puede ver la consola del
+      // servidor y quien soporta tampoco sabe por donde empezar.
       console.error("[v0] Error saving expense:", error)
-      showToast("Error al guardar el gasto", "error")
+      showToast(
+        error instanceof Error && error.message
+          ? `No se pudo guardar el gasto: ${error.message}`
+          : "Error al guardar el gasto",
+        "error",
+      )
     } finally {
       setSaving(false)
     }
@@ -440,8 +456,16 @@ export function RegisterTransaction({
       setWithdrawalLimite(null)
       setShowWithdrawalWarning(false)
     } catch (error) {
+      // Se muestra el motivo REAL. Antes salia solo "Error al guardar",
+      // que obliga a adivinar: el cobrador no puede ver la consola del
+      // servidor y quien soporta tampoco sabe por donde empezar.
       console.error("[v0] Error saving withdrawal:", error)
-      showToast("Error al guardar el retiro", "error")
+      showToast(
+        error instanceof Error && error.message
+          ? `No se pudo guardar el retiro: ${error.message}`
+          : "Error al guardar el retiro",
+        "error",
+      )
     } finally {
       setSaving(false)
     }

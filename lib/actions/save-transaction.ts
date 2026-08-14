@@ -85,8 +85,13 @@ export async function saveTransaction(params: SaveTransactionParams) {
         if (reservaErr.code === "23505") {
           return { success: true, data: null, duplicado: true }
         }
+        // Se devuelve el error REAL de la base, no un mensaje generico: esto
+        // corre en el servidor, asi que un console.error aca no lo ve nadie
+        // desde el telefono y el cobrador se queda con un "no se pudo" que no
+        // dice nada.
         console.error("[v0] Error reservando llave de idempotencia:", reservaErr)
-        return { success: false, error: "No se pudo registrar el movimiento" }
+        const detalle = (reservaErr as { message?: string }).message ?? JSON.stringify(reservaErr)
+        return { success: false, error: `No se pudo registrar el movimiento: ${detalle}` }
       }
       llaveReservada = true
     }
