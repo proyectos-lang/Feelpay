@@ -305,6 +305,78 @@ SELECT 'datos: prestamos activos', '—', (SELECT count(*)::text FROM loans WHER
  ORDER BY 2, 1;
 
 
+-- ── 12) Verificación después de correr 036 a 040 ──────────────────────────
+-- Todo debe decir "ok". Varias de estas piezas fallan en silencio: si no
+-- quedaron, la app no da ningún error, simplemente sigue comportándose como
+-- antes y nadie se entera hasta que los números no cuadran.
+SELECT '036 · saldo usa la fecha de Colombia' AS pieza,
+       CASE WHEN pg_get_viewdef('public.saldo_prestamos_clientes'::regclass) LIKE '%America/Bogota%'
+            THEN 'ok' ELSE '*** FALTA ***' END AS estado
+UNION ALL
+SELECT '036 · mora usa la fecha de Colombia',
+       CASE WHEN pg_get_viewdef('public.v_loan_mora_status'::regclass) LIKE '%America/Bogota%'
+            THEN 'ok' ELSE '*** FALTA ***' END
+UNION ALL
+SELECT '037 · el saldo se recalcula sobre el plan',
+       CASE WHEN EXISTS (
+              SELECT 1 FROM pg_proc p
+               WHERE p.proname = 'registrar_pago_atomico'
+                 AND p.pronamespace = 'public'::regnamespace
+                 AND pg_get_functiondef(p.oid) LIKE '%v_valor_a_pagar%'
+            ) THEN 'ok' ELSE '*** FALTA ***' END
+UNION ALL
+SELECT '038 · anon puede escribir en operaciones_procesadas',
+       CASE WHEN EXISTS (
+              SELECT 1 FROM information_schema.role_table_grants
+               WHERE table_schema = 'public' AND table_name = 'operaciones_procesadas'
+                 AND grantee = 'anon' AND privilege_type = 'INSERT'
+            ) THEN 'ok' ELSE '*** FALTA ***' END
+UNION ALL
+SELECT '039 · adminid referencia a usuarios',
+       CASE WHEN EXISTS (
+              SELECT 1 FROM pg_constraint con
+                JOIN pg_class origen  ON origen.oid  = con.conrelid
+                JOIN pg_class destino ON destino.oid = con.confrelid
+               WHERE con.conname = 'gastosregistros_adminid_fkey'
+                 AND origen.relname = 'gastosregistros'
+                 AND destino.relname = 'usuarios'
+            ) THEN 'ok' ELSE '*** FALTA (sigue apuntando a admin) ***' END
+UNION ALL
+SELECT '040 · la venta aplica el abono inicial',
+       CASE WHEN EXISTS (
+              SELECT 1 FROM pg_proc p
+               WHERE p.proname = 'crear_venta_atomica'
+                 AND p.pronamespace = 'public'::regnamespace
+                 AND pg_get_functiondef(p.oid) LIKE '%abono_inicial%'
+            ) THEN 'ok' ELSE '*** FALTA ***' END
+UNION ALL
+-- Datos, no instalación: cuántos préstamos siguen con el plan descuadrado.
+SELECT 'datos · préstamos con valor_a_pagar descuadrado',
+       (SELECT count(*)::text FROM (
+          SELECT l.id
+            FROM loans l JOIN payment_plan pp ON pp.loan_id = l.id
+           WHERE l.estado = 'activo'
+           GROUP BY l.id, l.valor_a_pagar
+          HAVING abs(sum(pp.valor_cuota) - l.valor_a_pagar) > 1
+        ) x)
+UNION ALL
+SELECT 'datos · préstamos con el saldo desfasado',
+       (SELECT count(*)::text
+          FROM loans l
+          LEFT JOIN (SELECT loan_id, COALESCE(sum(monto_pagado), 0) AS pagado
+                       FROM payment_plan GROUP BY loan_id) p ON p.loan_id = l.id
+         WHERE l.estado = 'activo'
+           AND abs(l.saldo - GREATEST(0, l.valor_a_pagar - COALESCE(p.pagado, 0))) > 0.01)
+UNION ALL
+SELECT 'datos · préstamos cancelados con deuda viva',
+       (SELECT count(*)::text
+          FROM loans l
+          LEFT JOIN saldo_prestamos_clientes v ON v.loan_id = l.id
+         WHERE l.estado = 'cancelado'
+           AND (l.saldo > 0 OR COALESCE(v.saldo_pendiente, 0) > 0))
+ ORDER BY 2 DESC, 1;
+
+
 -- ── 10) Ventas duplicadas por la regresión del 7 de agosto ────────────────
 -- Para limpiarlas usa scripts/limpiar-venta-duplicada.sql, que muestra cuál
 -- de las dos conservar antes de borrar nada.
