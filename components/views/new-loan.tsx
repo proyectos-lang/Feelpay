@@ -192,6 +192,9 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   const [sector, setSector] = useState("")
   const [procesandoCedula, setProcessandoCedula] = useState(false)
   const [pagoAdelantado, setPagoAdelantado] = useState(false)
+  // Por defecto el plan arranca MAÑANA (regla de negocio de siempre). Con
+  // esto marcado arranca HOY, el mismo dia de la venta.
+  const [iniciaPagosHoy, setIniciaPagosHoy] = useState(false)
   const [numeroCuotas, setNumeroCuotas] = useState(1)
   const [otroValor, setOtroValor] = useState(false)
   const [valorPago, setValorPago] = useState("")
@@ -491,7 +494,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     const numeroCuotas = Number.parseInt(dias)
     const todayStr = todayColombia()
     const [y, m, d] = todayStr.split("-").map(Number)
-    const fechaInicioCruda = new Date(y, m - 1, d + 1)
+    const fechaInicioCruda = new Date(y, m - 1, d + (iniciaPagosHoy ? 0 : 1))
 
     if (!valorPrestamo || !numeroCuotas) {
       alert("Por favor complete los campos de valor y número de cuotas")
@@ -648,6 +651,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     setAmortizacionTable([])
     setShowAmortization(false)
     setPagoAdelantado(false)
+    setIniciaPagosHoy(false)
     setNumeroCuotas(1)
     setOtroValor(false)
     setValorPago("")
@@ -858,15 +862,14 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         const day = String(d.getDate()).padStart(2, "0")
         return `${y}-${m}-${day}`
       }
-      // REGLA DE NEGOCIO: el plan de pagos SIEMPRE inicia al dia siguiente
-      // de la fecha en que se registra la venta (hoy + 1).
+      // REGLA DE NEGOCIO: por defecto el plan inicia al dia siguiente de la
+      // venta (hoy + 1). Con "Inicia pagos hoy" marcado arranca el mismo dia.
       // - Construimos `hoy` desde partes locales para no arrastrar UTC.
-      // - Sumamos 1 dia.
       // - Si el resultado cae en domingo y la frecuencia es diaria, se corre
       //   al lunes.
       const todayStr2 = todayColombia()
       const [y2, m2, d2] = todayStr2.split("-").map(Number)
-      let fechaInicio = new Date(y2, m2 - 1, d2 + 1)
+      let fechaInicio = new Date(y2, m2 - 1, d2 + (iniciaPagosHoy ? 0 : 1))
       fechaInicio = siguienteDiaDeCobro(fechaInicio, diasEntrePagos)
 
       const paymentSchedule: Array<{
@@ -942,6 +945,25 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       // esquema actual de `loans` (la RPC se encarga de moverlo a otra
       // tabla si aplica). `ruta` tampoco va aqui porque la RPC la toma de
       // p_ruta_id para evitar inconsistencias entre params.
+      // ── Abono inicial ─────────────────────────────────────────────────
+      const abonoInicialNum = pagoAdelantado ? (Number.parseFloat(valorPago) || 0) : 0
+      if (pagoAdelantado && abonoInicialNum <= 0) {
+        toast({
+          title: "Abono inválido",
+          description: "Marcaste pago adelantado pero el valor está vacío o en cero.",
+          variant: "destructive",
+        })
+        return
+      }
+      if (abonoInicialNum > valorAPagarNum) {
+        toast({
+          title: "Abono mayor que la venta",
+          description: `El abono ($${abonoInicialNum.toLocaleString()}) no puede superar el total a pagar ($${valorAPagarNum.toLocaleString()}).`,
+          variant: "destructive",
+        })
+        return
+      }
+
       const p_loan = {
         valor: valorNum,
         saldo: valorAPagarNum,
@@ -956,6 +978,15 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         prestamo_empleado: prestamoEmpleado,
         enrutar_venta: enrutarVenta || null,
         fecha_primer_pago: toLocalDateStr(fechaInicio),
+        // Abono inicial ("Pago adelantado"). Viaja DENTRO de p_loan igual que
+        // la llave de idempotencia, para no cambiar la firma de la RPC — que
+        // tiene otros callers, como la aprobacion de solicitudes.
+        //
+        // Hasta el script 040 este dato se capturaba en el formulario y se
+        // descartaba al guardar: la venta quedaba con todas las cuotas
+        // pendientes y la plata que el cliente entrego no aparecia por
+        // ningun lado.
+        abono_inicial: abonoInicialNum,
       }
 
       // ── Construir p_payment_plan (array de cuotas amortizadas) ────────
@@ -1676,6 +1707,29 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
               </Popover>
             </div>
           )}
+
+          {/* Cuando arranca el cobro */}
+          <label
+            htmlFor="iniciaPagosHoy"
+            className={`flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all border ${
+              iniciaPagosHoy
+                ? "bg-amber-100 border-amber-400 text-amber-800"
+                : "bg-muted/50 border-border hover:bg-muted"
+            }`}
+          >
+            <Checkbox
+              id="iniciaPagosHoy"
+              checked={iniciaPagosHoy}
+              onCheckedChange={(checked) => setIniciaPagosHoy(checked as boolean)}
+              className="h-4 w-4 md:h-5 md:w-5"
+            />
+            <span className="text-[11px] md:text-sm font-medium">
+              Inicia pagos hoy
+              <span className="ml-1 font-normal opacity-80">
+                (por defecto la primera cuota es mañana)
+              </span>
+            </span>
+          </label>
 
           {/* Pago Adelantado - Préstamo Empleado Checkboxes */}
           <div className="grid gap-2 md:gap-4 grid-cols-2">
