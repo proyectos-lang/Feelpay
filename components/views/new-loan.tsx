@@ -360,7 +360,10 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     }
 
     const tasaNum = Number.parseFloat(tasaInteres) / 100
-    if (!tasaNum || isNaN(tasaNum)) {
+    // Se distingue "todavia no escribio nada" de "escribio 0". Antes bastaba
+    // con `!tasaNum`, y como 0 es falso, una venta al 0% dejaba el saldo y la
+    // cuota en blanco: parecia que el formulario no respondia.
+    if (tasaInteres.trim() === "" || isNaN(tasaNum)) {
       setValorAPagar("")
       setValorCuota("")
       return
