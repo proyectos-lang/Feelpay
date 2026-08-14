@@ -45,14 +45,14 @@ SELECT g.adminid, count(*) AS movimientos
 
 
 -- ── PASO 2) Repuntar la llave ─────────────────────────────────────────────
-ALTER TABLE public.gastosregistros
-  DROP CONSTRAINT IF EXISTS gastosregistros_adminid_fkey;
+  ALTER TABLE public.gastosregistros
+    DROP CONSTRAINT IF EXISTS gastosregistros_adminid_fkey;
 
-ALTER TABLE public.gastosregistros
-  ADD CONSTRAINT gastosregistros_adminid_fkey
-  FOREIGN KEY (adminid) REFERENCES public.usuarios(id);
+  ALTER TABLE public.gastosregistros
+    ADD CONSTRAINT gastosregistros_adminid_fkey
+    FOREIGN KEY (adminid) REFERENCES public.usuarios(id);
 
-NOTIFY pgrst, 'reload schema';
+  NOTIFY pgrst, 'reload schema';
 
 
 -- ── PASO 3) Verificar ─────────────────────────────────────────────────────

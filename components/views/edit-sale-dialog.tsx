@@ -177,14 +177,19 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDi
     try {
       const supabase = await getSupabaseSafe()
 
-      // Guard: si el plan ya tiene alguna gestion registrada (pago, parcial,
+      // Guard: si alguna CUOTA PROGRAMADA ya se gestiono (pago, parcial,
       // no-pago, cancelada o cualquier monto abonado), NO se puede regenerar
-      // — el DELETE destruiria el historial de cobros (y cualquier cuota
-      // extra de extension). La edicion solo aplica a ventas sin gestionar.
+      // — el DELETE destruiria ese historial de cobros.
+      //
+      // Se excluyen las filas `es_extra`: el abono inicial de la venta es
+      // una de ellas, y como el script 040 lo registra asi, TODA venta con
+      // abono quedaba imposible de editar el mismo dia en que se creo. Las
+      // extras con plata no se borran mas abajo, se conservan.
       const { data: gestionadas, error: gestErr } = await supabase
         .from("payment_plan")
         .select("id")
         .eq("loan_id", sale.id)
+        .not("es_extra", "is", true)
         .or("monto_pagado.gt.0,estado.neq.pendiente")
         .limit(1)
       if (gestErr) throw gestErr
@@ -240,12 +245,29 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDi
         fechaInicio,
       })
 
-      // 1) Borrar payment_plan existente. Seguro: el guard de arriba ya
-      //    verifico que no existe ninguna gestion registrada.
-      const { error: delError } = await supabase
+      // Lo ya abonado que se va a CONSERVAR: las filas extra con plata
+      // (el abono inicial de la venta, o un pago registrado como "pago de
+      // hoy"). Se lee antes de borrar para poder descontarlo del saldo.
+      const { data: conservadas, error: consErr } = await supabase
         .from("payment_plan")
-        .delete()
+        .select("id, monto_pagado")
         .eq("loan_id", sale.id)
+        .is("es_extra", true)
+        .gt("monto_pagado", 0)
+      if (consErr) throw consErr
+      const filasConservadas = (conservadas ?? []) as { id: string; monto_pagado: number | null }[]
+      const yaAbonado = filasConservadas.reduce((s, r) => s + (Number(r.monto_pagado) || 0), 0)
+
+      // 1) Borrar el cronograma, PERO conservando las extras con plata. Lo
+      //    que se descarta es lo no cobrado: las cuotas programadas y las
+      //    extras pendientes (prorrogas o cuotas adicionales), que dejan de
+      //    tener sentido con un plan nuevo.
+      const idsConservados = filasConservadas.map((r) => r.id)
+      let delQuery = supabase.from("payment_plan").delete().eq("loan_id", sale.id)
+      if (idsConservados.length > 0) {
+        delQuery = delQuery.not("id", "in", `(${idsConservados.join(",")})`)
+      }
+      const { error: delError } = await delQuery
       if (delError) throw delError
 
       // 2) UPDATE loans con los nuevos parametros.
@@ -259,7 +281,9 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDi
           tipo_amortizacion: prestamoEmpleado ? "empleado" : tipoAmortizacion,
           prestamo_empleado: prestamoEmpleado,
           valor_a_pagar: valorAPagar,
-          saldo: valorAPagar,
+          // El saldo descuenta lo ya abonado. Sin esto, editar una venta con
+          // abono inicial se lo comia: el cliente volvia a deber el total.
+          saldo: Math.max(0, valorAPagar - yaAbonado),
           valor_cuota: valorCuota,
           dia_semana: frecuenciaPago !== "daily" ? (diaSemana || null) : null,
         })
@@ -282,6 +306,17 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDi
 
       const { error: insError } = await supabase.from("payment_plan").insert(planRows)
       if (insError) throw insError
+
+      // 4) Las extras conservadas se renumeran al final del plan nuevo, para
+      //    que no choquen con la numeracion recien generada (1..N) ni
+      //    aparezcan intercaladas en el historial.
+      for (let i = 0; i < filasConservadas.length; i++) {
+        const { error: renumError } = await supabase
+          .from("payment_plan")
+          .update({ numero_cuota: cuotasNum + i + 1 })
+          .eq("id", filasConservadas[i].id)
+        if (renumError) throw renumError
+      }
 
       toast({
         title: "Venta actualizada",
