@@ -90,30 +90,32 @@ export function PendingAuthorizations() {
         return
       }
 
-      // Fetch admin data
-      const { data: adminsData, error: adminsError } = await supabase.from("admin").select("id, nombre, pais")
-      console.log("[v0] Admins data:", { adminsData, adminsError })
+      // Quien registro el movimiento sale de `usuarios`, no de `admin`.
+      //
+      // `gastosregistros.adminid` guarda el id de la sesion, que es de
+      // `usuarios`. Estas pantallas lo resolvian contra `admin`, una tabla
+      // con UNA sola fila ("Luisa Secretaria"), asi que todos los
+      // movimientos aparecian a nombre de esa misma persona sin importar
+      // quien los hubiera registrado.
+      //
+      // El pais tampoco sale de ahi: se toma de la RUTA donde ocurrio el
+      // movimiento, que es lo que describe de verdad de donde viene.
+      const [{ data: usuariosData }, { data: rutasPaisData }] = await Promise.all([
+        supabase.from("usuarios").select("id, nombre"),
+        supabase.from("rutas").select("id, pais"),
+      ])
 
-      // Create a map of admin id to admin info
-      const adminsMap = new Map()
-      if (adminsData) {
-        for (const admin of adminsData) {
-          console.log("[v0] Storing admin in map:", { id: admin.id, nombre: admin.nombre, pais: admin.pais })
-          adminsMap.set(admin.id, { nombre: admin.nombre, pais: admin.pais })
-        }
+      const usuariosMap = new Map<number, string>()
+      for (const u of (usuariosData ?? []) as { id: number; nombre: string }[]) {
+        usuariosMap.set(u.id, u.nombre)
+      }
+      const paisPorRuta = new Map<number, string | null>()
+      for (const r of (rutasPaisData ?? []) as { id: number; pais: string | null }[]) {
+        paisPorRuta.set(r.id, r.pais)
       }
 
       // Map transactions with admin and country info using adminid
       const mappedData = (transactionsData || []).map((item: any) => {
-        const adminInfo = adminsMap.get(item.adminid)
-
-        console.log("[v0] Mapping transaction:", {
-          transactionId: item.id,
-          adminId: item.adminid,
-          adminInfo,
-          adminMapSize: adminsMap.size,
-        })
-
         return {
           id: item.id,
           fechahorasol: item.fechahorasol,
@@ -124,8 +126,8 @@ export function PendingAuthorizations() {
           limite: item.limite,
           observacion: item.observacion,
           foto: item.foto,
-          admin_name: adminInfo?.nombre || "N/A",
-          country: adminInfo?.pais || "N/A",
+          admin_name: usuariosMap.get(item.adminid) || "N/A",
+          country: paisPorRuta.get(item.ruta) || "N/A",
         }
       })
 
@@ -153,20 +155,16 @@ export function PendingAuthorizations() {
         setRutas(rutasList)
       }
 
-      // Fetch admins
-      const { data: adminsData, error: adminsError } = await supabase.from("admin").select("id, nombre").order("nombre")
-      console.log("[v0] Admins fetch result:", { adminsData, adminsError })
-
-      if (adminsData) {
-        setAdmins(adminsData.map((a: any) => ({ id: a.id, name: a.nombre })))
+      // El filtro de personas lista a los USUARIOS que registran
+      // movimientos, y el de paises sale de las rutas.
+      const { data: usuariosFiltro } = await supabase.from("usuarios").select("id, nombre").order("nombre")
+      if (usuariosFiltro) {
+        setAdmins((usuariosFiltro as { id: number; nombre: string }[]).map((u) => ({ id: u.id, name: u.nombre })))
       }
 
-      // Fetch unique countries
-      const { data: countriesData, error: countriesError } = await supabase.from("admin").select("pais").order("pais")
-      console.log("[v0] Countries fetch result:", { countriesData, countriesError })
-
-      if (countriesData) {
-        const uniqueCountries = [...new Set(countriesData.map((c: any) => c.pais).filter(Boolean))]
+      const { data: paisesData } = await supabase.from("rutas").select("pais").order("pais")
+      if (paisesData) {
+        const uniqueCountries = [...new Set((paisesData as { pais: string | null }[]).map((r) => r.pais).filter(Boolean))]
         setCountries(uniqueCountries as string[])
       }
     } catch (error) {

@@ -9,8 +9,10 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Barcode as BarCode, X, Loader2, UserPlus, AlertCircle, CheckCircle2 } from "lucide-react"
+import { Barcode as BarCode, X, Loader2, UserPlus, AlertCircle, CheckCircle2, ChevronsUpDown, Check } from "lucide-react"
 // Ya no usamos los helpers de lib/database (createClient/createLoan/
 // createPaymentPlan): la creacion de venta corre ahora en una sola
 // transaccion via la RPC `crear_venta_atomica` que evita los problemas
@@ -106,6 +108,12 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   const [isNewClient, setIsNewClient] = useState(false)
   const [selectedClient, setSelectedClient] = useState(preSelectedClientId || "")
   const [clientSearch, setClientSearch] = useState("")
+  // Etiqueta del cliente elegido. Va aparte de `clientSearch` porque esa
+  // ahora es SOLO el texto que se escribe para buscar: si se reutilizara
+  // para mostrar el seleccionado, elegir un cliente dispararia una
+  // busqueda nueva contra el servidor con su propio nombre.
+  const [selectedClientLabel, setSelectedClientLabel] = useState("")
+  const [clientPickerOpen, setClientPickerOpen] = useState(false)
   const [clientOptions, setClientOptions] = useState<{ id: string; apodo: string; nombre_completo: string; tiene_prestamo_activo?: boolean }[]>([])
   const [loadingClients, setLoadingClients] = useState(false)
   const [clientDropdownOpen, setClientDropdownOpen] = useState(false)
@@ -167,7 +175,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
           .maybeSingle()
         if (data) {
           setClientOptions([data])
-          setClientSearch((data.apodo || data.nombre_completo).toUpperCase())
+          setSelectedClientLabel((data.apodo || data.nombre_completo).toUpperCase())
         }
       } catch (err) {
         console.error("[v0] Error pre-cargando cliente para renovacion:", err)
@@ -645,6 +653,8 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     setValorPago("")
     setPrestamoEmpleado(false)
     setSelectedClient("")
+    setSelectedClientLabel("")
+    setClientSearch("")
     setClientSearch("")
     limpiarDatosCliente()
     setFormErrors(new Set())
@@ -1056,9 +1066,13 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       // Sin conexion la venta queda en la cola del dispositivo y se envia sola
       // despues. Las fechas del plan NO se recalculan al sincronizar: son las
       // que se pactaron con el cliente al hacer la venta.
+      // Se usa la etiqueta guardada al elegir y no una busqueda dentro de
+      // `clientOptions`: esa lista se refiltra con cada tecla, asi que el
+      // cliente ya seleccionado puede no estar en ella.
       const nombreParaEtiqueta = isNewClient
         ? (apodo || nombreCompleto || "Cliente")
-        : (clientOptions.find((c) => c.id === selectedClient)?.apodo
+        : (selectedClientLabel
+            || clientOptions.find((c) => c.id === selectedClient)?.apodo
             || clientOptions.find((c) => c.id === selectedClient)?.nombre_completo
             || "Cliente")
 
@@ -1567,69 +1581,99 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                   </Label>
                 </div>
               </div>
-              <Select
-                value={selectedClient}
-                onValueChange={(val) => {
-                  // Al elegir otro cliente se limpian los datos del anterior
-                  // (incluidos los de un intento de cliente nuevo abandonado).
-                  limpiarDatosCliente()
-                  setSelectedClient(val)
-                  const found = clientOptions.find((c) => c.id === val)
-                  if (found) setClientSearch((found.apodo || found.nombre_completo).toUpperCase())
-                }}
-              >
-                <SelectTrigger
-                  id="clientSearch"
-                  className="h-7 md:h-10 text-[10px] md:text-sm"
-                  onClick={() => {
-                    if (clientOptions.length === 0) {
-                      setLoadingClients(true)
-                      const params = new URLSearchParams({ ruta: String(rutaId), search: '' })
-                      if (soloSinPrestamo) params.append('sin_prestamo_activo', 'true')
-                      fetch(`/api/clients?${params.toString()}`)
-                        .then((r) => r.json())
-                        .then((data) => setClientOptions(Array.isArray(data) ? data : []))
-                        .catch(() => setClientOptions([]))
-                        .finally(() => setLoadingClients(false))
-                    }
-                  }}
+              {/* Combobox (Popover + Command) y no un Select.
+                  El Select de Radix esta pensado para elegir con el teclado:
+                  se queda con las pulsaciones para su propia busqueda y
+                  maneja el foco el mismo. Con un campo de texto adentro eso
+                  choca, y en el celular era peor — al abrirse el teclado la
+                  pantalla cambia de tamaño y el desplegable se cerraba a la
+                  primera letra. Popover + Command si esta hecho para
+                  contener un buscador. */}
+              <Popover open={clientPickerOpen} onOpenChange={(open) => {
+                setClientPickerOpen(open)
+                // Al abrir sin nada cargado se traen los clientes de la ruta.
+                if (open && clientOptions.length === 0 && !loadingClients) {
+                  setClientSearch("")
+                }
+              }}>
+                <PopoverTrigger asChild>
+                  <Button
+                    id="clientSearch"
+                    type="button"
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={clientPickerOpen}
+                    className="w-full justify-between h-7 md:h-10 text-[10px] md:text-sm font-normal px-2 md:px-3"
+                  >
+                    <span className={`truncate ${selectedClientLabel ? "" : "text-muted-foreground"}`}>
+                      {loadingClients && !clientPickerOpen
+                        ? "Cargando..."
+                        : selectedClientLabel || "Seleccione un cliente..."}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="p-0 w-[var(--radix-popover-trigger-width)]"
+                  align="start"
+                  // En el celular el teclado virtual roba el foco al abrir.
+                  // Sin esto, Radix lo devuelve al boton y el campo pierde el
+                  // cursor apenas se toca.
+                  onOpenAutoFocus={(e) => e.preventDefault()}
                 >
-                  {loadingClients
-                    ? <span className="flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Cargando...</span>
-                    : <SelectValue placeholder="Seleccione un cliente..." />
-                  }
-                </SelectTrigger>
-<SelectContent className="max-h-60">
-                    <div className="px-2 py-1.5 sticky top-0 bg-popover z-10 border-b border-border">
-                      <Input
-                        placeholder="Buscar por apodo..."
-                        value={clientSearch}
-                        onChange={(e) => setClientSearch(e.target.value.toUpperCase())}
-                        className="h-7 text-[10px] md:text-sm uppercase bg-input text-foreground placeholder:text-muted-foreground"
-                      autoComplete="off"
-                      onKeyDown={(e) => e.stopPropagation()}
+                  <Command shouldFilter={false}>
+                    {/* shouldFilter en false: el filtrado lo hace el servidor
+                        con `ilike` sobre el apodo. Si tambien filtrara cmdk,
+                        escondería resultados que el servidor si devolvio. */}
+                    <CommandInput
+                      placeholder="Buscar por apodo..."
+                      value={clientSearch}
+                      onValueChange={(v) => setClientSearch(v.toUpperCase())}
+                      className="text-[11px] md:text-sm uppercase"
                     />
-                  </div>
-                  {loadingClients && (
-                    <div className="flex items-center justify-center py-3 text-muted-foreground text-[10px] gap-1">
-                      <Loader2 className="h-3 w-3 animate-spin" /> Buscando...
-                    </div>
-                  )}
-                  {!loadingClients && clientOptions.length === 0 && (
-                    <div className="py-3 text-center text-muted-foreground text-[10px] md:text-sm">
-                      No se encontraron clientes en esta ruta
-                    </div>
-                  )}
-                  {clientOptions.map((c) => (
-                    <SelectItem key={c.id} value={c.id} className="text-[10px] md:text-sm">
-                      <span className="font-medium">{(c.apodo || c.nombre_completo).toUpperCase()}</span>
-                      {c.apodo && (
-                        <span className="ml-2 text-muted-foreground text-[9px]">{c.nombre_completo}</span>
+                    <CommandList className="max-h-52">
+                      {loadingClients && (
+                        <div className="flex items-center justify-center py-3 text-muted-foreground text-[10px] gap-1">
+                          <Loader2 className="h-3 w-3 animate-spin" /> Buscando...
+                        </div>
                       )}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                      {!loadingClients && clientOptions.length === 0 && (
+                        <div className="py-3 text-center text-muted-foreground text-[10px] md:text-sm">
+                          No se encontraron clientes en esta ruta
+                        </div>
+                      )}
+                      {!loadingClients && clientOptions.length > 0 && (
+                        <CommandGroup>
+                          {clientOptions.map((c) => (
+                            <CommandItem
+                              key={c.id}
+                              value={c.id}
+                              onSelect={() => {
+                                // Al elegir otro cliente se limpian los datos
+                                // del anterior (incluidos los de un intento de
+                                // cliente nuevo abandonado).
+                                limpiarDatosCliente()
+                                setSelectedClient(c.id)
+                                setSelectedClientLabel((c.apodo || c.nombre_completo).toUpperCase())
+                                setClientPickerOpen(false)
+                              }}
+                              className="text-[10px] md:text-sm"
+                            >
+                              <Check
+                                className={`mr-2 h-3.5 w-3.5 shrink-0 ${selectedClient === c.id ? "opacity-100" : "opacity-0"}`}
+                              />
+                              <span className="font-medium truncate">{(c.apodo || c.nombre_completo).toUpperCase()}</span>
+                              {c.apodo && (
+                                <span className="ml-2 text-muted-foreground text-[9px] truncate">{c.nombre_completo}</span>
+                              )}
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      )}
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
           )}
 
