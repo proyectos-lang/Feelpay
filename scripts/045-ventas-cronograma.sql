@@ -300,7 +300,12 @@ BEGIN
   INSERT INTO loans (
     client_id, valor, saldo, valor_a_pagar, valor_cuota, tasa_interes,
     numero_cuotas, tipo_amortizacion, frecuencia_pago, dia_semana,
-    tipo_venta, cuenta_id, prestamo_empleado, enrutar_venta, estado,
+    -- OJO: `enrutar_venta` NO va aquí. Está en el CREATE TABLE del script 002
+    -- pero NO existe en la base real (la tabla se creó por fuera del repo), y
+    -- el formulario nunca la llenó: el estado existía sin ningún input que lo
+    -- cambiara, así que siempre viajaba en null. Incluirla hacía fallar TODA
+    -- la venta con «column "enrutar_venta" of relation "loans" does not exist».
+    tipo_venta, cuenta_id, prestamo_empleado, estado,
     fecha_primer_pago, ruta, origen
   ) VALUES (
     v_client_id, v_valor, v_valor_a_pagar, v_valor_a_pagar, v_valor_cuota,
@@ -308,7 +313,6 @@ BEGIN
     COALESCE(NULLIF(p_loan->>'tipo_venta',''), 'efectivo'),
     NULLIF(p_loan->>'cuenta_id','')::bigint,
     v_empleado,
-    NULLIF(p_loan->>'enrutar_venta','')::uuid,
     'activo', v_fecha_primer, p_ruta_id, v_origen
   ) RETURNING id INTO v_loan_id;
 

@@ -70,6 +70,26 @@ function fechaDeCuota(inicio: Date, i: number, diasEntrePagos: number): Date {
   return d
 }
 
+/**
+ * Saca el mensaje legible de un error, venga de donde venga.
+ *
+ * Un error de Supabase NO es un `Error` de JavaScript: es un objeto plano
+ * `{ message, details, hint, code }`. Por eso el clásico
+ * `err instanceof Error ? err.message : String(err)` terminaba imprimiendo
+ * "[object Object]" y escondía la causa real — que era justo lo que había que
+ * leer para poder arreglar el problema.
+ */
+function mensajeDeError(err: unknown): string {
+  if (err instanceof Error && err.message) return err.message
+  if (err && typeof err === "object") {
+    const e = err as { message?: string; details?: string; hint?: string }
+    const partes = [e.message, e.details, e.hint].filter(Boolean)
+    if (partes.length > 0) return partes.join(" — ")
+  }
+  const s = String(err)
+  return s === "[object Object]" ? "No se pudo completar la operación" : s
+}
+
 interface AmortizationRow {
   cuota: number
   fecha: string
@@ -347,7 +367,8 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   // bloquean continuar si esta en "".
   const [frecuenciaPago, setFrecuenciaPago] = useState("")
   const [diaSemana, setDiaSemana] = useState("")
-  const [enrutarVenta, setEnrutarVenta] = useState("")
+  // `enrutar_venta` se eliminó: la columna no existe en la base y el estado
+  // nunca tuvo un input que lo cambiara, así que siempre viajaba vacío.
   const [amortizacionTable, setAmortizacionTable] = useState<AmortizationRow[]>([])
   const [showAmortization, setShowAmortization] = useState(false)
 
@@ -717,11 +738,13 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     setTipoAmortizacion("")
     setFrecuenciaPago("")
     setDiaSemana("")
-    setEnrutarVenta("")
     setAmortizacionTable([])
     setShowAmortization(false)
     setPagoAdelantado(false)
     setIniciaPagosHoy(false)
+    setVentaHomologada(false)
+    setFechaInicioHomologada("")
+    setMarcasHomologacion({})
     setNumeroCuotas(1)
     setOtroValor(false)
     setValorPago("")
@@ -1015,7 +1038,6 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         dia_semana: diaSemana || null,
         tipo_venta: tipoVenta,
         prestamo_empleado: prestamoEmpleado,
-        enrutar_venta: enrutarVenta || null,
         cuenta_id: tipoVenta === "transferencia" && cuentaId ? cuentaId : null,
         fecha_primer_pago: fechaPrimerPago,
         // Fecha del DISPOSITIVO: si la venta se sincroniza mañana, el abono
@@ -1160,7 +1182,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       } catch (err) {
         // Documento repetido: mensaje claro en vez del generico. Antes este
         // caso solo se veia por la llamada duplicada que ya se elimino.
-        const msg = err instanceof Error ? err.message : String(err)
+        const msg = mensajeDeError(err)
         const code = (err as { code?: string })?.code
         const esDocDuplicado =
           code === "23505" || /documento/i.test(msg) || /clients_documento/i.test(msg)
@@ -1204,8 +1226,10 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     } catch (error) {
       console.error('[v0] Error creating venta:', error)
       toast({
-        title: "Error",
-        description: "Ocurrió un error al crear la venta",
+        title: "Error al crear la venta",
+        // El mensaje REAL, no uno genérico: si la venta no entra, el vendedor
+        // tiene enfrente al cliente y necesita saber qué pasó.
+        description: mensajeDeError(error),
         variant: "destructive",
       })
     } finally {
