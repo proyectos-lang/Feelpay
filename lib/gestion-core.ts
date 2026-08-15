@@ -168,14 +168,38 @@ export interface ResumenDia {
  * aplicada a ayer se "comiera" el día de hoy del cliente.
  */
 export function resumenDelDia(gestiones: Gestion[], loanId: string, dia: string): ResumenDia {
+  // Eventos ANULADOS: una reversa apunta al evento que compensa. Si el
+  // cobrador anula el pago que acaba de registrar, esa visita deja de contar
+  // y el cliente vuelve a la lista de pendientes — que es lo que uno espera
+  // al deshacer algo. El historial conserva las dos cosas: el pago y su
+  // anulación, con hora y usuario.
+  const anulados = new Set(
+    gestiones
+      .filter((g) => g.tipo === "reversa" && g.estado === "aplicada" && g.referencia_gestion_id)
+      .map((g) => g.referencia_gestion_id as string),
+  )
+
   const delDia = gestiones.filter(
     (g) => g.loan_id === loanId && g.fecha_gestion === dia && g.estado === "aplicada",
   )
-  const visitas = delDia.filter(esVisita)
+  const idsDelDia = new Set(delDia.map((g) => g.id))
+
+  // El evento anulado y la reversa que lo anula se cancelan entre sí: para
+  // el día es como si no hubiera pasado nada. Se descartan los dos, o el
+  // monto quedaría restado dos veces.
+  const vivos = delDia.filter((g) => {
+    if (anulados.has(g.id)) return false
+    if (g.tipo === "reversa" && g.referencia_gestion_id && idsDelDia.has(g.referencia_gestion_id)) {
+      return false
+    }
+    return true
+  })
+
+  const visitas = vivos.filter(esVisita)
   if (visitas.length === 0) {
     return { gestionado: false, tipo: null, monto: 0, cuotas: 0, hora: "" }
   }
-  const monto = delDia.reduce((s, g) => s + montoEfectivo(g), 0)
+  const monto = vivos.reduce((s, g) => s + montoEfectivo(g), 0)
   const conPlata = visitas.filter((g) => Number(g.monto) > 0)
   const ultima = visitas.reduce((a, b) => (a.fecha_hora > b.fecha_hora ? a : b))
   return {

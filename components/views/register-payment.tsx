@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DollarSign, X, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown } from "lucide-react"
+import { DollarSign, X, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, RotateCcw, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
@@ -232,6 +232,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const [editingManaged, setEditingManaged] = useState<ManagedClient | null>(null)
   const [editMonto, setEditMonto] = useState("")
   const [savingManaged, setSavingManaged] = useState(false)
+  // Gestión que se está por anular. Se pide confirmación porque deshace un
+  // movimiento de plata y devuelve el cliente a la lista de cobro.
+  const [anularManaged, setAnularManaged] = useState<ManagedClient | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [clients, setClients] = useState<DisplayClient[]>([])
@@ -3191,14 +3194,20 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 <Pencil className="h-3 w-3" />
                               </Button>
                             )}
+                            {/* ANULAR, no eliminar: nada se borra. Queda el
+                                evento original y su anulación en el historial,
+                                y el cliente vuelve a Pendientes para
+                                gestionarlo bien. */}
                             <Button
                               size="icon"
                               variant="ghost"
+                              title="Anular esta gestión"
+                              aria-label="Anular esta gestión"
                               className="h-6 w-6 text-destructive hover:text-destructive/80 hover:bg-destructive-light"
-                              onClick={() => handleDeleteManagedPayment(m)}
+                              onClick={() => setAnularManaged(m)}
                               disabled={savingManaged}
                             >
-                              <Trash2 className="h-3 w-3" />
+                              <RotateCcw className="h-3 w-3" />
                             </Button>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
@@ -3762,6 +3771,51 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               Cancelar
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Anular una gestión del día */}
+      <Dialog open={!!anularManaged} onOpenChange={(o) => { if (!o) setAnularManaged(null) }}>
+        <DialogContent className="p-4 md:p-6 max-w-[90vw] md:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm md:text-lg">Anular la gestión de hoy</DialogTitle>
+            <DialogDescription className="text-xs md:text-sm">
+              {anularManaged && (
+                <>
+                  {anularManaged.gestionTipo === "pago"
+                    ? `Se anulará el pago de $${(anularManaged.valorAbonado ?? 0).toLocaleString()} de ${anularManaged.nombre}.`
+                    : `Se anulará el no pago de ${anularManaged.nombre}.`}
+                  {" "}El cliente vuelve a la lista de pendientes para gestionarlo de nuevo.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <p className="text-[11px] md:text-xs text-muted-foreground">
+            Nada se borra: en el historial del cliente quedan la gestión y su anulación,
+            con la hora y quién la hizo.
+          </p>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              className="flex-1 h-8 md:h-10 text-xs md:text-base"
+              onClick={() => setAnularManaged(null)}
+              disabled={savingManaged}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              className="flex-1 h-8 md:h-10 text-xs md:text-base"
+              disabled={savingManaged}
+              onClick={async () => {
+                const m = anularManaged
+                setAnularManaged(null)
+                if (m) await handleDeleteManagedPayment(m)
+              }}
+            >
+              {savingManaged ? <Loader2 className="h-4 w-4 animate-spin" /> : "Anular"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
