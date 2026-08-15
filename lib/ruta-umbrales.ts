@@ -32,6 +32,12 @@ export interface RutaUmbrales {
   // un radio de 20m bloquearia cobros validos.
   geocerca_habilitada: boolean
   geocerca_radio_metros: number
+  // Métodos de interés que usa la unidad. El formulario de venta solo
+  // ofrece estos, y `amortizacion_default` llega preseleccionado. Ofrecer
+  // siempre los dos, sin ninguno marcado, era una forma silenciosa de
+  // equivocarse: el vendedor tenía que acordarse del correcto en cada venta.
+  amortizaciones_habilitadas: string[]
+  amortizacion_default: string | null
 }
 
 const DEFAULT_UMBRALES: RutaUmbrales = {
@@ -42,6 +48,9 @@ const DEFAULT_UMBRALES: RutaUmbrales = {
   multa_tipo_valor: "fijo", multa_valor: null, multa_cantidad_cuotas: null,
   logo_url: null,
   geocerca_habilitada: false, geocerca_radio_metros: 100,
+  // Sin configurar, la ruta sigue viendo los dos como hasta hoy.
+  amortizaciones_habilitadas: ["aleman", "americano"],
+  amortizacion_default: null,
 }
 
 // Cache local de los umbrales por ruta.
@@ -82,12 +91,22 @@ export async function getRutaUmbrales(rutaId: number): Promise<RutaUmbrales> {
   try {
     const { data, error } = await createClient()
       .from("ruta_config_umbrales")
-      .select("venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral_cuotas, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas, logo_url, geocerca_habilitada, geocerca_radio_metros")
+      .select("venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral_cuotas, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas, logo_url, geocerca_habilitada, geocerca_radio_metros, amortizaciones_habilitadas, amortizacion_default")
       .eq("ruta_id", rutaId)
       .maybeSingle()
     if (error) return leerCache(rutaId) ?? DEFAULT_UMBRALES
     if (!data) return DEFAULT_UMBRALES
-    const umbrales = { ...DEFAULT_UMBRALES, ...(data as Partial<RutaUmbrales>) }
+    const fila = data as Partial<RutaUmbrales>
+    const umbrales = {
+      ...DEFAULT_UMBRALES,
+      ...fila,
+      // Una lista vacía dejaría el formulario de venta sin ninguna opción:
+      // se trata como "no configurado" y se cae a los dos métodos.
+      amortizaciones_habilitadas:
+        fila.amortizaciones_habilitadas && fila.amortizaciones_habilitadas.length > 0
+          ? fila.amortizaciones_habilitadas
+          : DEFAULT_UMBRALES.amortizaciones_habilitadas,
+    }
     guardarCache(rutaId, umbrales)
     return umbrales
   } catch (err) {

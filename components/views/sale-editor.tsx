@@ -1127,8 +1127,8 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="aleman">Capital (alemán)</SelectItem>
-                      <SelectItem value="americano">Interés (americano)</SelectItem>
+                      <SelectItem value="aleman">Cuota fija</SelectItem>
+                      <SelectItem value="americano">Cuota interés</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

@@ -19,7 +19,10 @@ import { Barcode as BarCode, X, Loader2, UserPlus, AlertCircle, CheckCircle2, Ch
 // de session vars RLS perdidas entre peticiones HTTP stateless.
 import { createClient } from "@/lib/supabase/client"
 import { todayColombia } from "@/lib/colombia-date"
-import { fmtFecha, fmtMoneda, sumarDias, ayerColombia } from "@/lib/gestion-core"
+import {
+  fmtFecha, fmtMoneda, sumarDias, ayerColombia,
+  AMORTIZACIONES, etiquetaAmortizacion,
+} from "@/lib/gestion-core"
 import { buildPaymentSchedule, type Frecuencia, type TipoAmortizacion } from "@/lib/loan-schedule"
 import { useToast } from "@/hooks/use-toast"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre } from "@/lib/ruta-umbrales"
@@ -371,6 +374,32 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   // nunca tuvo un input que lo cambiara, así que siempre viajaba vacío.
   const [amortizacionTable, setAmortizacionTable] = useState<AmortizationRow[]>([])
   const [showAmortization, setShowAmortization] = useState(false)
+
+  // ── Métodos de interés que usa esta unidad ───────────────────────────────
+  // Los define secretaría por ruta. Si no hay configuración, se ofrecen los
+  // dos (comportamiento de siempre).
+  const [amortizacionesRuta, setAmortizacionesRuta] = useState<string[]>(["aleman", "americano"])
+  useEffect(() => {
+    let cancelado = false
+    getRutaUmbrales(rutaId)
+      .then((u) => {
+        if (cancelado) return
+        setAmortizacionesRuta(u.amortizaciones_habilitadas)
+        // El predeterminado llega elegido; si la unidad usa uno solo, ese.
+        const unico = u.amortizaciones_habilitadas.length === 1
+          ? u.amortizaciones_habilitadas[0]
+          : null
+        const elegido = u.amortizacion_default || unico
+        if (elegido) setTipoAmortizacion((prev) => prev || elegido)
+      })
+      .catch((err) => console.error("[v0] NewLoan umbrales error:", err))
+    return () => { cancelado = true }
+  }, [rutaId])
+
+  const amortizacionesDisponibles = useMemo(
+    () => AMORTIZACIONES.filter((a) => amortizacionesRuta.includes(a.valor)),
+    [amortizacionesRuta],
+  )
 
   // ── Cuotas que ya vencieron en una venta homologada ─────────────────────
   // Se calculan con la MISMA fórmula del servidor (lib/loan-schedule.ts es
@@ -2115,34 +2144,50 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
             </div>
           </div>
 
-          {/* Método de Interés - hidden for employee loans */}
+          {/* Método de Interés — oculto en préstamos de empleado.
+              Solo se ofrecen los métodos que secretaría habilitó para esta
+              unidad; si solo hay uno, se muestra fijo en vez de un selector
+              con una sola opción. */}
           {!prestamoEmpleado && (
           <div className="space-y-1 md:space-y-2">
             <Label htmlFor="tipoAmortizacion" className="text-[11px] md:text-sm">
               Método de Interés <span className="text-red-500">*</span>
             </Label>
-            <Select
-              value={tipoAmortizacion}
-              onValueChange={(v) => {
-                setTipoAmortizacion(v)
-                clearFieldError("tipoAmortizacion")
-              }}
-            >
-              <SelectTrigger
-                id="tipoAmortizacion"
-                className={`h-8 md:h-10 text-[11px] md:text-sm ${errCls("tipoAmortizacion")}`}
+            {amortizacionesDisponibles.length === 1 ? (
+              <div className="flex h-8 md:h-10 items-center rounded-md border border-input bg-muted px-3 text-[11px] md:text-sm font-medium">
+                {etiquetaAmortizacion(amortizacionesDisponibles[0].valor)}
+                <span className="ml-2 font-normal text-muted-foreground">
+                  (el único que usa esta unidad)
+                </span>
+              </div>
+            ) : (
+              <Select
+                value={tipoAmortizacion}
+                onValueChange={(v) => {
+                  setTipoAmortizacion(v)
+                  clearFieldError("tipoAmortizacion")
+                }}
               >
-                <SelectValue placeholder="Seleccione método" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="americano" className="text-[11px] md:text-sm">
-                  Americano (Interés)
-                </SelectItem>
-                <SelectItem value="aleman" className="text-[11px] md:text-sm">
-                  Alemán (Capital)
-                </SelectItem>
-              </SelectContent>
-            </Select>
+                <SelectTrigger
+                  id="tipoAmortizacion"
+                  className={`h-8 md:h-10 text-[11px] md:text-sm ${errCls("tipoAmortizacion")}`}
+                >
+                  <SelectValue placeholder="Seleccione método" />
+                </SelectTrigger>
+                <SelectContent>
+                  {amortizacionesDisponibles.map((a) => (
+                    <SelectItem key={a.valor} value={a.valor} className="text-[11px] md:text-sm">
+                      {a.etiqueta}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {tipoAmortizacion && (
+              <p className="text-[10px] md:text-xs text-muted-foreground">
+                {AMORTIZACIONES.find((a) => a.valor === tipoAmortizacion)?.ayuda}
+              </p>
+            )}
           </div>
           )}
 
@@ -2357,7 +2402,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         <Card>
           <CardHeader className="p-2 md:p-6">
             <CardTitle className="text-xs md:text-base">
-              Tabla de Amortización - {tipoAmortizacion === "americano" ? "Sistema Americano" : "Sistema Alemán"}
+              Tabla de Amortización — {etiquetaAmortizacion(tipoAmortizacion)}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-2 md:p-6">

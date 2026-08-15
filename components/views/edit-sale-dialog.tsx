@@ -235,8 +235,8 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDi
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="americano">Americano (interés plano)</SelectItem>
-                <SelectItem value="aleman">Alemán (cuota fija)</SelectItem>
+                <SelectItem value="americano">Cuota interés</SelectItem>
+                <SelectItem value="aleman">Cuota fija</SelectItem>
                 <SelectItem value="empleado">Empleado (sin intereses)</SelectItem>
               </SelectContent>
             </Select>

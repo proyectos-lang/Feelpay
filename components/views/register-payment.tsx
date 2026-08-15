@@ -45,6 +45,7 @@ import {
   resumenDelDia,
   colorMora,
   etiquetaMora,
+  etiquetaAmortizacion,
   montoEfectivo,
   type Gestion,
 } from "@/lib/gestion-core"
@@ -175,17 +176,14 @@ const frecuenciaLabel = (freq: string) => {
   }
 }
 
-// Mapea el `tipo_amortizacion` crudo de la BD al label de UI segun la nueva
-// nomenclatura del negocio:
-//   - "aleman"   → "Capital"   (cuotas a capital fijo)
-//   - "americano"→ "Intereses" (solo intereses, capital al final)
-// Cualquier otro valor (null, "", "frances", etc.) retorna null para no
-// renderizar badge en cuotas tradicionales.
+// Badge del método de interés en la tarjeta del cliente. El nombre sale de
+// lib/gestion-core.ts; aquí solo se decide si se muestra o no (un valor raro
+// o vacío no pinta badge).
 const tipoAmortizacionLabel = (tipo: string | null | undefined): string | null => {
   if (!tipo) return null
   const t = tipo.toLowerCase().trim()
-  if (t === "aleman" || t === "alemán") return "Capital"
-  if (t === "americano") return "Intereses"
+  if (t === "aleman" || t === "alemán") return etiquetaAmortizacion("aleman")
+  if (t === "americano") return etiquetaAmortizacion("americano")
   return null
 }
 
@@ -1867,7 +1865,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     const [finRes, clientRes] = await Promise.all([
       supabase
         .from("v_loan_financiero")
-        .select("total_a_pagar, total_pagado, saldo_hoy, cuotas_mora")
+        .select("total_a_pagar, total_pagado, saldo_hoy, cuotas_mora, cuotas_cubiertas, cuotas_totales, cuotas_extra")
         .eq("loan_id", client.loanId)
         .maybeSingle(),
       supabase
@@ -1882,6 +1880,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       total_pagado?: number | null
       saldo_hoy?: number | null
       cuotas_mora?: number | null
+      cuotas_cubiertas?: number | null
+      cuotas_totales?: number | null
+      cuotas_extra?: number | null
     } | null
     // Se conservan los nombres viejos para no reescribir el dibujo del recibo.
     const saldo = finRow && {
@@ -1964,16 +1965,28 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       return dd && mm && yy ? `${dd}/${mm}/${yy}` : "-"
     }
 
+    // El conteo de cuotas y la mora salen de la MISMA consulta que trajo los
+    // totales, o sea del estado ya recalculado tras el pago.
+    //
+    // Antes se leían del objeto `client`, que es la foto que tenía la pantalla
+    // ANTES de cobrar: el recibo que se le entregaba al cliente decía "8/24" y
+    // "3 cuotas en mora" cuando acababa de pagar y ya iba en 9/24 con 2 de
+    // mora. Justo los dos números que el cliente revisa.
+    const cuotasCubiertas = finRow?.cuotas_cubiertas ?? client.cuotasPagadas
+    const cuotasTotales = finRow?.cuotas_totales ?? client.cuotasTotales
+    const cuotasExtra = finRow?.cuotas_extra ?? client.cuotasExtra
+    const moraActual = finRow?.cuotas_mora ?? client.mora
+
     const rows: [string, string][] = [
       ["Fecha venta:", fmtFechaCorta(client.fechaVenta)],
       ["Total a pagar:", fmt(saldo?.total_con_intereses)],
       ["Total recaudado:", fmt(saldo?.total_recaudado)],
       ["Saldo pendiente:", fmt(saldo?.saldo_pendiente ?? client.saldo)],
-      ["Cuotas:", `${client.cuotasPagadas} / ${client.cuotasTotales}${client.cuotasExtra > 0 ? ` (+${client.cuotasExtra} extra)` : ""}`],
+      ["Cuotas:", `${cuotasCubiertas} / ${cuotasTotales}${Number(cuotasExtra) > 0 ? ` (+${cuotasExtra} extra)` : ""}`],
       ["Frecuencia:", frecuenciaLabel(client.frecuenciaPago)],
       // Antes esta fila decía "Fallas" pero imprimía la mora, que es otra
       // cosa (cuotas vencidas sin cubrir, no visitas incumplidas).
-      ["Cuotas en mora:", `${client.mora}`],
+      ["Cuotas en mora:", `${moraActual}`],
       ["Saldo por sancion:", client.multaPendiente ? fmt(client.multaPendiente.valor) : "$0"],
     ]
 

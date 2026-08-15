@@ -14,6 +14,7 @@ import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/
 import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info, MessageSquare, BarChart2, Gauge } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { ALL_MODULES, MODULE_GROUPS, getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
+import { AMORTIZACIONES } from "@/lib/gestion-core"
 import type { ModuleDefinition } from "@/lib/modules-catalog"
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
@@ -1570,6 +1571,10 @@ function ControlAprobacionesTab() {
   const [fAbonoUmbralCuotas, setFAbonoUmbralCuotas] = useState("")
   const [fGeocercaHab, setFGeocercaHab] = useState(false)
   const [fGeocercaRadio, setFGeocercaRadio] = useState("100")
+  // Métodos de interés que usa la unidad, y cuál llega preseleccionado en la
+  // venta. Antes el formulario ofrecía siempre los dos y ninguno marcado.
+  const [fAmortizaciones, setFAmortizaciones] = useState<string[]>(["aleman", "americano"])
+  const [fAmortizacionDefault, setFAmortizacionDefault] = useState<string>("")
   const [itemForm, setItemForm] = useState<Map<string, ItemFormRow>>(new Map())
 
   const itemsByTipo: Record<string, CatalogItem[]> = {
@@ -1613,6 +1618,11 @@ function ControlAprobacionesTab() {
     setFAbonoUmbralCuotas(c?.abono_umbral_cuotas?.toString() ?? "")
     setFGeocercaHab(c?.geocerca_habilitada ?? false)
     setFGeocercaRadio(c?.geocerca_radio_metros?.toString() ?? "100")
+    const amort = (c as { amortizaciones_habilitadas?: string[] } | undefined)?.amortizaciones_habilitadas
+    setFAmortizaciones(amort && amort.length > 0 ? amort : ["aleman", "americano"])
+    setFAmortizacionDefault(
+      (c as { amortizacion_default?: string | null } | undefined)?.amortizacion_default ?? "",
+    )
 
     setLoadingItems(true)
     try {
@@ -1664,6 +1674,13 @@ function ControlAprobacionesTab() {
         // La columna es NOT NULL: si el campo queda vacio se guarda el
         // default en vez de mandar null y romper el upsert.
         geocerca_radio_metros: Number.parseInt(fGeocercaRadio, 10) || 100,
+        amortizaciones_habilitadas: fAmortizaciones,
+        // Si el predeterminado dejó de estar habilitado se guarda vacío: la
+        // base rechaza un predeterminado que no esté en la lista, y con esa
+        // combinación el upsert entero fallaría sin explicar por qué.
+        amortizacion_default: fAmortizaciones.includes(fAmortizacionDefault)
+          ? fAmortizacionDefault
+          : null,
         updated_at: new Date().toISOString(),
       }
       const { error: configErr } = await supabase.from("ruta_config_umbrales").upsert(configPayload, { onConflict: "ruta_id" })
@@ -1871,6 +1888,60 @@ function ControlAprobacionesTab() {
                 de los 50 m y bloquearía cobros válidos. Empieza en 100 m y bájalo si en campo funciona. Los clientes sin
                 ubicación guardada se pueden cobrar normal — la ubicación se captura en ese primer cobro.
               </p>
+            </div>
+
+            {/* Métodos de interés de la unidad */}
+            <div className="space-y-2 border-t pt-3">
+              <Label className="text-sm">Métodos de interés que usa esta unidad</Label>
+              <p className="text-[11px] text-muted-foreground">
+                El formulario de venta solo ofrecerá los que marques aquí, y el predeterminado
+                llegará ya elegido. Si la unidad usa uno solo, el vendedor ni siquiera tiene que
+                escogerlo.
+              </p>
+              <div className="space-y-1.5">
+                {AMORTIZACIONES.map((a) => {
+                  const marcado = fAmortizaciones.includes(a.valor)
+                  // No se puede dejar la unidad sin ningún método: sin al menos
+                  // uno no se podría registrar ninguna venta.
+                  const esElUltimo = marcado && fAmortizaciones.length === 1
+                  return (
+                    <div key={a.valor} className="rounded-md border p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium">{a.etiqueta}</p>
+                          <p className="text-[11px] text-muted-foreground">{a.ayuda}</p>
+                        </div>
+                        <Switch
+                          checked={marcado}
+                          disabled={esElUltimo}
+                          onCheckedChange={(on) =>
+                            setFAmortizaciones((prev) =>
+                              on ? [...prev, a.valor] : prev.filter((x) => x !== a.valor),
+                            )
+                          }
+                        />
+                      </div>
+                      {marcado && fAmortizaciones.length > 1 && (
+                        <label className="mt-2 flex items-center gap-1.5 text-[11px] cursor-pointer">
+                          <input
+                            type="radio"
+                            name="amortizacion-default"
+                            checked={fAmortizacionDefault === a.valor}
+                            onChange={() => setFAmortizacionDefault(a.valor)}
+                            className="h-3 w-3"
+                          />
+                          Usar como predeterminado
+                        </label>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+              {fAmortizaciones.length === 1 && (
+                <p className="text-[11px] text-muted-foreground">
+                  Con un solo método habilitado no hace falta predeterminado: ese se usa siempre.
+                </p>
+              )}
             </div>
 
             <div className="flex justify-end pt-1">

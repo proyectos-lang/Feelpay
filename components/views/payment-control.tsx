@@ -42,7 +42,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/hooks/use-toast"
 import { getSupabaseSafe, callRpcAtomic } from "@/lib/api-helper"
-import { todayColombia, etiquetaMora } from "@/lib/gestion-core"
+import { todayColombia, etiquetaMora, etiquetaAmortizacion } from "@/lib/gestion-core"
 import {
   Search,
   ChevronLeft,
@@ -168,8 +168,9 @@ const fmtFecha = (s: string | null | undefined) => {
   })
 }
 
-const tipoLabel = (t: string | null) =>
-  t === "aleman" ? "Capital" : t === "americano" ? "Intereses" : t === "empleado" ? "Empleado" : t
+// El nombre lo define lib/gestion-core.ts, para que las cuatro pantallas que
+// muestran el método de interés digan lo mismo.
+const tipoLabel = (t: string | null) => etiquetaAmortizacion(t)
 
 type FiltroEstadoLoan = "activos" | "cancelados" | "todos"
 type FiltroCuota = "todas" | "pendientes" | "vencidas" | "pagadas" | "no_pago"

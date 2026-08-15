@@ -247,6 +247,37 @@ export function esDiario(frecuencia: string | null | undefined): boolean {
   return (frecuencia ?? "daily") === "daily"
 }
 
+// ── Métodos de interés ─────────────────────────────────────────────────────
+//
+// Los nombres viejos ("Americano", "Alemán") no le decían nada a nadie: había
+// que saberse la convención para entender qué cobraba cada uno. Los valores
+// GUARDADOS no cambian — 'aleman' y 'americano' siguen en la base —, solo
+// cambia cómo se muestran.
+
+export type TipoAmortizacion = "aleman" | "americano" | "empleado"
+
+export const AMORTIZACIONES: { valor: TipoAmortizacion; etiqueta: string; ayuda: string }[] = [
+  {
+    valor: "aleman",
+    etiqueta: "Cuota fija",
+    ayuda: "Todas las cuotas valen lo mismo: capital e interés repartidos parejo.",
+  },
+  {
+    valor: "americano",
+    etiqueta: "Cuota interés",
+    ayuda: "Cada cuota paga solo el interés; el capital completo entra en la última.",
+  },
+]
+
+export function etiquetaAmortizacion(tipo: string | null | undefined): string {
+  switch (tipo) {
+    case "aleman": return "Cuota fija"
+    case "americano": return "Cuota interés"
+    case "empleado": return "Empleado"
+    default: return tipo ?? "—"
+  }
+}
+
 // ── Dinero ─────────────────────────────────────────────────────────────────
 
 export function fmtMoneda(valor: number | null | undefined): string {

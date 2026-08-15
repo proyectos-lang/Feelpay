@@ -223,8 +223,8 @@ const ETIQUETA_ORIGEN: Record<string, string> = {
 }
 
 const ETIQUETA_AMORTIZACION: Record<string, string> = {
-  aleman:    "Capital (alemán)",
-  americano: "Interés (americano)",
+  aleman:    "Cuota fija",
+  americano: "Cuota interés",
   empleado:  "Empleado",
 }
 
