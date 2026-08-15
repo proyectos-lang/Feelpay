@@ -1,17 +1,31 @@
 /**
  * lib/loan-schedule.ts
- * --------------------
- * Generador de plan de pagos. Contiene la MISMA logica de amortizacion
- * que utiliza `components/views/new-loan.tsx` antes de invocar la RPC
- * `crear_venta_atomica`. Se extrajo aqui para que el dialogo de edicion
- * de una venta (`edit-sale-dialog.tsx`) pueda reconstruir el cronograma
- * con los nuevos parametros sin duplicar codigo.
+ * ---------------------------------------------------------------------------
+ * Cronograma de un préstamo — ESPEJO EXACTO de la función SQL
+ * `generar_cronograma` (scripts/045-ventas-cronograma.sql).
  *
- * IMPORTANTE — paridad con new-loan.tsx
- * -------------------------------------
- * Cualquier cambio en la formula de amortizacion debe replicarse en
- * ambos archivos hasta que migremos completamente a esta utilidad. La
- * regla "skip domingo" para frecuencia diaria se mantiene aqui.
+ * QUIÉN MANDA
+ * El servidor. Este archivo NO genera el plan que se guarda: sirve para la
+ * vista previa ("Simular amortización") y para la tabla de la venta
+ * homologada. Si alguna vez difiere del SQL, gana el SQL.
+ *
+ * Existían TRES copias de esta matemática (dos dentro de new-loan.tsx y esta),
+ * y divergían de verdad, no en detalles: esta usaba el algoritmo viejo de
+ * domingos —correr la cuota un día sin mover las siguientes, con lo que la
+ * cuota del domingo y la del lunes caían el mismo día— y además recibía la
+ * tasa en decimal mientras quien la llamaba le pasaba puntos porcentuales,
+ * así que editar una venta al 20% la recalculaba como si fuera 2000%.
+ *
+ * LAS REGLAS
+ *   · Diario: se cobra de lunes a sábado. La cuota i cae en el i-ésimo día
+ *     de cobro salteando domingos de corrido:
+ *         fecha = inicio + (i−1) + floor((pos + i − 1) / 6)
+ *     donde `pos` es la posición del día de inicio en la semana (lunes = 0).
+ *   · Semanal con día de cobro: la primera cuota se corre al siguiente día
+ *     de la semana elegido, y de ahí cada 7 días.
+ *   · Semanal sin día / quincenal / mensual: +7 / +15 / +30 desde el inicio.
+ *   · La ÚLTIMA cuota absorbe el residuo del redondeo, para que la suma del
+ *     plan dé exactamente el total a pagar.
  */
 
 import { todayColombia } from "@/lib/colombia-date"
@@ -22,179 +36,158 @@ export type TipoAmortizacion = "americano" | "aleman" | "empleado"
 export interface BuildScheduleParams {
   /** Capital prestado (sin intereses). */
   valor: number
-  /** Tasa de interes por periodo en decimal (ej. 0.20 = 20%). Para
-   *  prestamos empleado se ignora. */
+  /**
+   * Tasa de interés por período en PUNTOS PORCENTUALES (ej. 20 = 20%), la
+   * misma unidad que se guarda en `loans.tasa_interes` y que muestra el
+   * formulario. En préstamos de empleado se ignora.
+   */
   tasaInteres: number
   /** Cantidad de cuotas. */
   numeroCuotas: number
   /** Frecuencia entre pagos. */
   frecuenciaPago: Frecuencia
-  /** Tipo de amortizacion (con `prestamoEmpleado=true` se fuerza "empleado"). */
+  /** Tipo de amortización (con `prestamoEmpleado=true` se fuerza "empleado"). */
   tipoAmortizacion: TipoAmortizacion
-  /** Si es prestamo empleado: sin intereses, capital dividido en N cuotas diarias. */
+  /** Préstamo de empleado: sin intereses, capital dividido en N cuotas diarias. */
   prestamoEmpleado: boolean
   /**
-   * Fecha base desde la cual generar el plan. Si no se pasa, se usa
-   * "hoy + 1 dia" (regla de negocio: el plan inicia al dia siguiente).
-   * Se interpreta SIEMPRE en zona local del navegador.
+   * Fecha de la primera cuota, "YYYY-MM-DD". Si no se pasa se usa mañana
+   * (regla de negocio: el plan arranca al día siguiente de la venta).
    */
-  fechaInicio?: Date
+  fechaInicio?: string
+  /**
+   * Día de cobro para frecuencia semanal ("lunes".."sabado"). Ancla la
+   * primera cuota a ese día — antes se guardaba y se ignoraba, así que una
+   * venta creada un martes con día "viernes" cobraba los martes.
+   */
+  diaSemana?: string | null
 }
 
 export interface PaymentScheduleRow {
   numero_cuota: number
-  /** Fecha en formato YYYY-MM-DD (hora local, sin UTC). */
+  /** Vencimiento en formato YYYY-MM-DD. */
   fecha_pago: string
   valor_cuota: number
   capital: number
   interes: number
-  /** Saldo pendiente DESPUES de aplicar esta cuota. */
+  /** Saldo pendiente DESPUÉS de aplicar esta cuota (solo informativo). */
   saldo: number
 }
 
 export interface ScheduleResult {
   schedule: PaymentScheduleRow[]
-  /** Total a pagar (capital + intereses) — se persiste en `loans.valor_a_pagar`/`saldo`. */
+  /** Total a pagar (capital + intereses). */
   valorAPagar: number
-  /** Cuota representativa que se persiste en `loans.valor_cuota`. */
+  /** Cuota representativa. */
   valorCuota: number
-}
-
-// Formatea un Date a YYYY-MM-DD usando partes LOCALES — evita el bug
-// clasico de `.toISOString().split("T")[0]` que convierte a UTC y puede
-// restar un dia segun el huso del navegador.
-const toLocalDateStr = (d: Date): string => {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  return `${y}-${m}-${day}`
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
-/**
- * Genera el cronograma de pagos para una venta.
- * Replica exactamente el algoritmo de `new-loan.tsx`.
- */
+const DIAS_SEMANA: Record<string, number> = {
+  domingo: 0, lunes: 1, martes: 2, miercoles: 3, "miércoles": 3,
+  jueves: 4, viernes: 5, sabado: 6, "sábado": 6,
+}
+
+/** Suma días a una fecha "YYYY-MM-DD" sin cruzar zonas horarias. */
+function sumar(fecha: string, dias: number): string {
+  const [y, m, d] = fecha.split("-").map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() + dias)
+  return dt.toISOString().slice(0, 10)
+}
+
+/** Día de la semana (0 = domingo) de una fecha "YYYY-MM-DD". */
+function dow(fecha: string): number {
+  const [y, m, d] = fecha.split("-").map(Number)
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay()
+}
+
+/** Genera el cronograma. Espejo de `generar_cronograma` en SQL. */
 export function buildPaymentSchedule(p: BuildScheduleParams): ScheduleResult {
-  const { valor, tasaInteres, numeroCuotas, frecuenciaPago, tipoAmortizacion, prestamoEmpleado } = p
+  const { valor, numeroCuotas, prestamoEmpleado } = p
+  const tasa = (p.tasaInteres || 0) / 100
+  const tipo: TipoAmortizacion = prestamoEmpleado ? "empleado" : p.tipoAmortizacion
+  const frecuencia: Frecuencia = prestamoEmpleado ? "daily" : p.frecuenciaPago
 
-  // Total a pagar segun el tipo:
-  // - Empleado: solo el capital
-  // - Americano: capital + intereses planos por cada cuota
-  // - Aleman: capital + interes total unico
+  if (!(valor > 0)) throw new Error("El valor del préstamo debe ser mayor que cero")
+  if (!(numeroCuotas >= 1)) throw new Error("El número de cuotas debe ser al menos 1")
+
+  // ── Fecha de inicio ────────────────────────────────────────────────────
+  let inicio = p.fechaInicio || sumar(todayColombia(), 1)
+  if (frecuencia === "daily" && dow(inicio) === 0) inicio = sumar(inicio, 1)
+  if (frecuencia === "weekly" && p.diaSemana) {
+    const objetivo = DIAS_SEMANA[p.diaSemana.toLowerCase()]
+    if (objetivo !== undefined) {
+      inicio = sumar(inicio, (((objetivo - dow(inicio)) % 7) + 7) % 7)
+    }
+  }
+
+  const paso = frecuencia === "weekly" ? 7 : frecuencia === "biweekly" ? 15
+    : frecuencia === "monthly" ? 30 : 1
+
+  // ── Totales ────────────────────────────────────────────────────────────
   let valorAPagar: number
-  if (prestamoEmpleado) {
+  let interesPorCuota = 0
+  let cuotaBase = 0
+  let capitalBase = 0
+
+  if (tipo === "empleado") {
     valorAPagar = valor
-  } else if (tipoAmortizacion === "americano") {
-    valorAPagar = valor + valor * tasaInteres * numeroCuotas
+    capitalBase = round2(valor / numeroCuotas)
+  } else if (tipo === "americano") {
+    interesPorCuota = round2(valor * tasa)
+    valorAPagar = valor + interesPorCuota * numeroCuotas
   } else {
-    valorAPagar = valor + valor * tasaInteres
+    valorAPagar = round2(valor * (1 + tasa))
+    cuotaBase = round2(valorAPagar / numeroCuotas)
+    capitalBase = round2(valor / numeroCuotas)
   }
 
-  // Para americano la "cuota" tipica es solo el interes; para aleman es el promedio.
-  const valorCuota =
-    tipoAmortizacion === "americano" && !prestamoEmpleado
-      ? valor * tasaInteres
-      : valorAPagar / numeroCuotas
-
-  // Dias entre pagos
-  let diasEntrePagos = 1
-  if (!prestamoEmpleado) {
-    switch (frecuenciaPago) {
-      case "weekly": diasEntrePagos = 7; break
-      case "biweekly": diasEntrePagos = 15; break
-      case "monthly": diasEntrePagos = 30; break
-      default: diasEntrePagos = 1
-    }
-  }
-
-  // Cobro diario no aplica a domingos: si la fecha calculada cae en
-  // domingo, se corre al lunes. Solo aplica con diasEntrePagos === 1.
-  const skipDomingoSiDiario = (d: Date): Date => {
-    if (diasEntrePagos !== 1) return d
-    if (d.getDay() === 0) {
-      const ajustada = new Date(d)
-      ajustada.setDate(ajustada.getDate() + 1)
-      return ajustada
-    }
-    return d
-  }
-
-  // Fecha inicio: hoy+1 si no se especifica.
-  let fechaInicio: Date
-  if (p.fechaInicio) {
-    fechaInicio = new Date(p.fechaInicio)
-  } else {
-    const todayStr = todayColombia()
-    const [y, m, d] = todayStr.split("-").map(Number)
-    fechaInicio = new Date(y, m - 1, d + 1)
-  }
-  fechaInicio = skipDomingoSiDiario(fechaInicio)
+  // lunes = 0 ... domingo = 6
+  const pos = (dow(inicio) + 6) % 7
 
   const schedule: PaymentScheduleRow[] = []
+  let acumulado = 0
 
-  if (prestamoEmpleado) {
-    const cuotaDiaria = round2(valor / numeroCuotas)
-    for (let i = 1; i <= numeroCuotas; i++) {
-      let fechaPago = new Date(fechaInicio)
-      fechaPago.setDate(fechaPago.getDate() + (i - 1))
-      fechaPago = skipDomingoSiDiario(fechaPago)
-      schedule.push({
-        numero_cuota: i,
-        fecha_pago: toLocalDateStr(fechaPago),
-        valor_cuota: cuotaDiaria,
-        capital: cuotaDiaria,
-        interes: 0,
-        saldo: round2(Math.max(0, valor - cuotaDiaria * i)),
-      })
+  for (let i = 1; i <= numeroCuotas; i++) {
+    const fecha_pago = paso === 1
+      ? sumar(inicio, (i - 1) + Math.floor((pos + i - 1) / 6))
+      : sumar(inicio, paso * (i - 1))
+
+    const esUltima = i === numeroCuotas
+    let valor_cuota: number
+    let capital: number
+    let interes: number
+
+    if (tipo === "empleado") {
+      capital = esUltima ? round2(valor - capitalBase * (numeroCuotas - 1)) : capitalBase
+      interes = 0
+      valor_cuota = capital
+    } else if (tipo === "americano") {
+      valor_cuota = esUltima ? round2(valor + interesPorCuota) : interesPorCuota
+      capital = esUltima ? valor : 0
+      interes = interesPorCuota
+    } else {
+      valor_cuota = esUltima ? round2(valorAPagar - cuotaBase * (numeroCuotas - 1)) : cuotaBase
+      capital = esUltima ? round2(valor - capitalBase * (numeroCuotas - 1)) : capitalBase
+      interes = round2(valor_cuota - capital)
     }
-  } else if (tipoAmortizacion === "americano") {
-    // Cada cuota paga interes; la ultima incluye ademas el capital completo.
-    const interesPorCuota = round2(valor * tasaInteres)
-    for (let i = 1; i <= numeroCuotas; i++) {
-      let fechaPago = new Date(fechaInicio)
-      fechaPago.setDate(fechaPago.getDate() + diasEntrePagos * (i - 1))
-      fechaPago = skipDomingoSiDiario(fechaPago)
-      const esUltima = i === numeroCuotas
-      const capitalCuota = esUltima ? valor : 0
-      const cuotaPago = interesPorCuota + capitalCuota
-      const cuotasRestantesFinal = numeroCuotas - i
-      const saldoRestante = esUltima ? 0 : valor + interesPorCuota * cuotasRestantesFinal
-      schedule.push({
-        numero_cuota: i,
-        fecha_pago: toLocalDateStr(fechaPago),
-        valor_cuota: round2(cuotaPago),
-        capital: round2(capitalCuota),
-        interes: interesPorCuota,
-        saldo: round2(saldoRestante),
-      })
-    }
-  } else {
-    // Aleman simple: cuota fija = valorAPagar / numCuotas, interes/capital fijos.
-    const saldoTotal = valor + valor * tasaInteres
-    const cuotaFija = round2(saldoTotal / numeroCuotas)
-    const interesPorCuota = round2((valor * tasaInteres) / numeroCuotas)
-    const capitalPorCuota = round2(valor / numeroCuotas)
-    for (let i = 1; i <= numeroCuotas; i++) {
-      let fechaPago = new Date(fechaInicio)
-      fechaPago.setDate(fechaPago.getDate() + diasEntrePagos * (i - 1))
-      fechaPago = skipDomingoSiDiario(fechaPago)
-      const saldoRestante = Math.max(0, saldoTotal - cuotaFija * i)
-      schedule.push({
-        numero_cuota: i,
-        fecha_pago: toLocalDateStr(fechaPago),
-        valor_cuota: cuotaFija,
-        capital: capitalPorCuota,
-        interes: interesPorCuota,
-        saldo: round2(saldoRestante),
-      })
-    }
+
+    acumulado = round2(acumulado + valor_cuota)
+    schedule.push({
+      numero_cuota: i,
+      fecha_pago,
+      valor_cuota,
+      capital,
+      interes,
+      saldo: round2(Math.max(0, valorAPagar - acumulado)),
+    })
   }
 
   return {
     schedule,
     valorAPagar: round2(valorAPagar),
-    valorCuota: round2(valorCuota),
+    valorCuota: schedule[0]?.valor_cuota ?? 0,
   }
 }

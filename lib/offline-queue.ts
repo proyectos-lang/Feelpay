@@ -11,17 +11,17 @@
  *
  * POR QUE ESTO ES SEGURO
  * ----------------------
- * Encolar escrituras de dinero solo es seguro si el servidor puede reconocer
- * un reintento y si el pago sabe a que cuota va. Ambas cosas se resolvieron en
- * `scripts/030-idempotencia-y-ancla-cuota.sql`:
- *   - Cada operacion lleva una `idempotency_key` generada AL CAPTURARLA (no al
- *     enviarla). Si se envia dos veces, el servidor devuelve el resultado
- *     original sin volver a aplicar nada.
- *   - Los pagos viajan con `payment_plan_id`: se cobra la cuota que el
- *     cobrador vio, no "la mas antigua pendiente al momento de sincronizar".
- *   - Si al sincronizar la operacion ya no se puede aplicar limpio (la cuota
- *     ya la gestiono otro, el prestamo se cancelo), el servidor la manda a la
- *     cola de revision de secretaria en vez de perderla.
+ * Encolar plata solo es seguro si el servidor reconoce un reintento y si la
+ * operacion no puede ser rechazada al llegar tarde. Con el nucleo nuevo
+ * (scripts 041-049) las dos cosas se cumplen por construccion:
+ *   - Cada gestion lleva un `id` generado AL CAPTURARLA, que es la llave
+ *     primaria de la tabla `gestiones`. Reenviarla no puede duplicar nada.
+ *   - La cuota es solo una PISTA: si al sincronizar ya no aplica, el servidor
+ *     asigna la plata a la cuota mas antigua sin cubrir. Se acabo el conflicto
+ *     "esa cuota ya fue gestionada".
+ *   - Si algo no cuadra (prestamo cancelado, fecha muy vieja, monto sobre el
+ *     umbral), el evento entra igual como 'en_revision': la plata queda
+ *     registrada y espera el visto bueno de secretaria, no se pierde.
  *
  * LA IDENTIDAD SE CONGELA AL ENCOLAR
  * ----------------------------------
@@ -39,11 +39,20 @@ const DB_NAME = "feelpay-offline"
 const DB_VERSION = 1
 const STORE = "cola"
 
+// "gestion"  = un evento del libro (pago, no pago, cancelacion, reversa). Es
+//              el camino nuevo: el payload YA trae su `id`, que es la misma
+//              llave de idempotencia con la que se guarda en la cola, asi que
+//              reintentar nunca duplica.
+// "rpc"      = cualquier otra funcion atomica del nucleo (editar venta,
+//              ajustar cronograma, corregir gestion). Viaja con el nombre de
+//              la funcion adentro para no multiplicar tipos de cola.
+// "pago"/"no_pago" = camino VIEJO. Se conservan para drenar colas capturadas
+//              antes del corte: el servidor las traduce con el adapter
+//              `registrar_pago_atomico` (script 044).
 // "revision" = una fila para solicitudes_revision (un movimiento que supero
-// el umbral de su ruta y necesita el visto bueno de secretaria). Antes se
-// insertaba directo y sin senal se perdia — justo los movimientos mas
-// grandes, que son los que menos se pueden perder.
-export type TipoOperacion = "pago" | "no_pago" | "transaccion" | "venta" | "revision"
+//              el umbral de su ruta y necesita el visto bueno de secretaria).
+export type TipoOperacion =
+  | "gestion" | "rpc" | "pago" | "no_pago" | "transaccion" | "venta" | "revision"
 
 export type EstadoItem = "pendiente" | "enviando" | "fallido"
 
@@ -171,6 +180,32 @@ export async function reintentar(id: string): Promise<void> {
  */
 async function enviarItem(item: ItemCola): Promise<AtomicRpcResult> {
   const supabase = createClient()
+
+  if (item.tipo === "gestion") {
+    // El `id` del item ES el id del evento en el libro. La tabla `gestiones`
+    // lo tiene como llave primaria, asi que un reenvio no puede duplicar la
+    // plata ni aunque el servidor haya alcanzado a aplicarlo la primera vez.
+    const { data, error } = await supabase.rpc("registrar_gestion", {
+      p_user_id: item.identidad.user_id,
+      p_ruta_id: item.identidad.ruta_id,
+      p_rol: item.identidad.rol,
+      p_payload: { ...item.payload, id: item.id },
+    })
+    if (error) throw error
+    return (data ?? { ok: true }) as AtomicRpcResult
+  }
+
+  if (item.tipo === "rpc") {
+    const { fn, payload } = item.payload as { fn: string; payload: Record<string, unknown> }
+    const { data, error } = await supabase.rpc(fn, {
+      p_user_id: item.identidad.user_id,
+      p_ruta_id: item.identidad.ruta_id,
+      p_rol: item.identidad.rol,
+      p_payload: { ...payload, idempotency_key: item.id },
+    })
+    if (error) throw error
+    return (data ?? { ok: true }) as AtomicRpcResult
+  }
 
   if (item.tipo === "pago" || item.tipo === "no_pago") {
     const { data, error } = await supabase.rpc("registrar_pago_atomico", {
@@ -321,10 +356,16 @@ export async function enviarOEncolar(args: {
   tipo: TipoOperacion
   payload: Record<string, unknown>
   descripcion: string
-}): Promise<{ encolado: boolean; resultado?: AtomicRpcResult }> {
-  // La llave se genera AQUI, al capturar, y es la misma que se use ahora o
-  // dentro de dos horas: es lo que permite al servidor reconocer el reintento.
-  const id = crypto.randomUUID()
+  /**
+   * Llave ya generada por quien captura. Las gestiones la necesitan porque
+   * el mismo id viaja DENTRO del payload (es el id del evento en el libro),
+   * y tiene que ser idéntico al de la cola para que el reintento deduplique.
+   */
+  id?: string
+}): Promise<{ encolado: boolean; resultado?: AtomicRpcResult; id: string }> {
+  // La llave se genera AL CAPTURAR, y es la misma que se use ahora o dentro
+  // de dos horas: es lo que permite al servidor reconocer el reintento.
+  const id = args.id ?? crypto.randomUUID()
   const item: ItemCola = {
     id,
     tipo: args.tipo,
@@ -339,16 +380,16 @@ export async function enviarOEncolar(args: {
   const sinRed = typeof navigator !== "undefined" && !navigator.onLine
   if (sinRed) {
     await encolar({ tipo: args.tipo, payload: args.payload, descripcion: args.descripcion, id })
-    return { encolado: true }
+    return { encolado: true, id }
   }
 
   try {
     const resultado = await enviarItem(item)
-    return { encolado: false, resultado }
+    return { encolado: false, resultado, id }
   } catch (err) {
     if (esErrorDeRed(err)) {
       await encolar({ tipo: args.tipo, payload: args.payload, descripcion: args.descripcion, id })
-      return { encolado: true }
+      return { encolado: true, id }
     }
     throw err
   }

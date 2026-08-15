@@ -110,6 +110,36 @@ export async function leerCache<T>(
   }
 }
 
+/**
+ * Modifica en el sitio los datos ya cacheados, conservando su fecha y su
+ * marca de "traído del servidor en...".
+ *
+ * PARA QUÉ: cuando el cobrador registra un pago SIN SEÑAL, la operación se
+ * encola pero el cache sigue teniendo la foto del servidor — donde el cliente
+ * aún aparece pendiente. Si cerraba y reabría la app, el cliente volvía a la
+ * lista y podía cobrársele dos veces, cada captura con su propia llave de
+ * idempotencia (el servidor no puede detectar eso: son dos operaciones
+ * distintas). Parchando el cache al encolar, el cliente ya no reaparece.
+ *
+ * Si no hay nada cacheado no hace nada: no inventa una entrada, porque una
+ * entrada parcial se leería después como si fuera la ruta completa.
+ */
+export async function parcharCache<T>(
+  clave: ClaveCache,
+  rutaId: number,
+  fn: (datos: T) => T,
+): Promise<void> {
+  try {
+    const db = await getDB()
+    const entrada: EntradaCache<T> | undefined = await db.get(STORE, claveDe(clave, rutaId))
+    if (!entrada) return
+    if (entrada.rutaId !== rutaId || entrada.fecha !== todayColombia()) return
+    await db.put(STORE, { ...entrada, datos: fn(entrada.datos) })
+  } catch (err) {
+    console.warn("[v0] No se pudo parchar el cache offline:", err)
+  }
+}
+
 /** Borra todo el cache (al cerrar sesión). */
 export async function limpiarCache(): Promise<void> {
   try {

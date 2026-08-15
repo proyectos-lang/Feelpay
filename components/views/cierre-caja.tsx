@@ -10,6 +10,7 @@ import {
   FileDown, Lock, AlertTriangle, CheckCircle2, Loader2,
 } from "lucide-react"
  import { createClient } from "@/lib/supabase/client"
+import { todayColombia, bandaCartera, etiquetaFrecuencia } from "@/lib/gestion-core"
 import { contarPendientes, suscribirCola } from "@/lib/offline-queue"
 
 interface CierreCajaProps {
@@ -30,16 +31,8 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
   // Operaciones pendientes (aún mock hasta que se conecte la lógica real)
   const operacionesPendientes: { tipo: string; monto: number; estado: string }[] = []
 
-  // Helper: fecha de hoy en zona Colombia (YYYY-MM-DD)
-  const getFechaHoyColombia = () => {
-    const formatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Bogota",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    })
-    return formatter.format(new Date())
-  }
+  // La fecha de hoy en Colombia sale de `todayColombia()` (@/lib/gestion-core):
+  // una sola definicion para toda la app.
 
   // Consultar payment_plan para contar cuántos pagos del día siguen en estado "pendiente"
   useEffect(() => {
@@ -47,7 +40,7 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
       try {
         setLoadingPagos(true)
         const supabase = createClient()
-        const fechaHoy = getFechaHoyColombia()
+        const fechaHoy = todayColombia()
         const { count, error } = await supabase
           .from("payment_plan")
           .select("*", { count: "exact", head: true })
@@ -88,11 +81,11 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
   const puedesCerrar = pagosCumple && operacionesCumple && colaCumple && !loadingPagos
 
   // ── Datos reales del cierre ────────────────────────────────────────────
-  // Fuentes: resumen_pagos_diarios (misma vista que Resumen del Día — los
-  // números coinciden entre ambas pantallas por construcción), payment_plan
-  // (conteos del día y cuotas vencidas) y v_loan_mora_status (cartera, con
-  // las mismas bandas de mora que usa el módulo de pagos: 0 al día, 1-8
-  // mora, >8 vencido).
+  // Fuentes: resumen_diario_v2 (misma vista que Resumen del Día — los números
+  // coinciden entre ambas pantallas por construcción, incluida la Caja
+  // Anterior, que ahora es una columna), payment_plan (conteos del día y
+  // cuotas vencidas) y v_loan_financiero (cartera, por CUOTAS en mora, con
+  // las bandas de `bandaCartera()`).
   type FrecKey = "diario" | "semanal" | "quincenal" | "mensual"
   const [cierreData, setCierreData] = useState({
     cajaAnterior: 0,
@@ -118,13 +111,13 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
     const loadCierreData = async () => {
       try {
         const supabase = createClient()
-        const fechaHoy = getFechaHoyColombia()
+        const fechaHoy = todayColombia()
 
         const [resumenRes, rowsHoyRes, loansRes] = await Promise.all([
           supabase
-            .from("resumen_pagos_diarios")
+            .from("resumen_diario_v2")
             .select(
-              "valor_pago, meta_pagos, valor_ingresos, recuento_ingresos, valor_gastos, recuento_gastos, valor_retiros, recuento_retiros, valor_canceladas, cantidad_canceladas, valor_ventas, cantidad_ventas, efectivo",
+              "valor_pago, meta_pagos, valor_ingresos, cantidad_ingresos, valor_gastos, cantidad_gastos, valor_retiros, cantidad_retiros, valor_canceladas, cantidad_canceladas, valor_ventas, cantidad_ventas, efectivo, caja_anterior",
             )
             .eq("fecha_pago", fechaHoy)
             .eq("ruta", rutaId)
@@ -144,16 +137,24 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
         const valorRetiros = Number(r.valor_retiros ?? 0)
         const valorVentas = Number(r.valor_ventas ?? 0)
         const efectivo = Number(r.efectivo ?? 0)
-        // `efectivo` es acumulado hasta hoy; la caja anterior es el
-        // acumulado sin el movimiento neto del día.
-        const cajaAnterior = efectivo - (valorIngresos + valorPago - valorVentas - valorGastos - valorRetiros)
+        // Caja Anterior: columna de la vista.
+        // POR QUE se quitó la aritmética local (`efectivo` menos el neto del
+        // día): había DOS fórmulas distintas para el mismo número — esta y la
+        // consulta del día anterior de daily-summary — y divergían cuando
+        // hubo días sin movimiento o cuando se editó un día pasado.
+        const cajaAnterior = Number(r.caja_anterior ?? 0)
 
         const rowsHoy = (rowsHoyRes.data ?? []) as {
           estado: string
           monto_pagado: number | null
           loans: { frecuencia_pago: string | null } | null
         }[]
-        const esPagoReal = (row: { estado: string; monto_pagado: number | null }) =>
+        // OJO: este predicado NO es el `esPagoReal` de @/lib/gestion-core.
+        // Aquel evalúa una GESTIÓN ({tipo, monto, estado}); aquí las filas son
+        // CUOTAS de payment_plan, cuyo `estado` es el cache de la cascada. Se
+        // deja local a propósito: este bloque cuenta cuotas del cronograma
+        // (cuántas de las que vencían hoy se tocaron), no eventos del libro.
+        const cuotaConPago = (row: { estado: string; monto_pagado: number | null }) =>
           ["pagado", "parcial", "cancelada"].includes(row.estado) && Number(row.monto_pagado ?? 0) > 0
         const frecuencia: Record<FrecKey, { pagos: number; total: number }> = {
           diario: { pagos: 0, total: 0 },
@@ -162,16 +163,11 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
           mensual: { pagos: 0, total: 0 },
         }
         for (const row of rowsHoy) {
-          const key: FrecKey =
-            row.loans?.frecuencia_pago === "weekly"
-              ? "semanal"
-              : row.loans?.frecuencia_pago === "biweekly"
-                ? "quincenal"
-                : row.loans?.frecuencia_pago === "monthly"
-                  ? "mensual"
-                  : "diario"
+          // El mapeo frecuencia -> etiqueta vive en gestion-core (FRECUENCIAS):
+          // estaba copiado tal cual en daily-summary y aquí.
+          const key = etiquetaFrecuencia(row.loans?.frecuencia_pago).toLowerCase() as FrecKey
           frecuencia[key].total += 1
-          if (esPagoReal(row)) frecuencia[key].pagos += 1
+          if (cuotaConPago(row)) frecuencia[key].pagos += 1
         }
 
         const loanIds = ((loansRes.data ?? []) as { id: string }[]).map((l) => l.id)
@@ -179,13 +175,16 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
         let cartera = { alDia: 0, mora: 0, vencidos: 0 }
         if (loanIds.length > 0) {
           const [vencidasRes, moraRes] = await Promise.all([
+            // Cuotas vencidas: `fecha_pago` es el VENCIMIENTO inmutable del
+            // cronograma, así que pendiente + vencida antes de hoy sigue
+            // siendo la definición correcta.
             supabase
               .from("payment_plan")
               .select("loan_id")
               .eq("estado", "pendiente")
               .lt("fecha_pago", fechaHoy)
               .in("loan_id", loanIds),
-            supabase.from("v_loan_mora_status").select("loan_id, dias_mora_calculada").in("loan_id", loanIds),
+            supabase.from("v_loan_financiero").select("loan_id, cuotas_mora").in("loan_id", loanIds),
           ])
 
           const vencidasPorLoan = new Map<string, number>()
@@ -198,13 +197,14 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
           }
 
           const moraPorLoan = new Map<string, number>()
-          for (const m of (moraRes.data ?? []) as { loan_id: string; dias_mora_calculada: number | null }[]) {
-            moraPorLoan.set(m.loan_id, Number(m.dias_mora_calculada ?? 0))
+          for (const m of (moraRes.data ?? []) as { loan_id: string; cuotas_mora: number | null }[]) {
+            moraPorLoan.set(m.loan_id, Number(m.cuotas_mora ?? 0))
           }
           for (const id of loanIds) {
-            const dias = moraPorLoan.get(id) ?? 0
-            if (dias === 0) cartera.alDia += 1
-            else if (dias <= 8) cartera.mora += 1
+            // Las bandas las decide `bandaCartera()`, no una escalera local.
+            const banda = bandaCartera(moraPorLoan.get(id) ?? 0)
+            if (banda === "al_dia") cartera.alDia += 1
+            else if (banda === "mora") cartera.mora += 1
             else cartera.vencidos += 1
           }
         }
@@ -215,10 +215,10 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
           recaudo: { total: valorPago, meta: Number(r.meta_pagos ?? 0) },
           canceladas: { valor: Number(r.valor_canceladas ?? 0), cantidad: Number(r.cantidad_canceladas ?? 0) },
           ventas: { total: valorVentas, cantidad: Number(r.cantidad_ventas ?? 0) },
-          gastos: { valor: valorGastos, cantidad: Number(r.recuento_gastos ?? 0) },
-          retiros: { valor: valorRetiros, cantidad: Number(r.recuento_retiros ?? 0) },
-          ingresos: { valor: valorIngresos, cantidad: Number(r.recuento_ingresos ?? 0) },
-          pagos: { realizados: rowsHoy.filter(esPagoReal).length, total: rowsHoy.length },
+          gastos: { valor: valorGastos, cantidad: Number(r.cantidad_gastos ?? 0) },
+          retiros: { valor: valorRetiros, cantidad: Number(r.cantidad_retiros ?? 0) },
+          ingresos: { valor: valorIngresos, cantidad: Number(r.cantidad_ingresos ?? 0) },
+          pagos: { realizados: rowsHoy.filter(cuotaConPago).length, total: rowsHoy.length },
           frecuencia,
           cuotas,
           cartera,
@@ -252,7 +252,7 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
     setCierreError(null)
     try {
       const supabase = createClient()
-      const fechaHoy = getFechaHoyColombia()
+      const fechaHoy = todayColombia()
 
       // Finalizar la jornada en rutas_diarias: estado=cerrada + hora_fin=now()
       const { error } = await supabase

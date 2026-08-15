@@ -9,33 +9,17 @@
  * -----
  * 1. El usuario abre el dialogo desde `<SalesTodayList>`.
  * 2. Se cargan los datos actuales del loan en el formulario.
- * 3. Al guardar:
- *    a) GUARD: si el plan ya tiene gestiones (pagos/no-pagos/abonos), se
- *       bloquea la edicion — regenerar destruiria el historial de cobros.
- *    b) Se BORRA el `payment_plan` actual del loan (solo cuotas pendientes
- *       sin gestionar, garantizado por el guard).
- *    b) Se hace UPDATE a `loans` con los nuevos valores
- *       (`valor`, `tasa_interes`, `numero_cuotas`, `frecuencia_pago`,
- *       `tipo_amortizacion`, `valor_a_pagar`, `valor_cuota`, etc.).
- *    c) Se inserta el nuevo cronograma usando el helper
- *       `buildPaymentSchedule` (mismo algoritmo que `crear_venta_atomica`).
+ * 3. Al guardar se llama `editar_venta_atomica` (scripts/045): UNA
+ *    transacción que regenera el cronograma con la misma función que crea
+ *    las ventas.
  *
- * Por que no se usa `crear_venta_atomica`
- * ---------------------------------------
- * Esa RPC esta pensada para CREAR un loan + cliente nuevos. Aqui ya
- * existe el loan y el cliente, asi que se reutiliza el mismo helper de
- * generacion de cuotas, pero los UPDATE/INSERT se hacen directamente
- * para evitar crear duplicados.
- *
- * Atomicidad
- * ----------
- * Idealmente esto deberia correr como una unica transaccion server-side.
- * Para minimizar la ventana de inconsistencia ejecutamos en este orden:
- *   1) DELETE payment_plan
- *   2) UPDATE loans
- *   3) INSERT payment_plan (bulk)
- * Si el INSERT falla, intentamos restaurar (best-effort) llamando al
- * caller — pero el caso normal en datos de un solo dia es seguro.
+ * Qué pasa si la venta YA tiene pagos
+ * -----------------------------------
+ * El plan se regenera y los pagos NO se pierden: viven en el libro de
+ * eventos, independiente del cronograma, y se reparten solos sobre las
+ * cuotas nuevas. Para un cobrador la RPC sigue bloqueando la edición de una
+ * venta con gestiones; secretaría y admin pueden editarla siempre (ese es
+ * el "control total" del módulo de secretaría).
  */
 
 import { useEffect, useState } from "react"
@@ -59,12 +43,8 @@ import {
 import { Button } from "@/components/ui/button"
 import { Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { getSupabaseSafe } from "@/lib/api-helper"
-import {
-  buildPaymentSchedule,
-  type Frecuencia,
-  type TipoAmortizacion,
-} from "@/lib/loan-schedule"
+import { getSupabaseSafe, callRpcAtomic } from "@/lib/api-helper"
+import type { Frecuencia, TipoAmortizacion } from "@/lib/loan-schedule"
 
 interface EditSaleDialogProps {
   open: boolean
@@ -175,152 +155,33 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDi
 
     setSaving(true)
     try {
-      const supabase = await getSupabaseSafe()
-
-      // Guard: si alguna CUOTA PROGRAMADA ya se gestiono (pago, parcial,
-      // no-pago, cancelada o cualquier monto abonado), NO se puede regenerar
-      // — el DELETE destruiria ese historial de cobros.
+      // TODO EN UNA TRANSACCIÓN, EN EL SERVIDOR.
       //
-      // Se excluyen las filas `es_extra`: el abono inicial de la venta es
-      // una de ellas, y como el script 040 lo registra asi, TODA venta con
-      // abono quedaba imposible de editar el mismo dia en que se creo. Las
-      // extras con plata no se borran mas abajo, se conservan.
-      const { data: gestionadas, error: gestErr } = await supabase
-        .from("payment_plan")
-        .select("id")
-        .eq("loan_id", sale.id)
-        .not("es_extra", "is", true)
-        .or("monto_pagado.gt.0,estado.neq.pendiente")
-        .limit(1)
-      if (gestErr) throw gestErr
-      if ((gestionadas ?? []).length > 0) {
-        toast({
-          title: "Venta con gestiones registradas",
-          description: "Esta venta ya tiene pagos o visitas registradas; no se puede regenerar el plan de pagos.",
-          variant: "destructive",
-        })
-        setSaving(false)
-        return
-      }
-
-      // Ruta del prestamo: las filas reinsertadas DEBEN llevarla — sin ella
-      // caen a ruta NULL y desaparecen de la meta diaria, el cierre de caja
-      // y los contadores por ruta.
-      const { data: loanRow, error: rutaErr } = await supabase
-        .from("loans")
-        .select("ruta")
-        .eq("id", sale.id)
-        .single()
-      if (rutaErr) throw rutaErr
-      const rutaLoan = (loanRow as { ruta: number | null })?.ruta ?? null
-
-      // Recalcular cronograma usando la misma logica que `crear_venta_atomica`.
-      // Para frecuencias no diarias, calcular la fechaInicio como el
-      // proximo dia de la semana que coincida con `diaSemana`, a partir
-      // de manana. Esto replica la logica de new-loan.tsx.
-      let fechaInicio: Date | undefined
-      if (frecuenciaPago !== "daily" && diaSemana) {
-        const diasMap: Record<string, number> = {
-          domingo: 0, lunes: 1, martes: 2, miercoles: 3,
-          jueves: 4, viernes: 5, sabado: 6,
-        }
-        const targetDay = diasMap[diaSemana]
-        if (targetDay !== undefined) {
-          const todayStr = new Date().toLocaleDateString("en-CA")
-          const [y, m, d] = todayStr.split("-").map(Number)
-          const candidate = new Date(y, m - 1, d + 1) // manana
-          const diff = (targetDay - candidate.getDay() + 7) % 7
-          candidate.setDate(candidate.getDate() + diff)
-          fechaInicio = candidate
-        }
-      }
-
-      const { schedule, valorAPagar, valorCuota } = buildPaymentSchedule({
+      // Antes esto eran cuatro viajes sueltos desde el navegador —borrar el
+      // plan, actualizar el préstamo, insertar el plan nuevo y renumerar las
+      // filas conservadas—: si fallaba a mitad, la venta quedaba sin plan.
+      // Además recalculaba el cronograma con una copia de la fórmula que ya
+      // había divergido de la real.
+      //
+      // Ahora `editar_venta_atomica` (script 045) regenera el plan con la
+      // MISMA función que crea las ventas, y el libro de eventos no se toca:
+      // los pagos que ya existían se reasignan solos sobre el plan nuevo.
+      const r = await callRpcAtomic("editar_venta_atomica", {
+        loan_id: sale.id,
         valor: valorNum,
-        tasaInteres: tasaNum,
-        numeroCuotas: cuotasNum,
-        frecuenciaPago,
-        tipoAmortizacion,
-        prestamoEmpleado,
-        fechaInicio,
+        tasa_interes: prestamoEmpleado ? 0 : tasaNum,
+        numero_cuotas: cuotasNum,
+        frecuencia_pago: frecuenciaPago,
+        tipo_amortizacion: prestamoEmpleado ? "empleado" : tipoAmortizacion,
+        prestamo_empleado: prestamoEmpleado,
+        dia_semana: frecuenciaPago !== "daily" ? (diaSemana || null) : null,
+        idempotency_key: crypto.randomUUID(),
       })
 
-      // Lo ya abonado que se va a CONSERVAR: las filas extra con plata
-      // (el abono inicial de la venta, o un pago registrado como "pago de
-      // hoy"). Se lee antes de borrar para poder descontarlo del saldo.
-      const { data: conservadas, error: consErr } = await supabase
-        .from("payment_plan")
-        .select("id, monto_pagado")
-        .eq("loan_id", sale.id)
-        .is("es_extra", true)
-        .gt("monto_pagado", 0)
-      if (consErr) throw consErr
-      const filasConservadas = (conservadas ?? []) as { id: string; monto_pagado: number | null }[]
-      const yaAbonado = filasConservadas.reduce((s, r) => s + (Number(r.monto_pagado) || 0), 0)
-
-      // 1) Borrar el cronograma, PERO conservando las extras con plata. Lo
-      //    que se descarta es lo no cobrado: las cuotas programadas y las
-      //    extras pendientes (prorrogas o cuotas adicionales), que dejan de
-      //    tener sentido con un plan nuevo.
-      const idsConservados = filasConservadas.map((r) => r.id)
-      let delQuery = supabase.from("payment_plan").delete().eq("loan_id", sale.id)
-      if (idsConservados.length > 0) {
-        delQuery = delQuery.not("id", "in", `(${idsConservados.join(",")})`)
-      }
-      const { error: delError } = await delQuery
-      if (delError) throw delError
-
-      // 2) UPDATE loans con los nuevos parametros.
-      const { error: updError } = await supabase
-        .from("loans")
-        .update({
-          valor: valorNum,
-          tasa_interes: prestamoEmpleado ? 0 : tasaNum,
-          numero_cuotas: cuotasNum,
-          frecuencia_pago: frecuenciaPago,
-          tipo_amortizacion: prestamoEmpleado ? "empleado" : tipoAmortizacion,
-          prestamo_empleado: prestamoEmpleado,
-          valor_a_pagar: valorAPagar,
-          // El saldo descuenta lo ya abonado. Sin esto, editar una venta con
-          // abono inicial se lo comia: el cliente volvia a deber el total.
-          saldo: Math.max(0, valorAPagar - yaAbonado),
-          valor_cuota: valorCuota,
-          dia_semana: frecuenciaPago !== "daily" ? (diaSemana || null) : null,
-        })
-        .eq("id", sale.id)
-      if (updError) throw updError
-
-      // 3) Insertar el nuevo cronograma.
-      const planRows = schedule.map((row) => ({
-        loan_id: sale.id,
-        numero_cuota: row.numero_cuota,
-        fecha_pago: row.fecha_pago,
-        valor_cuota: row.valor_cuota,
-        capital: row.capital,
-        interes: row.interes,
-        saldo: row.saldo,
-        estado: "pendiente" as const,
-        monto_pagado: 0,
-        ruta: rutaLoan,
-      }))
-
-      const { error: insError } = await supabase.from("payment_plan").insert(planRows)
-      if (insError) throw insError
-
-      // 4) Las extras conservadas se renumeran al final del plan nuevo, para
-      //    que no choquen con la numeracion recien generada (1..N) ni
-      //    aparezcan intercaladas en el historial.
-      for (let i = 0; i < filasConservadas.length; i++) {
-        const { error: renumError } = await supabase
-          .from("payment_plan")
-          .update({ numero_cuota: cuotasNum + i + 1 })
-          .eq("id", filasConservadas[i].id)
-        if (renumError) throw renumError
-      }
-
+      const saldo = Number(r.nuevo_saldo ?? 0)
       toast({
         title: "Venta actualizada",
-        description: `Plan de pagos regenerado con ${cuotasNum} cuota${cuotasNum === 1 ? "" : "s"}.`,
+        description: `Plan regenerado con ${cuotasNum} cuota${cuotasNum === 1 ? "" : "s"}. Saldo: $${saldo.toLocaleString()}.`,
       })
       onSaved?.()
       onOpenChange(false)

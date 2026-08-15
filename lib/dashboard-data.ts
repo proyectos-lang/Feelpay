@@ -1,21 +1,29 @@
 /**
  * lib/dashboard-data.ts
  * ---------------------------------------------------------------------------
- * Capa de acceso a datos para el dashboard de pagos.
+ * Capa de acceso a datos del módulo de pagos.
  *
- * CAMBIO ARQUITECTONICO (mayo 2026): RLS eliminado.
- * --------------------------------------------------
- * Antes esto intentaba primero `obtener_dashboard_pagos` (RPC atomica que
- * fijaba session vars dentro de la transaccion) con fallback a 4 SELECTs
- * paralelos + retries. Como RLS fue eliminado, ya no hay condicion de
- * carrera con PgBouncer: simplemente ejecutamos 4 SELECTs paralelos
- * filtrando por ruta con `.eq('ruta', rutaId)`. Sin retries, sin RPC.
+ * NÚCLEO NUEVO (scripts 041-049)
+ * ------------------------------
+ * Antes esto leía dos vistas distintas para el dinero (`saldo_prestamos_clientes`
+ * y `v_loan_mora_status`) que podían contradecirse, y la pantalla deducía a
+ * mano, a partir de estados de cuota y horas, si un cliente ya estaba
+ * gestionado hoy.
  *
- * El shape de retorno se mantiene identico para no tocar `register-payment.tsx`.
+ * Ahora:
+ *   · `v_loan_financiero` — saldo, saldo de hoy, mora y conteo de cuotas
+ *     salen de UNA vista, derivada del libro de eventos. No pueden discrepar.
+ *   · `gestiones` — los eventos de hoy y de ayer. Con eso la pantalla sabe
+ *     quién está gestionado y de cuánto fue el abono sin inferir nada.
+ *
+ * Se sigue trayendo `payment_plan` porque el cronograma es lo que dice qué
+ * cuota toca cobrar y cuánto vale; sus columnas `estado`/`monto_pagado` son
+ * un cache que la base mantiene sola.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { guardarCache, leerCache } from "@/lib/offline-cache"
+import { todayColombia, ayerColombia, COLUMNAS_GESTION, type Gestion } from "@/lib/gestion-core"
 
 export type LoanWithClient = {
   id: string
@@ -38,6 +46,8 @@ export type LoanWithClient = {
   prestamo_empleado?: boolean
   tipo_venta?: string
   enrutar_venta?: string | null
+  /** 'homologado' = venta migrada de otro sistema con su historia. */
+  origen?: string
   clients: {
     nombre_completo: string
     apodo: string | null
@@ -53,26 +63,50 @@ export type PaymentPlanEntry = {
   id: string
   loan_id: string
   numero_cuota: number
+  /** VENCIMIENTO de la cuota. Inmutable: ninguna gestión la pisa. */
   fecha_pago: string
   valor_cuota: number
   capital: number
   interes: number
   saldo: number
+  /** Cache derivado del libro de eventos (lo escribe `recalcular_prestamo`). */
   estado: string
   fecha_pago_real: string | null
   monto_pagado: number
   ruta?: number
-  // Cuota agregada por extension (prorroga, cuota adicional, pago de hoy).
-  // Cuenta completo en las metricas pero no forma parte de las cuotas base.
+  /** Cuota fuera del plan base: cuota adicional o prórroga americana. */
   es_extra?: boolean
+}
+
+/** Fila de `v_loan_financiero`: todo el dinero de un préstamo, derivado. */
+export type LoanFinanciero = {
+  loan_id: string
+  total_a_pagar: number
+  total_pagado: number
+  /** Saldo del contrato completo (lo que se cobra para cancelar). */
+  saldo: number
+  /** Lo que el cliente debe HOY (en americano difiere del anterior). */
+  saldo_hoy: number
+  saldo_en_mora: number
+  cuotas_mora: number
+  cuotas_cubiertas: number
+  cuotas_totales: number
+  cuotas_extra: number
+  fecha_ultimo_pago: string | null
 }
 
 export type DashboardPagosResult = {
   loans: LoanWithClient[]
+  /** Lo que el cliente debe hoy, por loan_id. */
   saldoMap: Map<string, number>
+  /** Cuotas vencidas sin cubrir, por loan_id. */
   moraMap: Map<string, number>
-  /** Fecha del último pago registrado por loan_id (YYYY-MM-DD), según saldo_prestamos_clientes. */
+  /** Fecha del último pago (YYYY-MM-DD), por loan_id. */
   fechaUltimoPagoMap: Map<string, string>
+  /** Todo lo financiero derivado, por loan_id. */
+  finMap: Map<string, LoanFinanciero>
+  /** Eventos aplicados de HOY y AYER en esta ruta (el libro del día). */
+  gestiones: Gestion[]
   allPaymentPlans: PaymentPlanEntry[]
   /** "cache" cuando los datos vienen del dispositivo por falta de conexion. */
   source: "direct" | "cache"
@@ -81,8 +115,8 @@ export type DashboardPagosResult = {
 }
 
 /**
- * Carga el dashboard de pagos con 4 SELECTs paralelos filtrando por ruta.
- * Sin RLS, sin RPC, sin retries.
+ * Carga el módulo de pagos con SELECTs paralelos filtrando por ruta.
+ * Sin RLS: cada consulta filtra explícitamente.
  */
 export async function loadDashboardPagos(
   supabase: SupabaseClient,
@@ -123,67 +157,69 @@ export async function loadDashboardPagos(
   }
 
   const loans = (loansData ?? []) as unknown as LoanWithClient[]
-  const activeLoans = loans.filter(
-    (l) => l.estado === "activo" || !l.estado,
-  )
+  const activeLoans = loans.filter((l) => l.estado === "activo" || !l.estado)
   const loanIds = activeLoans.map((l) => l.id)
 
   const saldoMap = new Map<string, number>()
   const moraMap = new Map<string, number>()
   const fechaUltimoPagoMap = new Map<string, string>()
+  const finMap = new Map<string, LoanFinanciero>()
+  let gestiones: Gestion[] = []
   let allPaymentPlans: PaymentPlanEntry[] = []
 
   if (loanIds.length === 0) {
-    const vacio: DashboardPagosResult = { loans: activeLoans, saldoMap, moraMap, fechaUltimoPagoMap, allPaymentPlans, source: "direct" }
+    const vacio: DashboardPagosResult = {
+      loans: activeLoans, saldoMap, moraMap, fechaUltimoPagoMap, finMap,
+      gestiones, allPaymentPlans, source: "direct",
+    }
     void guardarCache("dashboard-pagos", args.rutaId, vacio)
     return vacio
   }
 
-  // ── 2) Cargar saldos + mora + payment_plans en paralelo ───────────
+  // ── 2) Financiero + cronograma + eventos del día, en paralelo ─────
   //
-  // Estas vistas/tabla NO tienen columna `ruta` (saldo_prestamos_clientes y
-  // v_loan_mora_status son vistas calculadas sobre loans, y payment_plan ya
-  // se filtra por loan_id que pertenece a esta ruta). Por eso no aplica
-  // `.eq('ruta', ...)` aqui — el filtro ya viene implicito al hacer
-  // `.in('loan_id', loanIds)` con IDs de prestamos de la ruta actual.
-  type SaldoRow = { loan_id: string; saldo_pendiente: number; fechaultimopago: string | null }
-  type MoraRow = { loan_id: string; dias_mora_calculada: number }
+  // `v_loan_financiero` y `gestiones` sí tienen columna `ruta`, pero se
+  // filtra igual por loan_id para que las tres consultas hablen exactamente
+  // del mismo conjunto de préstamos (los activos de esta ruta).
+  //
+  // Se traen los eventos desde AYER porque el flujo "ayer no se gestionó"
+  // necesita saber qué pasó ese día para ofrecer la gestión retro.
+  const desde = ayerColombia()
 
-  const [saldoRes, moraRes, ppRes] = await Promise.all([
+  const [finRes, ppRes, gesRes] = await Promise.all([
     supabase
-      .from("saldo_prestamos_clientes")
-      .select("loan_id, saldo_pendiente, fechaultimopago")
-      .in("loan_id", loanIds),
-    supabase
-      .from("v_loan_mora_status")
-      .select("loan_id, dias_mora_calculada")
+      .from("v_loan_financiero")
+      .select(
+        "loan_id, total_a_pagar, total_pagado, saldo, saldo_hoy, saldo_en_mora, " +
+          "cuotas_mora, cuotas_cubiertas, cuotas_totales, cuotas_extra, fecha_ultimo_pago",
+      )
       .in("loan_id", loanIds),
     supabase
       .from("payment_plan")
       .select(
-        "id, loan_id, numero_cuota, valor_cuota, capital, estado, fecha_pago, fecha_pago_real, monto_pagado, es_extra",
+        "id, loan_id, numero_cuota, valor_cuota, capital, interes, estado, fecha_pago, fecha_pago_real, monto_pagado, es_extra",
       )
       .in("loan_id", loanIds)
       .order("numero_cuota", { ascending: true }),
+    supabase
+      .from("gestiones")
+      .select(COLUMNAS_GESTION)
+      .in("loan_id", loanIds)
+      .eq("estado", "aplicada")
+      .gte("fecha_gestion", desde)
+      .order("fecha_hora", { ascending: true }),
   ])
 
-  if (saldoRes.error) {
-    console.error("[v0] saldo_prestamos_clientes error:", saldoRes.error.message)
+  if (finRes.error) {
+    console.error("[v0] v_loan_financiero error:", finRes.error.message)
   } else {
-    for (const s of (saldoRes.data ?? []) as SaldoRow[]) {
-      saldoMap.set(s.loan_id, s.saldo_pendiente)
-      if (s.fechaultimopago) {
-        // Normalize to YYYY-MM-DD in case it comes as a full timestamp
-        fechaUltimoPagoMap.set(s.loan_id, s.fechaultimopago.split("T")[0])
+    for (const f of (finRes.data ?? []) as unknown as LoanFinanciero[]) {
+      finMap.set(f.loan_id, f)
+      saldoMap.set(f.loan_id, Number(f.saldo_hoy) || 0)
+      moraMap.set(f.loan_id, Number(f.cuotas_mora) || 0)
+      if (f.fecha_ultimo_pago) {
+        fechaUltimoPagoMap.set(f.loan_id, String(f.fecha_ultimo_pago).split("T")[0])
       }
-    }
-  }
-
-  if (moraRes.error) {
-    console.error("[v0] v_loan_mora_status error:", moraRes.error.message)
-  } else {
-    for (const m of (moraRes.data ?? []) as MoraRow[]) {
-      moraMap.set(m.loan_id, m.dias_mora_calculada ?? 0)
     }
   }
 
@@ -193,8 +229,41 @@ export async function loadDashboardPagos(
     allPaymentPlans = (ppRes.data ?? []) as unknown as PaymentPlanEntry[]
   }
 
-  const resultado: DashboardPagosResult = { loans: activeLoans, saldoMap, moraMap, fechaUltimoPagoMap, allPaymentPlans, source: "direct" }
+  if (gesRes.error) {
+    console.error("[v0] gestiones error:", gesRes.error.message)
+  } else {
+    gestiones = (gesRes.data ?? []) as unknown as Gestion[]
+  }
+
+  const resultado: DashboardPagosResult = {
+    loans: activeLoans, saldoMap, moraMap, fechaUltimoPagoMap, finMap,
+    gestiones, allPaymentPlans, source: "direct",
+  }
   // Se guarda para que la app siga funcionando si el cobrador pierde senal.
   void guardarCache("dashboard-pagos", args.rutaId, resultado)
   return resultado
 }
+
+/**
+ * Inyecta en el cache offline una gestión recién capturada.
+ *
+ * Es la otra mitad del arreglo del doble cobro: al encolar sin señal, el
+ * cliente debe desaparecer de Pendientes también si el cobrador cierra y
+ * reabre la app. Como "gestionado hoy" ahora se decide por la existencia de
+ * un evento, basta con agregar el evento al cache.
+ */
+export function inyectarGestionEnCache(
+  datos: DashboardPagosResult,
+  gestion: Gestion,
+): DashboardPagosResult {
+  if (datos.gestiones.some((g) => g.id === gestion.id)) return datos
+  const saldoMap = new Map(datos.saldoMap)
+  const previo = saldoMap.get(gestion.loan_id)
+  if (previo !== undefined && gestion.tipo !== "no_pago") {
+    saldoMap.set(gestion.loan_id, Math.max(0, previo - (Number(gestion.monto) || 0)))
+  }
+  return { ...datos, gestiones: [...datos.gestiones, gestion], saldoMap }
+}
+
+/** La fecha de negocio de hoy, reexportada para quien solo importa esta capa. */
+export { todayColombia }

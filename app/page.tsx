@@ -24,6 +24,8 @@ import { ReportesBi } from "@/components/views/reportes-bi"
 import { DailyRoute } from "@/components/views/daily-route"
 import { RegisterPayment } from "@/components/views/register-payment"
 import { PaymentControl } from "@/components/views/payment-control"
+import { SaleEditor } from "@/components/views/sale-editor"
+import { LoanAudit } from "@/components/views/loan-audit"
 import { RegisterTransaction } from "@/components/views/register-transaction"
 import { ViewExpensesIncome } from "@/components/views/view-expenses-income"
 import { DailySummary } from "@/components/views/daily-summary"
@@ -843,6 +845,10 @@ export default function Page() {
         return <AdminRouteDetail currentUserId={currentUser?.id} />
       case "payment-control":
         return <PaymentControl currentRutaId={rutaId} rutaPais={rutaPais} />
+      case "sale-editor":
+        return <SaleEditor currentRutaId={rutaId} />
+      case "loan-audit":
+        return <LoanAudit currentRutaId={rutaId} />
       case "secretary-reports":
         return <SecretaryReports currentRutaId={rutaId} />
       case "socio-admin-reportes":

@@ -9,15 +9,18 @@
  * Flujo:
  *   1. Se elige la ruta (o todas) y se busca al cliente.
  *   2. La lista muestra el avance de cada prestamo: cuanto se ha recaudado,
- *      cuanto falta y si esta en mora.
+ *      cuanto falta y si esta en mora. Los tres numeros salen de
+ *      `v_loan_financiero` (scripts/043), LA formula del nucleo.
  *   3. Al entrar a un prestamo se ve su plan completo, con las cuotas
- *      vencidas y la de hoy resaltadas.
+ *      vencidas y la de hoy resaltadas. El monto de cada cuota es el que le
+ *      asigno la cascada de pagos (`v_cobertura_cuotas`), no un numero
+ *      guardado a mano.
  *   4. Cada fila se puede editar: fecha, valor, estado y monto pagado.
  *
- * La edicion pasa por la RPC `ajustar_cuota_control_pagos` (scripts/034), que
- * en la misma transaccion recalcula el saldo del prestamo, lo cancela o lo
- * reactiva segun corresponda, cuadra `clients.tiene_prestamo_activo` y deja
- * el cambio registrado en `ajustes_manuales_cuota`.
+ * La edicion pasa por la RPC `ajustar_cuota_control_pagos` (scripts/044), que
+ * en la misma transaccion registra los eventos de la correccion en `gestiones`,
+ * recalcula el saldo del prestamo, lo cancela o lo reactiva segun corresponda
+ * y cuadra `clients.tiene_prestamo_activo`.
  *
  * Sigue siendo una herramienta de correccion: mueve plata sin pasar por el
  * flujo de cobro, asi que cada ajuste queda con nombre y apellido.
@@ -39,7 +42,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/hooks/use-toast"
 import { getSupabaseSafe, callRpcAtomic } from "@/lib/api-helper"
-import { todayColombia } from "@/lib/colombia-date"
+import { todayColombia, etiquetaMora } from "@/lib/gestion-core"
 import {
   Search,
   ChevronLeft,
@@ -65,6 +68,11 @@ interface Ruta {
 }
 
 // Un prestamo en el listado, ya cruzado con su saldo y su mora.
+//
+// Saldo, recaudado y mora salen los tres de `v_loan_financiero` — LA formula
+// del nucleo (script 043). Antes venian de dos vistas distintas
+// (`saldo_prestamos_clientes` + `v_loan_mora_status`) que se cruzaban en
+// memoria y podian discrepar entre si.
 interface LoanSummary {
   id: string
   monto_prestamo: number
@@ -79,32 +87,60 @@ interface LoanSummary {
     apodo: string | null
     documento: string
   }
-  /** Viene de saldo_prestamos_clientes. */
+  /** `v_loan_financiero.total_pagado`: plata neta que entro al prestamo. */
   recaudado: number
+  /** `v_loan_financiero.saldo_hoy`: lo que el cliente debe HOY. */
   saldoPendiente: number
-  /** Cuotas de mora segun v_loan_mora_status. 0 = al dia. */
-  diasMora: number
+  /**
+   * `v_loan_financiero.cuotas_mora`: CANTIDAD DE CUOTAS vencidas sin cubrir.
+   * No son dias — antes se mostraba "Nd mora" y confundia a todo el mundo.
+   * 0 = al dia.
+   */
+  cuotasMora: number
 }
 
-// Una fila de payment_plan tal como se edita.
+// Una fila del plan tal como se edita: el cronograma (`payment_plan`) cruzado
+// con lo que de verdad se le asigno (`v_cobertura_cuotas`).
 interface CuotaRow {
   id: string
   numero_cuota: number
   fecha_pago: string
   valor_cuota: number
   estado: string
-  monto_pagado: number | null
-  fecha_pago_real: string | null
+  /**
+   * `v_cobertura_cuotas.monto_asignado`: lo que la cascada de pagos dejo en
+   * ESTA cuota. Es tambien el numero contra el que la RPC calcula el delta.
+   */
+  monto_asignado: number
+  /** Ultima gestion del libro anclada a esta cuota (`gestiones.cuota_objetivo`). */
+  fecha_gestionada: string | null
   capital: number | null
   es_extra: boolean
 }
 
+// Lo que el usuario esta escribiendo en la fila que edita. `monto_pagado` es
+// el nombre que espera el payload de la RPC, no una columna que se lea.
+interface EditBuffer {
+  fecha_pago?: string
+  valor_cuota?: number
+  estado?: string
+  monto_pagado?: number | null
+}
+
+// "Cancelada" NO está aquí a propósito, y no es un olvido: una cuota queda
+// cancelada porque se canceló el CRÉDITO COMPLETO, no cuota por cuota. Es un
+// estado derivado de un evento de cancelación, así que ponerlo a mano dejaría
+// la cuota diciendo algo que el libro no respalda. (Hasta ahora la opción
+// aparecía en el selector pero la función siempre la rechazaba: elegirla solo
+// producía un error.)
+//
+// Para cancelar un crédito: módulo de pagos → "Cancelación total". Para
+// corregir una cancelación mal hecha: Control Total → pestaña Gestiones.
 const ESTADOS_EDITABLES = [
   { value: "pendiente", label: "Pendiente" },
   { value: "pagado", label: "Pagado" },
   { value: "parcial", label: "Parcial" },
   { value: "no_pago", label: "No pago" },
-  { value: "cancelada", label: "Cancelada" },
 ]
 
 // Colores por estado. Se usan tanto en el badge como en el tinte de la fila,
@@ -158,7 +194,7 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
   const [filtroCuota, setFiltroCuota] = useState<FiltroCuota>("todas")
 
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editBuffer, setEditBuffer] = useState<Partial<CuotaRow>>({})
+  const [editBuffer, setEditBuffer] = useState<EditBuffer>({})
   const [savingId, setSavingId] = useState<string | null>(null)
 
   // ── Catalogo de rutas ────────────────────────────────────────────────
@@ -173,10 +209,11 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
     return () => { cancelado = true }
   }, [])
 
-  // ── Cargar prestamos + saldo + mora ──────────────────────────────────
-  // Los tres se piden en paralelo y se cruzan en memoria. `saldo_prestamos_clientes`
-  // y `v_loan_mora_status` traen una fila por prestamo, asi que sale barato y
-  // evita bajarse el payment_plan completo solo para pintar el avance.
+  // ── Cargar prestamos + su estado financiero ──────────────────────────
+  // UNA sola vista para saldo, recaudado y mora: `v_loan_financiero`. Antes
+  // eran dos consultas (`saldo_prestamos_clientes` + `v_loan_mora_status`) que
+  // se cruzaban en memoria y podian contradecirse; ahora los tres numeros
+  // salen de la misma fila, asi que no hay forma de que discrepen.
   useEffect(() => {
     let cancelado = false
     const cargar = async () => {
@@ -190,26 +227,30 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
             "id, valor, valor_a_pagar, numero_cuotas, estado, fecha_creacion, tipo_amortizacion, ruta, clients:clients(nombre_completo, apodo, documento)",
           )
           .order("fecha_creacion", { ascending: false })
-        if (rutaFiltro !== "todas") q = q.eq("ruta", rutaFiltro)
+        let qFin = supabase
+          .from("v_loan_financiero")
+          .select("loan_id, total_pagado, saldo_hoy, cuotas_mora")
+        if (rutaFiltro !== "todas") {
+          q = q.eq("ruta", rutaFiltro)
+          qFin = qFin.eq("ruta", rutaFiltro)
+        }
 
-        const [{ data: loansData, error }, { data: saldosData }, { data: moraData }] = await Promise.all([
-          q,
-          supabase.from("saldo_prestamos_clientes").select("loan_id, total_recaudado, saldo_pendiente"),
-          supabase.from("v_loan_mora_status").select("loan_id, dias_mora_calculada"),
-        ])
+        const [{ data: loansData, error }, { data: finData }] = await Promise.all([q, qFin])
         if (cancelado) return
         if (error) throw error
 
-        const saldos = new Map<string, { recaudado: number; pendiente: number }>()
-        for (const s of (saldosData ?? []) as { loan_id: string; total_recaudado: number | null; saldo_pendiente: number | null }[]) {
-          saldos.set(s.loan_id, {
-            recaudado: Number(s.total_recaudado ?? 0),
-            pendiente: Number(s.saldo_pendiente ?? 0),
+        const financiero = new Map<string, { recaudado: number; saldo: number; mora: number }>()
+        for (const f of (finData ?? []) as {
+          loan_id: string
+          total_pagado: number | null
+          saldo_hoy: number | null
+          cuotas_mora: number | null
+        }[]) {
+          financiero.set(f.loan_id, {
+            recaudado: Number(f.total_pagado ?? 0),
+            saldo: Number(f.saldo_hoy ?? 0),
+            mora: Number(f.cuotas_mora ?? 0),
           })
-        }
-        const moras = new Map<string, number>()
-        for (const m of (moraData ?? []) as { loan_id: string; dias_mora_calculada: number | null }[]) {
-          moras.set(m.loan_id, Number(m.dias_mora_calculada ?? 0))
         }
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -227,9 +268,9 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
             apodo: l.clients?.apodo ?? null,
             documento: l.clients?.documento ?? "",
           },
-          recaudado: saldos.get(l.id)?.recaudado ?? 0,
-          saldoPendiente: saldos.get(l.id)?.pendiente ?? 0,
-          diasMora: moras.get(l.id) ?? 0,
+          recaudado: financiero.get(l.id)?.recaudado ?? 0,
+          saldoPendiente: financiero.get(l.id)?.saldo ?? 0,
+          cuotasMora: financiero.get(l.id)?.mora ?? 0,
         }))
         setLoans(mapped)
       } catch (err) {
@@ -277,26 +318,59 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
         cartera: acc.cartera + l.total_a_pagar,
         recaudado: acc.recaudado + l.recaudado,
         saldo: acc.saldo + l.saldoPendiente,
-        enMora: acc.enMora + (l.diasMora > 0 ? 1 : 0),
+        enMora: acc.enMora + (l.cuotasMora > 0 ? 1 : 0),
       }),
       { prestamos: 0, cartera: 0, recaudado: 0, saldo: 0, enMora: 0 },
     )
   }, [filteredLoans])
 
   // ── Cuotas del prestamo seleccionado ─────────────────────────────────
+  // Tres fuentes que se cruzan por id de cuota:
+  //   payment_plan       el cronograma pactado (fecha, valor, estado, capital)
+  //   v_cobertura_cuotas cuanto se le asigno DE VERDAD a cada cuota
+  //   gestiones          cuando se gestiono cada cuota (el libro de eventos)
   const loadCuotas = async (loanId: string) => {
     setLoadingCuotas(true)
     setEditingId(null)
     setEditBuffer({})
     try {
       const supabase = await getSupabaseSafe()
-      const { data, error } = await supabase
-        .from("payment_plan")
-        .select("id, numero_cuota, fecha_pago, valor_cuota, estado, monto_pagado, fecha_pago_real, capital, es_extra")
-        .eq("loan_id", loanId)
-        .order("numero_cuota", { ascending: true })
+      const [{ data, error }, { data: cobertura, error: errCob }, { data: gests, error: errGest }] =
+        await Promise.all([
+          supabase
+            .from("payment_plan")
+            .select("id, numero_cuota, fecha_pago, valor_cuota, estado, capital, es_extra")
+            .eq("loan_id", loanId)
+            .order("numero_cuota", { ascending: true }),
+          supabase
+            .from("v_cobertura_cuotas")
+            .select("id, monto_asignado")
+            .eq("loan_id", loanId),
+          // Solo los eventos anclados a una cuota: son los que responden
+          // "cuando se gestiono ESTA cuota".
+          supabase
+            .from("gestiones")
+            .select("cuota_objetivo, fecha_gestion")
+            .eq("loan_id", loanId)
+            .eq("estado", "aplicada")
+            .not("cuota_objetivo", "is", null)
+            .order("fecha_hora", { ascending: true }),
+        ])
 
       if (error) throw error
+      if (errCob) console.error("[v0] PaymentControl v_cobertura_cuotas error:", errCob.message)
+      if (errGest) console.error("[v0] PaymentControl gestiones error:", errGest.message)
+
+      const asignado = new Map<string, number>()
+      for (const c of (cobertura ?? []) as { id: string; monto_asignado: number | null }[]) {
+        asignado.set(c.id, Number(c.monto_asignado ?? 0))
+      }
+      // Vienen ordenadas por fecha_hora ascendente, asi que la ultima escritura
+      // de cada cuota es la gestion mas reciente.
+      const gestionadaEn = new Map<string, string>()
+      for (const g of (gests ?? []) as { cuota_objetivo: string; fecha_gestion: string | null }[]) {
+        if (g.fecha_gestion) gestionadaEn.set(g.cuota_objetivo, g.fecha_gestion)
+      }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mapped: CuotaRow[] = (data ?? []).map((r: any) => ({
@@ -305,8 +379,8 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
         fecha_pago: r.fecha_pago ?? "",
         valor_cuota: Number(r.valor_cuota ?? 0),
         estado: r.estado ?? "pendiente",
-        monto_pagado: r.monto_pagado != null ? Number(r.monto_pagado) : null,
-        fecha_pago_real: r.fecha_pago_real ?? null,
+        monto_asignado: asignado.get(r.id) ?? 0,
+        fecha_gestionada: gestionadaEn.get(r.id) ?? null,
         capital: r.capital != null ? Number(r.capital) : null,
         es_extra: !!r.es_extra,
       }))
@@ -342,7 +416,9 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
       fecha_pago: row.fecha_pago,
       valor_cuota: row.valor_cuota,
       estado: row.estado,
-      monto_pagado: row.monto_pagado,
+      // Se arranca con lo ASIGNADO, que es contra lo que la RPC calcula el
+      // delta del ajuste (ver scripts/044, v_asignado).
+      monto_pagado: row.monto_asignado,
     })
   }
 
@@ -401,7 +477,9 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
       // Va por RPC y no por un UPDATE suelto: el ajuste tiene que recalcular
       // el saldo del prestamo, decidir si se cancela o se reactiva, cuadrar
       // la marca del cliente y dejar rastro de quien lo toco — todo dentro
-      // de la misma transaccion. Ver scripts/034-ajuste-manual-cuota.sql.
+      // de la misma transaccion. Ahora ademas escribe los eventos de la
+      // correccion en `gestiones`. La firma NO cambio.
+      // Ver scripts/044-registrar-gestion.sql.
       const res = await callRpcAtomic("ajustar_cuota_control_pagos", {
         payment_plan_id: row.id,
         fecha_pago: newFecha,
@@ -426,32 +504,52 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
       setEditingId(null)
       setEditBuffer({})
 
-      // El encabezado muestra saldo, avance y estado: se actualiza con lo que
-      // devolvio la RPC para no quedar mostrando el saldo viejo.
+      // El encabezado muestra saldo, avance y estado: se actualiza al vuelo con
+      // lo que devolvio la RPC para no quedar mostrando el saldo viejo.
+      //
+      // OJO: `nuevo_saldo` es el saldo TOTAL del contrato, mientras que la
+      // pantalla muestra `saldo_hoy` (que en los creditos americanos no es el
+      // mismo numero). Por eso, en seguida se relee la fila de
+      // `v_loan_financiero` y esa es la que manda.
+      const aplicar = (l: LoanSummary, saldo: number, recaudado: number, mora: number) => ({
+        ...l,
+        estado: estadoFinal,
+        saldoPendiente: saldo,
+        recaudado,
+        cuotasMora: mora,
+      })
+
       setSelectedLoan((prev) =>
         prev
-          ? {
-              ...prev,
-              estado: estadoFinal,
-              saldoPendiente: nuevoSaldo,
-              recaudado: Number(res.total_pagado ?? prev.recaudado),
-            }
+          ? aplicar(prev, nuevoSaldo, Number(res.total_pagado ?? prev.recaudado), prev.cuotasMora)
           : prev,
       )
       setLoans((prev) =>
         prev.map((l) =>
           l.id === selectedLoan?.id
-            ? {
-                ...l,
-                estado: estadoFinal,
-                saldoPendiente: nuevoSaldo,
-                recaudado: Number(res.total_pagado ?? l.recaudado),
-              }
+            ? aplicar(l, nuevoSaldo, Number(res.total_pagado ?? l.recaudado), l.cuotasMora)
             : l,
         ),
       )
 
-      if (selectedLoan) await loadCuotas(selectedLoan.id)
+      if (selectedLoan) {
+        const supabase = await getSupabaseSafe()
+        const { data: fin } = await supabase
+          .from("v_loan_financiero")
+          .select("total_pagado, saldo_hoy, cuotas_mora")
+          .eq("loan_id", selectedLoan.id)
+          .maybeSingle()
+        if (fin) {
+          const saldo = Number(fin.saldo_hoy ?? 0)
+          const recaudado = Number(fin.total_pagado ?? 0)
+          const mora = Number(fin.cuotas_mora ?? 0)
+          setSelectedLoan((prev) => (prev ? aplicar(prev, saldo, recaudado, mora) : prev))
+          setLoans((prev) =>
+            prev.map((l) => (l.id === selectedLoan.id ? aplicar(l, saldo, recaudado, mora) : l)),
+          )
+        }
+        await loadCuotas(selectedLoan.id)
+      }
     } catch (err) {
       console.error("[v0] PaymentControl saveEdit error:", err)
       toast({
@@ -475,7 +573,7 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
       noPago: cuotas.filter((c) => c.estado === "no_pago").length,
       extra: cuotas.length - base.length,
       totalBase: base.length,
-      totalPagado: cuotas.reduce((s, c) => s + (c.monto_pagado ?? 0), 0),
+      totalPagado: cuotas.reduce((s, c) => s + c.monto_asignado, 0),
       totalProgramado: cuotas.reduce((s, c) => s + c.valor_cuota, 0),
     }
   }, [cuotas, hoy])
@@ -531,10 +629,12 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
                   {selectedLoan.tipo_amortizacion && (
                     <Badge variant="outline">{tipoLabel(selectedLoan.tipo_amortizacion)}</Badge>
                   )}
-                  {selectedLoan.diasMora > 0 && (
+                  {/* El numero son CUOTAS vencidas sin cubrir, no dias: etiquetaMora
+                      lo dice con todas las letras. */}
+                  {selectedLoan.cuotasMora > 0 && (
                     <Badge className="bg-red-100 text-red-800 border-red-200 gap-1">
                       <AlertTriangle className="h-3 w-3" />
-                      {selectedLoan.diasMora} en mora
+                      {etiquetaMora(selectedLoan.cuotasMora)} en mora
                     </Badge>
                   )}
                 </div>
@@ -742,12 +842,26 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
                                 placeholder="0"
                               />
                             ) : (
-                              fmtCOP(row.monto_pagado)
+                              // Lo que la CASCADA dejo en esta cuota, no lo que
+                              // se digito en una fila. Un abono de 3 cuotas se
+                              // reparte 10/10/10 en vez de quedar 30/0/0 en la
+                              // primera: la columna muestra lo que de verdad
+                              // cubrio cada cuota.
+                              fmtCOP(row.monto_asignado)
                             )}
                           </td>
 
+                          {/*
+                            "Gestionada" ya no puede venir de payment_plan.fecha_pago_real
+                            (esa columna quedo NULL para siempre). Se conserva la columna
+                            porque la pregunta sigue siendo util — "¿cuando se toco esta
+                            cuota?" — y ahora se responde con el libro: la ultima gestion
+                            anclada a ella. Queda vacia cuando la cuota se cubrio por
+                            derrame de un abono grande, que es la verdad: nadie la gestiono,
+                            le llego la plata sobrante de otra.
+                          */}
                           <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
-                            {fmtFecha(row.fecha_pago_real)}
+                            {fmtFecha(row.fecha_gestionada)}
                           </td>
 
                           <td className="px-3 py-2">
@@ -911,10 +1025,10 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
                               {tipoLabel(l.tipo_amortizacion)}
                             </Badge>
                           )}
-                          {l.diasMora > 0 && (
+                          {l.cuotasMora > 0 && (
                             <span className="inline-flex items-center gap-0.5 rounded-full bg-red-100 text-red-800 px-1.5 py-0.5 text-[9px] font-semibold">
                               <AlertTriangle className="h-2.5 w-2.5" />
-                              {l.diasMora} mora
+                              {etiquetaMora(l.cuotasMora)} en mora
                             </span>
                           )}
                           {rutaFiltro === "todas" && (

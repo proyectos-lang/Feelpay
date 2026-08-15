@@ -24,15 +24,31 @@ import { useToast } from "@/hooks/use-toast"
 // `createClient` ya no se importa directamente: toda interaccion con
   // Supabase: RLS eliminado. `getSupabaseSafe` y `callRpcAtomic` se conservan
   // como atajos delgados sobre `createClient()`.
-  import { getSupabaseSafe, callRpcAtomic, getSessionIdentity } from "@/lib/api-helper"
+  import { getSupabaseSafe, getSessionIdentity } from "@/lib/api-helper"
 import { enviarOEncolar } from "@/lib/offline-queue"
 import { SalesTodayList } from "@/components/views/sales-today-list"
 // Helper que centraliza la carga del dashboard: prueba la RPC atomica
 // `obtener_dashboard_pagos` primero (inmune al patron PgBouncer) y si no
 // esta desplegada cae al modo legacy con multiples SELECTs paralelos.
-import { loadDashboardPagos } from "@/lib/dashboard-data"
-import { todayColombia } from "@/lib/colombia-date"
-import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre, type RutaUmbrales } from "@/lib/ruta-umbrales"
+import {
+  loadDashboardPagos,
+  inyectarGestionEnCache,
+  type DashboardPagosResult,
+  type PaymentPlanEntry as DashboardPaymentPlanEntry,
+} from "@/lib/dashboard-data"
+import { parcharCache } from "@/lib/offline-cache"
+import {
+  todayColombia,
+  ayerColombia,
+  ahoraColombiaISO,
+  nuevaGestionId,
+  resumenDelDia,
+  colorMora,
+  etiquetaMora,
+  montoEfectivo,
+  type Gestion,
+} from "@/lib/gestion-core"
+import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, type RutaUmbrales } from "@/lib/ruta-umbrales"
 import { obtenerUbicacion, evaluarGeocerca, formatearDistancia, type ResultadoGeocerca, type UbicacionMedida } from "@/lib/geo"
 
 // Types matching DB schema
@@ -59,21 +75,9 @@ type LoanWithClient = {
   }
 }
 
-type PaymentPlanEntry = {
-  id: string
-  loan_id: string
-  numero_cuota: number
-  fecha_pago: string
-  valor_cuota: number
-  capital: number
-  interes: number
-  saldo: number
-  estado: string
-  fecha_pago_real: string | null
-  monto_pagado: number
-  ruta: number
-  es_extra?: boolean
-}
+// El shape de una cuota lo define la capa de datos: aquí solo se usa. Antes
+// había una copia local que se desincronizaba con la real.
+type PaymentPlanEntry = DashboardPaymentPlanEntry
 
 type DisplayClient = {
   loanId: string
@@ -137,6 +141,11 @@ type DisplayClient = {
   // haya sido georreferenciado — su proximo cobro se la captura.
   clienteLatitud: number | null
   clienteLongitud: number | null
+  // Cuota mas antigua de un dia ANTERIOR que quedo sin gestionar (ni pago ni
+  // no pago). Dispara la pregunta "¿a que dia aplico esta gestion?" y es el
+  // ancla cuando el cobrador elige aplicarla a ese dia.
+  cuotaVencidaId: string | null
+  cuotaVencidaFecha: string | null
 }
 
 type RegisterPaymentProps = {
@@ -754,16 +763,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     saveNewOrder(reordered)
   }
 
-  // Get today's date in Colombia (YYYY-MM-DD)
-  const getTodayColombia = (): string => {
-    return new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Bogota",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date())
-  }
-
   const fetchData = useCallback(async (options?: { silent?: boolean }) => {
     // silent=true: refresh en background sin tocar el flag `loading` (no se
     // muestra spinner overlay). Lo usamos despues de un pago para sincronizar
@@ -789,17 +788,22 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
     try {
       if (!silent) setLoading(true)
-      const todayColombia = getTodayColombia()
+      // Día de negocio. `hoy` es un string; la función que lo calcula sigue
+      // importada como `todayColombia` y no se sombrea (antes se declaraba
+      // una constante con ese mismo nombre y cualquier llamada a la función
+      // reventaba con "todayColombia is not a function").
+      const hoy = todayColombia()
+      const ayer = ayerColombia()
 
-      // ── Carga del dashboard ──────────────────────────────────────────
-      // RLS fue eliminado; el helper hace 4 SELECTs directos filtrando por
-      // `.eq('ruta', rutaId)`. Sin RPC, sin retries, sin ensureSession.
+      // ── Carga del módulo ─────────────────────────────────────────────
+      // Trae préstamos, el financiero derivado, el cronograma y el libro de
+      // eventos de hoy y ayer. Sin RLS: cada consulta filtra por ruta.
       const dashboard = await loadDashboardPagos(supabase, {
         rutaId: currentRutaId,
       })
       if (fetchDataTokenRef.current !== myToken) return
 
-      const { loans, saldoMap, moraMap, fechaUltimoPagoMap, allPaymentPlans } = dashboard
+      const { loans, saldoMap, moraMap, fechaUltimoPagoMap, finMap, gestiones, allPaymentPlans } = dashboard
       console.log(`[v0] dashboard cargado: ${loans.length} loans (${dashboard.source})`)
       // Si los datos vienen del dispositivo, avisamos desde cuándo son: el
       // cobrador debe saber que puede haber gestiones de otros que aún no ve.
@@ -820,104 +824,33 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       }
 
       // ── Multas por mora ──────────────────────────────────────────────
-      // Si la ruta tiene multas habilitadas (Control de Aprobaciones),
-      // genera una multa a cada prestamo que cruce el umbral de cuotas
-      // vencidas y aun no tenga una multa pendiente. La generacion corre
-      // aqui porque la app no tiene procesos programados. El indice unico
-      // parcial (idx_multas_unica_pendiente) garantiza una sola multa
-      // pendiente por prestamo aunque varios dispositivos carguen a la vez.
+      // La generacion vive en el servidor (`generar_multas_ruta`, script 047).
+      // Antes corria aqui: cada dispositivo que abria esta pantalla evaluaba
+      // e INSERTABA multas dentro del camino de lectura, con el indice unico
+      // parcial como unica proteccion contra duplicados. Ademas contaba las
+      // fallas sobre estados de cuota, asi que una fila sintetica de valor 0
+      // producia multas de $0 que se descartaban en silencio.
+      //
+      // La app solo pide la evaluacion y lee el resultado. Si la RPC falla,
+      // el listado carga igual: cobrar nunca puede depender de las multas.
       const multasMap = new Map<string, { id: string; valor: number; cuotasMora: number | null }>()
-      // Fecha de la ultima multa de cada prestamo, sin importar como quedo.
-      // Las fallas anteriores a esa fecha YA fueron sancionadas y no se
-      // vuelven a contar (ver el filtro de cuotasVencidasList mas abajo).
-      const ultimaMultaMap = new Map<string, string>()
       try {
-        const [umbralesRuta, multasRes] = await Promise.all([
-          getRutaUmbrales(currentRutaId),
-          // Se traen TODAS, no solo las pendientes: las pagadas y canceladas
-          // son justamente las que marcan hasta donde ya se sanciono.
-          supabase
-            .from("multas")
-            .select("id, loan_id, valor, cuotas_mora, estado, created_at")
-            .eq("ruta_id", currentRutaId),
-        ])
-        for (const m of (multasRes.data ?? []) as { id: string; loan_id: string; valor: number; cuotas_mora: number | null; estado: string; created_at: string }[]) {
-          if (m.estado === "pendiente") {
-            multasMap.set(m.loan_id, { id: m.id, valor: m.valor, cuotasMora: m.cuotas_mora })
-          }
-          // created_at es timestamptz; se compara contra fecha_pago (una
-          // fecha), asi que se lleva al dia calendario de Colombia.
-          const dia = new Intl.DateTimeFormat("en-CA", {
-            timeZone: "America/Bogota",
-            year: "numeric", month: "2-digit", day: "2-digit",
-          }).format(new Date(m.created_at))
-          const previa = ultimaMultaMap.get(m.loan_id)
-          if (!previa || dia > previa) ultimaMultaMap.set(m.loan_id, dia)
-        }
+        const { error: genErr } = await supabase.rpc("generar_multas_ruta", {
+          p_ruta_id: currentRutaId,
+        })
+        if (genErr) console.error("[v0] generar_multas_ruta:", genErr.message)
 
-        const multaValorConfigurado = umbralesRuta.multa_tipo_valor === "cuotas"
-          ? umbralesRuta.multa_cantidad_cuotas != null
-          : umbralesRuta.multa_valor != null
-
-        if (umbralesRuta.multa_habilitada && umbralesRuta.multa_cuotas_umbral != null && multaValorConfigurado) {
-          for (const loan of activeLoans) {
-            if (multasMap.has(loan.id)) continue
-            if (loan.estado === "cancelado") continue
-            const plan = paymentPlansByLoan.get(loan.id) || []
-            // Una FALLA es toda cuota que el cliente no pago: las marcadas
-            // como "no pago" por el cobrador Y las que vencieron sin que
-            // nadie las gestionara. Antes solo contaban las segundas, asi que
-            // al marcar no pago la cuota dejaba de contar y un cliente que
-            // incumplia a diario nunca acumulaba fallas ni se le generaba
-            // multa.
-            //
-            // Solo cuentan las fallas POSTERIORES a la ultima multa del
-            // prestamo. Sin este corte, las fallas viejas seguian contando
-            // para siempre: el cliente pagaba la multa, la fila en `no_pago`
-            // se quedaba ahi, y en la siguiente carga de esta pantalla se le
-            // generaba otra multa identica. Lo mismo pasaba cuando secretaria
-            // cancelaba una a mano — volvia sola.
-            const desde = ultimaMultaMap.get(loan.id)
-            const cuotasVencidasList = plan.filter(
-              (p) =>
-                (p.estado === "no_pago" ||
-                  (p.estado === "pendiente" && p.fecha_pago < todayColombia)) &&
-                (!desde || p.fecha_pago > desde),
-            )
-            if (cuotasVencidasList.length < umbralesRuta.multa_cuotas_umbral) continue
-
-            // Valor de la multa: fijo en $, o multiplicador de cuotas sobre
-            // el valor de una cuota del prestamo (multiplicador fijo, no
-            // escala con la cantidad de cuotas realmente vencidas).
-            const valorMulta = umbralesRuta.multa_tipo_valor === "cuotas"
-              ? (cuotasVencidasList[0]?.valor_cuota ?? plan[0]?.valor_cuota ?? 0) * (umbralesRuta.multa_cantidad_cuotas ?? 0)
-              : (umbralesRuta.multa_valor ?? 0)
-            if (valorMulta <= 0) continue
-
-            const { data: nueva, error: multaErr } = await supabase
-              .from("multas")
-              .insert({
-                loan_id: loan.id,
-                client_id: loan.client_id,
-                ruta_id: currentRutaId,
-                cliente_nombre: loan.clients?.apodo || loan.clients?.nombre_completo || null,
-                valor: valorMulta,
-                cuotas_mora: cuotasVencidasList.length,
-              })
-              .select("id, valor, cuotas_mora")
-              .single()
-
-            if (multaErr) {
-              // 23505 = otra sesion la creo primero (indice unico) — no es error
-              if (multaErr.code !== "23505") console.error("[v0] Error generando multa:", multaErr)
-              continue
-            }
-            if (nueva) multasMap.set(loan.id, { id: nueva.id, valor: nueva.valor, cuotasMora: nueva.cuotas_mora })
-          }
+        const { data: multasData, error: multasErr } = await supabase
+          .from("multas")
+          .select("id, loan_id, valor, cuotas_mora")
+          .eq("ruta_id", currentRutaId)
+          .eq("estado", "pendiente")
+        if (multasErr) throw multasErr
+        for (const m of (multasData ?? []) as { id: string; loan_id: string; valor: number; cuotas_mora: number | null }[]) {
+          multasMap.set(m.loan_id, { id: m.id, valor: m.valor, cuotasMora: m.cuotas_mora })
         }
       } catch (err) {
-        // Las multas nunca deben bloquear la carga del listado de pagos
-        console.error("[v0] Error en generacion/carga de multas:", err)
+        console.error("[v0] Error cargando multas:", err)
       }
 
       // Process each loan with its payment plan
@@ -932,8 +865,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             timeZone: "America/Bogota",
             year: "numeric", month: "2-digit", day: "2-digit",
           }).format(new Date(loan.fecha_creacion))
-          const cobraDesdeHoy = !!loan.fecha_primer_pago && loan.fecha_primer_pago <= todayColombia
-          if (fechaCreacionColombia === todayColombia && !cobraDesdeHoy) continue
+          const cobraDesdeHoy = !!loan.fecha_primer_pago && loan.fecha_primer_pago <= hoy
+          if (fechaCreacionColombia === hoy && !cobraDesdeHoy) continue
         }
 
         const paymentPlan = paymentPlansByLoan.get(loan.id) || []
@@ -944,119 +877,83 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         // prestamo completo aparecia con "0 de 24 cuotas" — como si no
         // hubiera abonado nunca. Se cuentan las dos: en ambos casos la cuota
         // quedo saldada.
-        const cuotasPagadas = paymentPlan.filter(
+        const fin = finMap.get(loan.id)
+        const cuotasPagadas = fin?.cuotas_cubiertas ?? paymentPlan.filter(
           (p) => !p.es_extra && (p.estado === "pagado" || p.estado === "cancelada"),
         ).length
-        const cuotasTotales = paymentPlan.filter((p) => !p.es_extra).length
-        const cuotasExtra = paymentPlan.filter((p) => p.es_extra).length
+        const cuotasTotales = fin?.cuotas_totales ?? paymentPlan.filter((p) => !p.es_extra).length
+        const cuotasExtra = fin?.cuotas_extra ?? paymentPlan.filter((p) => p.es_extra).length
 
-        // Sort by fecha_pago to ensure correct order
+        // Sort by fecha_pago (vencimiento) to ensure correct order
         const sortedPlan = [...paymentPlan].sort((a, b) => a.fecha_pago.localeCompare(b.fecha_pago))
 
-        // Check if any entry was managed TODAY (by fecha_pago_real containing today's date)
-        const managedTodayEntry = sortedPlan.find((p) =>
-          (p.estado === "pagado" || p.estado === "no_pago" || p.estado === "parcial" || p.estado === "cancelada") &&
-          p.fecha_pago_real && p.fecha_pago_real.startsWith(todayColombia)
-        )
-
-        // ------------------------------------------------------------------
-        // Regla de seleccion de la cuota objetivo (nextPaymentId)
-        // ------------------------------------------------------------------
-        // PRIORIDAD (la primera que matchee se usa):
-        //   1. Entry gestionada HOY (pagado/no_pago/parcial/cancelada con
-        //      fecha_pago_real del dia)  → muestra el resultado de la gestion
-        //      actual sin disparar otra escritura.
-        //   2. Cuota PENDIENTE cuya `fecha_pago` sea EXACTAMENTE hoy. Esta es
-        //      la cuota natural del dia en el flujo de cobranza diaria —
-        //      siempre tiene prioridad sobre cuotas vencidas mas viejas.
-        //   3. Cuota PENDIENTE mas vieja con `fecha_pago < hoy` (atraso). Se
-        //      usa solo si NO existe una cuota pendiente de hoy y el cliente
-        //      arrastra una cuota sin gestionar de un dia anterior.
+        // ── Gestionado HOY ───────────────────────────────────────────────
+        // UNA sola regla: existe un evento aplicado con fecha_gestion = hoy.
         //
-        // Bug previo: el codigo tomaba la cuota pendiente mas vieja sin
-        // distinguir si existia tambien una cuota de hoy. Cuando habia dos
-        // cuotas pendientes (p.ej. 2026-05-09 y 2026-05-12), apuntaba a la
-        // del 2026-05-09 y el UPDATE en el handler de pago caia sobre esa
-        // cuota vieja en vez de la cuota del dia que el operador queria pagar.
+        // Antes esto se deducia de las cuotas (estado + fecha_pago + hora de
+        // fecha_pago_real). Como cada gestion pisaba la fecha de la cuota, la
+        // deduccion fallaba: aplicar un pago al dia anterior consumia el dia
+        // de hoy del cliente — se iba a Gestionados sin salir en los
+        // indicadores, y ya no se le podia registrar la gestion del dia.
+        const gestionHoy = resumenDelDia(gestiones, loan.id, hoy)
+        const gestionAyer = resumenDelDia(gestiones, loan.id, ayer)
+
         // ------------------------------------------------------------------
-        const pendingToday = sortedPlan.find(
-          (p) => p.estado === "pendiente" && p.fecha_pago === todayColombia,
-        )
-        const oldestOverduePending = sortedPlan.find(
-          (p) => p.estado === "pendiente" && p.fecha_pago < todayColombia,
-        )
-        // Cuarto fallback: cuota pendiente FUTURA mas cercana. Lo agregamos
-        // para que clientes activos cuya proxima cuota cae despues de hoy
-        // (p.ej. semanales/quincenales/mensuales en dias intermedios)
-        // sigan apareciendo en la lista. La accion de pago se deshabilita
-        // mas adelante via `canManageClient` para que no se pueda procesar
-        // hasta que llegue su dia.
-        const nextFuturePending = sortedPlan.find(
-          (p) => p.estado === "pendiente" && p.fecha_pago > todayColombia,
-        )
+        // Cuota objetivo: la que el cobrador va a cobrar (nextPaymentId)
+        // ------------------------------------------------------------------
+        // Con el cronograma ya inmutable, `fecha_pago` es el vencimiento y la
+        // eleccion es directa:
+        //   1. La cuota que vence HOY, si sigue sin cubrir.
+        //   2. La vencida mas vieja sin cubrir (atraso).
+        //   3. La proxima futura — para que los semanales/quincenales sigan
+        //      visibles; `canManageClient` bloquea la accion hasta su dia.
+        //
+        // La cuota objetivo es una PISTA que viaja con la gestion: si al
+        // sincronizar ya no aplica, el servidor asigna la plata a la cuota
+        // mas antigua sin cubrir. Ya no existe el conflicto "esa cuota ya
+        // fue gestionada".
+        const sinCubrir = (p: PaymentPlanEntry) =>
+          p.estado === "pendiente" || p.estado === "parcial" || p.estado === "no_pago"
 
-        let targetEntry =
-          managedTodayEntry || pendingToday || oldestOverduePending || nextFuturePending || null
+        const pendingToday = sortedPlan.find((p) => sinCubrir(p) && p.fecha_pago === hoy)
+        const oldestOverduePending = sortedPlan.find((p) => sinCubrir(p) && p.fecha_pago < hoy)
+        const nextFuturePending = sortedPlan.find((p) => sinCubrir(p) && p.fecha_pago > hoy)
 
-        // If no relevant entry found, skip this client (loan sin payment_plan
-        // o todas las cuotas ya gestionadas como pagado/cancelada).
-        if (!targetEntry) {
+        const targetEntry = pendingToday || oldestOverduePending || nextFuturePending || null
+
+        // Sin cuota por cobrar y sin gestion hoy: el prestamo esta saldado.
+        if (!targetEntry && !gestionHoy.gestionado) {
           continue
         }
 
-        // Detectar si la cuota objetivo es FUTURA (cayo solo via el
-        // cuarto fallback). Sirve para que la UI marque el cliente como
-        // "Proximo pago" y bloquee acciones.
-        const esFuturo =
-          !managedTodayEntry &&
-          !pendingToday &&
-          !oldestOverduePending &&
-          !!nextFuturePending
+        // Cuota FUTURA: el cliente aparece pero no se puede procesar aun.
+        const esFuturo = !pendingToday && !oldestOverduePending && !!nextFuturePending
 
-        // "Ultima cuota": la cuota objetivo esta pendiente y es la UNICA
-        // pendiente del plan — resolverla agota el plan de pagos. Es el
-        // predicado que gobierna los checkboxes de extension/cuota
-        // adicional. Inmune a la numeracion (funciona igual con cuotas
-        // extra) y alineado con el NOT EXISTS(pendiente) que evalua la RPC.
-        const pendientesRestantes = paymentPlan.filter((p) => p.estado === "pendiente").length
-        const esUltimaCuotaPendiente =
-          targetEntry.estado === "pendiente" && pendientesRestantes === 1
+        // "Ultima cuota": la objetivo es la UNICA sin cubrir del plan —
+        // resolverla agota el cronograma. Gobierna los checkboxes de
+        // extension y cuota adicional.
+        const sinCubrirRestantes = paymentPlan.filter(sinCubrir).length
+        const esUltimaCuotaPendiente = !!targetEntry && sinCubrirRestantes === 1
 
-        // Get mora from v_loan_mora_status view (fallback to calculated if not available)
-        let mora = moraMap.get(loan.id) ?? 0
-        if (!moraMap.has(loan.id)) {
-          // Fallback calculation if view data is not available
-          const [hy, hm, hd] = todayColombia().split("-").map(Number)
-          const hoy = new Date(hy, hm - 1, hd)
-          const fechaPagoDate = new Date(targetEntry.fecha_pago + "T00:00:00")
-          const diff = Math.floor((hoy.getTime() - fechaPagoDate.getTime()) / (1000 * 60 * 60 * 24))
-          mora = Math.max(0, diff)
-        }
+        // Mora en CUOTAS vencidas sin cubrir, derivada del cronograma intacto.
+        const mora = moraMap.get(loan.id) ?? 0
 
-        // Ultimo abono. Por lo mismo se incluyen las canceladas, y se exige
-        // que tengan monto: en una cancelacion total solo UNA fila lleva la
-        // plata y las demas quedan en null, asi que sin este filtro el
-        // "ultimo pago" salia en blanco justo despues de cancelar.
-        const pagados = paymentPlan
-          .filter(
-            (p) =>
-              (p.estado === "pagado" || p.estado === "cancelada") &&
-              Number(p.monto_pagado) > 0,
-          )
-          .sort((a, b) => b.numero_cuota - a.numero_cuota)
-        const lastPaid = pagados[0]
+        // Ultimo abono: sale del libro de eventos.
+        const pagosDelLoan = gestiones
+          .filter((g) => g.loan_id === loan.id && Number(g.monto) > 0
+            && (g.tipo === "pago" || g.tipo === "cancelacion" || g.tipo === "abono_venta"))
+          .sort((a, b) => a.fecha_hora.localeCompare(b.fecha_hora))
+        const ultimoEvento = pagosDelLoan[pagosDelLoan.length - 1]
 
-        // Fuente UNICA de verdad para el saldo: `saldo_prestamos_clientes`.
-        // Si tras los reintentos NO tenemos el saldo de la vista para este
-        // loan, logueamos un error visible y caemos a `loan.saldo` solo
-        // como ultimo recurso para no romper la UI. El log permite detectar
-        // y monitorear cuando este fallback se dispara en produccion.
+        // Saldo: lo que el cliente debe HOY, derivado del libro. `loan.saldo`
+        // es un cache de la misma cuenta; solo se usa si la vista no
+        // respondio, y se avisa para poder detectarlo en produccion.
         let saldoReal: number
         if (saldoMap.has(loan.id)) {
           saldoReal = saldoMap.get(loan.id)!
         } else {
           console.error(
-            `[v0] FALTA saldo_pendiente para loan ${loan.id} despues de retries — usando loan.saldo como ultimo recurso (puede estar desactualizado)`,
+            `[v0] FALTA v_loan_financiero para loan ${loan.id} — usando loans.saldo como ultimo recurso`,
           )
           saldoReal = loan.saldo
         }
@@ -1079,70 +976,41 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           cuotasExtra: cuotasExtra,
           esUltimaCuotaPendiente,
           mora,
-          ultimoPago: lastPaid?.monto_pagado || 0,
-          ultimoPagoFecha: fechaUltimoPagoMap.get(loan.id) ?? lastPaid?.fecha_pago_real?.split("T")[0] ?? "",
+          ultimoPago: Number(ultimoEvento?.monto) || 0,
+          ultimoPagoFecha: fechaUltimoPagoMap.get(loan.id) ?? ultimoEvento?.fecha_gestion ?? "",
           frecuenciaPago: loan.frecuencia_pago,
           tipoAmortizacion: loan.tipo_amortizacion ?? null,
           tasaInteres: loan.tasa_interes,
-          nextPaymentId: targetEntry.id,
-          nextPaymentCuota: targetEntry.valor_cuota || loan.valor_cuota,
-          // numero_cuota REAL (ordinal) — separado del monto.
-          nextPaymentNumero: (targetEntry as { numero_cuota?: number }).numero_cuota ?? 0,
-          // Precargar capital y valor_cuota REALES de la cuota objetivo para
-          // que handleRegisterPayment NO tenga que hacer un SELECT extra a
-          // payment_plan (que era el origen del error "No se encontro la
-          // cuota pendiente" cuando la session var de RLS se perdia entre
-          // conexiones).
-          nextPaymentCapital: (targetEntry as { capital?: number }).capital ?? 0,
-          nextPaymentValorCuota: targetEntry.valor_cuota ?? loan.valor_cuota ?? 0,
+          // La cuota objetivo viaja como PISTA con la gestion. Si el plan ya
+          // se agoto (cliente gestionado hoy sin cuotas por cobrar) queda
+          // vacia: el servidor no la necesita para aplicar la plata.
+          nextPaymentId: targetEntry?.id ?? "",
+          nextPaymentCuota: targetEntry?.valor_cuota || loan.valor_cuota,
+          nextPaymentNumero: targetEntry?.numero_cuota ?? 0,
+          nextPaymentCapital: targetEntry?.capital ?? 0,
+          nextPaymentValorCuota: targetEntry?.valor_cuota ?? loan.valor_cuota ?? 0,
           nextPaymentEsFuturo: esFuturo,
-          nextPaymentFecha: targetEntry.fecha_pago,
+          nextPaymentFecha: targetEntry?.fecha_pago ?? hoy,
           ordenvisita: loan.ordenvisita || 0,
           diaSemana: loan.dia_semana || null,
           multaPendiente: multasMap.get(loan.id) ?? null,
           clienteLatitud: loan.clients?.latitud ?? null,
           clienteLongitud: loan.clients?.longitud ?? null,
+          // Día anterior sin gestionar: hay cuota vencida Y ayer no se
+          // registró nada. Es lo que dispara la pregunta "¿a qué fecha
+          // aplico esta gestión?".
+          cuotaVencidaId: !gestionAyer.gestionado ? (oldestOverduePending?.id ?? null) : null,
+          cuotaVencidaFecha: !gestionAyer.gestionado && oldestOverduePending ? ayer : null,
         }
 
-        // Check if target entry has been managed (pagado, no_pago, parcial, or cancelada)
-        const isManaged = targetEntry.estado === "pagado" || targetEntry.estado === "no_pago" || targetEntry.estado === "parcial" || targetEntry.estado === "cancelada"
-
-        if (isManaged) {
-          // Extract time from fecha_pago_real if available
-          const gestionHora = targetEntry.fecha_pago_real
-            ? new Date(targetEntry.fecha_pago_real).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })
-            : ""
-
-          // El abono se SUMA sobre todas las cuotas gestionadas hoy, no se lee
-          // de `targetEntry`.
-          //
-          // Una sola gestion puede tocar varias filas y solo una lleva la
-          // plata: en un abono de varias cuotas la RPC pone el monto en la
-          // cuota ancla y deja las demas en 0, y en una cancelacion total la
-          // primera lleva el saldo y el resto quedan en NULL. Ademas, desde
-          // el script 032 TODAS quedan con `fecha_pago` = hoy, asi que el
-          // `.find()` que elige la cuota objetivo las ve empatadas y devuelve
-          // cualquiera. Cuando caia en una de las que quedaron en cero, el
-          // cobrador veia "Abonado: $0" sobre un pago que si habia entrado.
-          const gestionadasHoy = paymentPlan.filter(
-            (p) =>
-              p.estado !== "pendiente" &&
-              p.fecha_pago_real &&
-              p.fecha_pago_real.startsWith(todayColombia),
-          )
-          const abonadoHoy = gestionadasHoy.reduce((s, p) => s + (Number(p.monto_pagado) || 0), 0)
-          const cuotasConAbono = gestionadasHoy.filter((p) => p.estado !== "no_pago").length
-
+        if (gestionHoy.gestionado) {
           managedClientsFromDB.push({
             ...clientData,
-            // Por lo mismo, el tipo tampoco se decide con una sola fila: si
-            // hoy entro plata la gestion es un pago, aunque el desempate
-            // hubiera devuelto la fila de un no pago del mismo dia.
-            gestionTipo: cuotasConAbono > 0 ? "pago" : "no_pago",
-            gestionHora,
-            valorAbonado: abonadoHoy,
-            cuotasAbonadas: cuotasConAbono,
-            paymentPlanId: targetEntry.id,
+            gestionTipo: gestionHoy.tipo === "pago" ? "pago" : "no_pago",
+            gestionHora: gestionHoy.hora,
+            valorAbonado: gestionHoy.monto,
+            cuotasAbonadas: gestionHoy.cuotas,
+            paymentPlanId: targetEntry?.id ?? "",
           })
         } else {
           // Loans con estado "cancelado" no se muestran en el listado de pendientes.
@@ -1290,23 +1158,53 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     try {
       setSaving(true)
 
-      // Fecha y timestamp en zona Colombia (UTC-5, sin horario de verano).
-      // Construimos el ISO-8601 con offset fijo -05:00 pieza a pieza para
-      // garantizar el resultado correcto en cualquier entorno JS, sin
-      // depender de que toLocaleString resuelva bien el timezone.
-      const now = new Date()
-      const fmt = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "America/Bogota",
-        year: "numeric", month: "2-digit", day: "2-digit",
-        hour: "2-digit", minute: "2-digit", second: "2-digit",
-        hour12: false,
-      })
-      const parts = Object.fromEntries(
-        fmt.formatToParts(now).filter((p) => p.type !== "literal").map((p) => [p.type, p.value]),
-      )
-      const fechaPago = `${parts.year}-${parts.month}-${parts.day}`
-      const fechaPagoReal = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}-05:00`
+      // Día de negocio y hora exacta, ambos en zona Colombia y de la misma
+      // fuente (ver lib/gestion-core.ts).
+      const fechaPago = todayColombia()
+      const fechaPagoReal = ahoraColombiaISO()
       const { latitud, longitud } = coords
+
+      // -----------------------------------------------------------------
+      // ── ¿Quedo un dia anterior sin gestionar? ────────────────────────
+      // Si el cliente arrastra una cuota vencida y AYER no se le registro
+      // nada, se pregunta a que dia va esta gestion.
+      //
+      //  · "Al dia anterior": el evento queda fechado AYER — cuenta en los
+      //    registros e indicadores de ese dia — y el cliente sigue
+      //    disponible para la gestion de HOY.
+      //  · "Para hoy": el evento queda fechado hoy, y ayer sigue sin
+      //    gestionar (mañana vuelve a preguntar).
+      //
+      // Cancelacion y extension se excluyen: son operaciones de hoy por
+      // naturaleza (la cancelacion cubre tambien lo vencido).
+      //
+      // Va ANTES del umbral para que, si el pago termina en la cola de
+      // secretaria, lleve la misma fecha que el cobrador eligio.
+      let fechaAplicacion = fechaPago
+      let numCuotasEfectivo = numCuotasSnap
+      let retroAplicado = false
+      if (
+        clientSnapshot.cuotaVencidaId &&
+        clientSnapshot.cuotaVencidaFecha &&
+        !isCanceladaSnap &&
+        !extenderSnap
+      ) {
+        const choice = await askFechaChoice(clientSnapshot.cuotaVencidaFecha, fechaPago)
+        if (choice === null) {
+          setSaving(false)
+          return
+        }
+        if (choice === "pendiente") {
+          fechaAplicacion = clientSnapshot.cuotaVencidaFecha
+          numCuotasEfectivo = 1
+          retroAplicado = true
+        }
+      }
+
+      // Llave del evento: se genera AQUI, al capturar. Es la misma que se
+      // usa ahora o dentro de dos horas al drenar la cola, y es la llave
+      // primaria del libro — reintentar no puede duplicar la plata.
+      const gestionId = nuevaGestionId()
 
       // -----------------------------------------------------------------
       // ── Umbral de aprobacion de abonos por ruta ──────────────────────
@@ -1318,100 +1216,25 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       // (incluidos los pre-pasos de "pago extraordinario" y "extension de
       // americano" de mas abajo, que tambien quedan en espera).
       // payment_plan/loans no se modifican hasta que secretaria apruebe.
-      const tipoOperacionUmbral: "pago_normal" | "pago_parcial" | "cancelacion_total" =
-        isCanceladaSnap ? "cancelacion_total" : isPartialSnap ? "pago_parcial" : "pago_normal"
-
-      const esPagoNormalUmbral = tipoOperacionUmbral === "pago_normal"
-
-      // Nota: si el pago se va a revision, "Pagar multa" NO se procesa — la
-      // multa queda pendiente y podra cobrarse en un pago posterior (el
-      // cobro de multa solo corre en el camino directo, tras el RPC exitoso).
-      if (esPagoNormalUmbral && excedeUmbral(umbrales?.abono_habilitado ?? false, umbrales?.abono_umbral_cuotas ?? null, numCuotasSnap)) {
+      // El chequeo de aquí es solo un AVISO: se le advierte al cobrador que
+      // el abono va a necesitar el visto bueno de secretaría y se le pide
+      // confirmar. Quien DECIDE es el servidor, que compara contra la
+      // configuración de la ruta dentro de la misma transacción.
+      //
+      // Antes este camino armaba a mano una solicitud de revisión y no
+      // registraba el pago: eran dos formas distintas de payload y dos
+      // caminos que podían comportarse distinto. Peor: si la configuración
+      // de umbrales no había alcanzado a cargar, el chequeo daba negativo y
+      // el abono se aplicaba directo, saltándose la aprobación sin que
+      // nadie se enterara. Ahora el pago viaja siempre igual y el servidor
+      // lo marca "en revisión" si corresponde — la plata queda registrada
+      // desde el primer momento, pero no cuenta hasta que la aprueben.
+      if (
+        !isCanceladaSnap && !isPartialSnap &&
+        excedeUmbral(umbrales?.abono_habilitado ?? false, umbrales?.abono_umbral_cuotas ?? null, numCuotasEfectivo)
+      ) {
         const confirmado = await confirmRevision()
         if (!confirmado) { setSaving(false); return }
-
-        try {
-          // Por la cola: sin senal queda en el dispositivo en vez de
-          // perderse. Un abono grande es plata que el cobrador ya recibio.
-          const { encolado: encoladoRevision } = await enviarOEncolar({
-            tipo: "revision",
-            descripcion: `Abono a revisión — ${clientSnapshot.nombre} ($${monto.toLocaleString()})`,
-            payload: {
-              tipo: "abono",
-              solicitado_por_nombre: getSolicitanteNombre(),
-              monto,
-              descripcion: `Abono — ${clientSnapshot.nombre} (${numCuotasSnap} cuotas de una vez)`,
-              payload: {
-                p_payload: {
-                  tipo: tipoOperacionUmbral,
-                  loan_id: clientSnapshot.loanId,
-                  client_id: clientSnapshot.clientId,
-                  monto,
-                  num_cuotas: numCuotasSnap,
-                  fecha_pago: fechaPago,
-                  fecha_pago_real: fechaPagoReal,
-                  latitud,
-                  longitud,
-                  geocerca_estado: geocerca.geo.estado,
-                  geocerca_motivo: geocerca.motivo,
-                  // Estos cuatro faltaban y el abono aprobado se comportaba
-                  // distinto al directo:
-                  //  - sin `payment_plan_id` la RPC cobraba "las mas antiguas
-                  //    pendientes al momento de aprobar", no las que vio el
-                  //    cobrador;
-                  //  - sin `generar_cuota_si_debe` en true, agotar el plan
-                  //    CANCELABA el prestamo sin mirar el saldo, dejando ir
-                  //    deuda viva;
-                  //  - sin `cliente_nombre` los conflictos que la RPC manda a
-                  //    revision salian como "Cliente".
-                  payment_plan_id: clientSnapshot.nextPaymentId,
-                  generar_cuota_si_debe: agregarCuotaSnap,
-                  cliente_nombre: clientSnapshot.nombre,
-                  metodo_pago: paymentMethod,
-                },
-              },
-            },
-          })
-
-          toast({
-            title: encoladoRevision ? "Guardado sin conexión" : "Enviado a revisión",
-            description: encoladoRevision
-              ? "Se enviará a revisión de la secretaria al volver la señal."
-              : MENSAJE_REVISION,
-          })
-          handleBack()
-        } catch (err) {
-          toast({
-            title: "Error",
-            description: err instanceof Error ? err.message : "No se pudo enviar a revisión",
-            variant: "destructive",
-          })
-        } finally {
-          setSaving(false)
-        }
-        return
-      }
-
-      // -----------------------------------------------------------------
-      // ── PAGO EXTRAORDINARIO desde "No Diarios" ───────────────────────
-      // Cuando la cuota objetivo NO es de hoy (p.ej. una cuota del
-      // miercoles 20 que se paga el jueves 21, tipico en "No Diarios"),
-      // se pregunta al cobrador si el pago se asocia a esa cuota pendiente
-      // atrasada (comportamiento de siempre: se marca pagada con fecha de
-      // hoy) o si se registra como un pago de hoy en una linea nueva,
-      // dejando la cuota atrasada intacta para despues. La RPC
-      // `registrar_pago_atomico` maneja ambos casos segun `asociar_a_hoy`.
-      const cuotaFechaOriginal = clientSnapshot.nextPaymentFecha
-      const esPagoExtraordinario =
-        !isDiario && !!cuotaFechaOriginal && cuotaFechaOriginal !== fechaPago
-      let asociarAHoySnap = false
-      if (esPagoExtraordinario) {
-        const choice = await askFechaChoice(cuotaFechaOriginal, fechaPago)
-        if (choice === null) {
-          setSaving(false)
-          return
-        }
-        asociarAHoySnap = choice === "hoy"
       }
 
       // -----------------------------------------------------------------
@@ -1469,23 +1292,22 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       // con una firma estable y la funcion deriva `tipo` para decidir si
       // paga 1 cuota, varias, cancelacion total o no_pago.
       // -----------------------------------------------------------------
-      const tipoOperacion: "pago_normal" | "pago_parcial" | "cancelacion_total" =
-        isCanceladaSnap ? "cancelacion_total" : isPartialSnap ? "pago_parcial" : "pago_normal"
-
-      // Si no hay conexion, la operacion queda en la cola del dispositivo y se
-      // sincroniza sola despues. La llave de idempotencia y el ancla de cuota
-      // (payment_plan_id) hacen que sincronizar horas despues sea seguro.
+      // El evento viaja por la cola: sin señal queda en el teléfono y se
+      // sincroniza solo. Su `id` es la llave primaria del libro, así que
+      // sincronizar horas después no puede duplicar la plata.
       const { encolado, resultado } = await enviarOEncolar({
-        tipo: "pago",
+        tipo: "gestion",
+        id: gestionId,
         descripcion: `Pago — ${clientSnapshot.nombre} ($${monto.toLocaleString()})`,
         payload: {
-          tipo: tipoOperacion,
+          id: gestionId,
+          tipo: isCanceladaSnap ? "cancelacion" : "pago",
           loan_id: clientSnapshot.loanId,
           client_id: clientSnapshot.clientId,
           monto,
-          num_cuotas: numCuotasSnap,
-          fecha_pago: fechaPago,
-          fecha_pago_real: fechaPagoReal,
+          num_cuotas: numCuotasEfectivo,
+          fecha_gestion: fechaAplicacion,
+          fecha_hora: fechaPagoReal,
           latitud,
           longitud,
           // Resultado de la geocerca al momento de capturar. La distancia NO
@@ -1495,12 +1317,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           geocerca_estado: geocerca.geo.estado,
           geocerca_motivo: geocerca.motivo,
           generar_cuota_si_debe: agregarCuotaSnap,
-          asociar_a_hoy: asociarAHoySnap,
-          // Ancla: se cobra ESTA cuota, la que el cobrador vio en pantalla. Sin
-          // esto la RPC elegia "la mas antigua pendiente en este momento", que
-          // puede ser otra si alguien mas gestiono el prestamo entre medio.
-          payment_plan_id: clientSnapshot.nextPaymentId,
-          // La multa y la prorroga se aplican dentro de la misma transaccion.
+          // Pista de a qué cuota apuntaba el cobrador. Si al sincronizar ya
+          // no aplica, el servidor asigna la plata a la más antigua sin
+          // cubrir: nunca se rechaza un pago por una cuota desactualizada.
+          cuota_objetivo: clientSnapshot.nextPaymentId || null,
+          // La multa y la prórroga entran en la misma transacción.
           multa_id: pagarMultaSnap ? clientSnapshot.multaPendiente?.id ?? null : null,
           metodo_pago: paymentMethod,
           cliente_nombre: clientSnapshot.nombre,
@@ -1509,9 +1330,58 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       })
 
       if (encolado) {
+        // El cliente sale de Pendientes IGUAL que con señal, y el evento se
+        // inyecta en el cache del dispositivo.
+        //
+        // Antes la rama offline no tocaba nada: el cliente se quedaba en la
+        // lista y, si el cobrador cerraba y reabría la app, volvía a
+        // aparecer. Cobrarle otra vez generaba una SEGUNDA operación con
+        // otra llave — dos cobros que el servidor no podía reconocer como
+        // el mismo. Es el peor agujero que tenía el modo sin señal.
+        const gestionLocal: Gestion = {
+          id: gestionId,
+          loan_id: clientSnapshot.loanId,
+          client_id: clientSnapshot.clientId,
+          ruta: currentRutaId,
+          user_id: null,
+          tipo: isCanceladaSnap ? "cancelacion" : "pago",
+          estado: "aplicada",
+          fecha_gestion: fechaAplicacion,
+          monto,
+          cuota_objetivo: clientSnapshot.nextPaymentId || null,
+          num_cuotas: numCuotasEfectivo,
+          fecha_hora: fechaPagoReal,
+          metodo_pago: paymentMethod,
+          origen: "campo",
+          referencia_gestion_id: null,
+          observacion: null,
+        }
+        void parcharCache<DashboardPagosResult>("dashboard-pagos", currentRutaId, (datos) =>
+          inyectarGestionEnCache(datos, gestionLocal),
+        )
+
+        if (!retroAplicado) {
+          setClients((prev) => prev.filter((c) => c.loanId !== clientSnapshot.loanId))
+          setManagedToday((prev) => [
+            {
+              ...clientSnapshot,
+              saldo: Math.max(0, clientSnapshot.saldo - monto),
+              multaPendiente: pagarMultaSnap ? null : clientSnapshot.multaPendiente,
+              gestionTipo: "pago",
+              gestionHora: fechaPagoReal.slice(11, 16),
+              valorAbonado: monto,
+              cuotasAbonadas: numCuotasEfectivo,
+              paymentPlanId: clientSnapshot.nextPaymentId || undefined,
+            },
+            ...prev,
+          ])
+        }
+
         toast({
           title: "Pago guardado sin conexión",
-          description: `Se registró el pago de ${clientSnapshot.nombre} en el teléfono. Se enviará solo cuando vuelva la señal.`,
+          description: retroAplicado
+            ? `Se registró $${monto.toLocaleString()} con fecha ${fechaAplicacion} en el teléfono. ${clientSnapshot.nombre} sigue disponible para la gestión de hoy.`
+            : `Se registró el pago de ${clientSnapshot.nombre} en el teléfono. Se enviará solo cuando vuelva la señal.`,
         })
         handleBack()
         return
@@ -1525,17 +1395,28 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       void rpcResult.loan_estado_final
       void rpcResult.cliente_marcado_sin_prestamo
 
-      // El pago no se pudo aplicar limpio (la cuota ya la gestiono alguien
-      // mas, o el prestamo quedo cancelado). La RPC no lo perdio: lo dejo en
-      // la cola de revision de secretaria. No lo marcamos como gestionado.
-      if (rpcResult.enviado_a_revision) {
+      // El evento SIEMPRE quedó escrito. Si algo no cuadraba (préstamo ya
+      // cancelado, fecha de hace más de un día, abono sobre el umbral de la
+      // ruta), entró como "en revisión": la plata está registrada pero no
+      // cuenta hasta que secretaría la apruebe. No se mueve a Gestionados.
+      if (rpcResult.enviado_a_revision || rpcResult.estado_gestion === "en_revision") {
         toast({
           title: "Pago enviado a revisión",
-          description: `${rpcResult.motivo ?? "El pago no se pudo aplicar directamente"}. Secretaría lo revisará; el cobro quedó registrado.`,
+          description: `${rpcResult.motivo ?? "El pago necesita aprobación"}. Secretaría lo revisará; el cobro ya quedó registrado.`,
         })
         void fetchData({ silent: true })
         handleBack()
         return
+      }
+
+      // Recibió más de lo que debía: el excedente se registró igual (nunca
+      // se descarta plata), pero conviene que el cobrador lo sepa.
+      const sobrepago = Number(rpcResult.sobrepago ?? 0)
+      if (sobrepago > 0) {
+        toast({
+          title: "El abono superó el saldo",
+          description: `El saldo de ${clientSnapshot.nombre} quedó en $0 y sobraron $${sobrepago.toLocaleString()}. Verifica con secretaría si hay que devolverlos.`,
+        })
       }
 
       // El cobro de la multa ya viene resuelto por la RPC, dentro de la misma
@@ -1544,27 +1425,40 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       // cobrada pero el dinero nunca llegaba a la caja de la ruta.
       const multaCobrada = rpcResult.multa_cobrada === true
 
-      // Optimistic UI: quitar al cliente de la lista de pendientes localmente
-      // y agregarlo a managedToday con la forma correcta de ManagedClient
-      // (DisplayClient & { gestionTipo, gestionHora, valorAbonado, paymentPlanId? }).
-      const gestionHora = new Date().toLocaleTimeString("es-CO", {
-        hour: "2-digit",
-        minute: "2-digit",
-      })
+      // ── Gestion aplicada al dia anterior ─────────────────────────────
+      // NO se mueve a Gestionados: la gestion quedo fechada en ese dia y el
+      // cliente sigue vigente para la gestion de HOY. El refetch recalcula
+      // su cuota objetivo (la de hoy) y lo deja en la lista de pendientes.
+      if (retroAplicado) {
+        const multaSufijoRetro = multaCobrada && clientSnapshot.multaPendiente
+          ? ` + multa de $${clientSnapshot.multaPendiente.valor.toLocaleString()}`
+          : ""
+        toast({
+          title: `Pago aplicado al ${fechaAplicacion}`,
+          description: `Se registró $${monto.toLocaleString()}${multaSufijoRetro} a la cuota del ${fechaAplicacion} de ${clientSnapshot.nombre}. El cliente sigue disponible para la gestión de hoy.`,
+        })
+        void fetchData({ silent: true })
+        handleBack()
+        return
+      }
+
+      // Optimistic UI con los números que devolvió el servidor (saldo y
+      // cuotas cubiertas son derivados, no estimaciones del dispositivo).
+      const gestionHora = fechaPagoReal.slice(11, 16)
       setClients((prev) => prev.filter((c) => c.loanId !== clientSnapshot.loanId))
       setManagedToday((prev) => [
         {
           ...clientSnapshot,
           saldo: nuevoSaldo,
+          cuotasPagadas: Number(rpcResult.cuotas_cubiertas ?? clientSnapshot.cuotasPagadas),
           multaPendiente: multaCobrada ? null : clientSnapshot.multaPendiente,
           gestionTipo: "pago",
           gestionHora,
-          valorAbonado: isCanceladaSnap ? clientSnapshot.saldo : monto,
-          // Una cancelacion total salda todas las cuotas que quedaban.
+          valorAbonado: monto,
           cuotasAbonadas: isCanceladaSnap
-            ? Math.max(1, clientSnapshot.cuotasTotales + clientSnapshot.cuotasExtra - clientSnapshot.cuotasPagadas)
-            : numCuotasSnap,
-          paymentPlanId: clientSnapshot.nextPaymentId ?? undefined,
+            ? Math.max(1, Number(rpcResult.cuotas_cubiertas ?? 0) - clientSnapshot.cuotasPagadas)
+            : numCuotasEfectivo,
+          paymentPlanId: clientSnapshot.nextPaymentId || undefined,
         },
         ...prev,
       ])
@@ -1576,36 +1470,34 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         })
         setClientForRenovation(clientSnapshot)
         setShowRenovationDialog(true)
-      } else if (debeExtender) {
+      } else if (debeExtender && rpcResult.extension_aplicada) {
         // La extension corrio dentro de la misma transaccion del pago.
         toast({
           title: "Pago registrado y préstamo extendido",
           description: `Pago registrado y préstamo extendido exitosamente por ${cantidadExtenderSnap} cuota${cantidadExtenderSnap === 1 ? "" : "s"} más`,
         })
+      } else if (debeExtender && rpcResult.extension_motivo) {
+        // El pago SÍ entró; solo la extensión no aplicaba. La plata nunca
+        // queda de rehén de una validación.
+        toast({
+          title: "Pago registrado, extensión no aplicada",
+          description: String(rpcResult.extension_motivo),
+        })
       } else if (rpcResult.cuota_adicional_generada) {
-        // El cliente aun debia al agotarse el plan de pagos: el RPC generó
-        // una cuota adicional en vez de cancelar el prestamo (confirmado
-        // por el checkbox "Agregar cuota adicional si aún debe").
+        // El cliente aun debia al agotarse el plan de pagos: se generó una
+        // cuota adicional en vez de cancelar el prestamo (confirmado por el
+        // checkbox "Agregar cuota adicional si aún debe").
         toast({
           title: "Pago registrado — cuota adicional agregada",
           description: `Se registró el pago para ${clientSnapshot.nombre}. Como aún debe, se agregó una cuota adicional al plan de pagos.`,
-        })
-      } else if (rpcResult.fila_hoy_creada) {
-        // El cobrador eligió "Pago de hoy": se creó una línea nueva fechada
-        // hoy, la cuota atrasada original quedó intacta para después.
-        toast({
-          title: "Pago de hoy registrado",
-          description: `Se registró un pago de $${monto.toLocaleString()} para ${clientSnapshot.nombre} con fecha de hoy. La cuota atrasada del ${cuotaFechaOriginal} sigue pendiente.`,
         })
       } else {
         const multaSuffix = multaCobrada && clientSnapshot.multaPendiente
           ? ` + multa de $${clientSnapshot.multaPendiente.valor.toLocaleString()}`
           : ""
         toast({
-          title: esPagoExtraordinario ? "Pago extraordinario registrado" : "Pago registrado",
-          description: esPagoExtraordinario
-            ? `Se registró el pago extraordinario por $${monto.toLocaleString()}${multaSuffix} para ${clientSnapshot.nombre} (cuota originalmente del ${cuotaFechaOriginal}).`
-            : `Se registró el pago por $${monto.toLocaleString()}${multaSuffix} para ${clientSnapshot.nombre}`,
+          title: "Pago registrado",
+          description: `Se registró el pago por $${monto.toLocaleString()}${multaSuffix} para ${clientSnapshot.nombre}`,
         })
       }
 
@@ -1642,87 +1534,144 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     try {
       setSaving(true)
 
-      const now = new Date()
-      const fmtNp = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "America/Bogota",
-        year: "numeric", month: "2-digit", day: "2-digit",
-        hour: "2-digit", minute: "2-digit", second: "2-digit",
-        hour12: false,
-      })
-      const partsNp = Object.fromEntries(
-        fmtNp.formatToParts(now).filter((p) => p.type !== "literal").map((p) => [p.type, p.value]),
-      )
-      const colombiaDateStr = `${partsNp.year}-${partsNp.month}-${partsNp.day}`
-      const fechaPagoReal = `${partsNp.year}-${partsNp.month}-${partsNp.day}T${partsNp.hour}:${partsNp.minute}:${partsNp.second}-05:00`
+      const colombiaDateStr = todayColombia()
+      const fechaPagoReal = ahoraColombiaISO()
       const { latitud, longitud } = coords
 
-      // Igual que en handleRegisterPayment: si la cuota objetivo no es de
-      // hoy, preguntar si este no-pago se asocia a esa cuota atrasada o se
-      // registra como visita de hoy en una linea nueva.
-      const cuotaFechaOriginalNoPago = clientSnapshot.nextPaymentFecha
-      const esNoPagoExtraordinario =
-        !isDiario && !!cuotaFechaOriginalNoPago && cuotaFechaOriginalNoPago !== colombiaDateStr
-      let asociarAHoySnapNoPago = false
-      if (esNoPagoExtraordinario) {
-        const choice = await askFechaChoice(cuotaFechaOriginalNoPago, colombiaDateStr)
+      // Igual que en el pago: si quedó un día anterior sin gestionar se
+      // pregunta a qué día va este no pago. "Al día anterior" lo fecha ese
+      // día y deja al cliente vigente para la gestión de hoy.
+      let fechaAplicacionNp = colombiaDateStr
+      let retroAplicadoNp = false
+      if (clientSnapshot.cuotaVencidaId && clientSnapshot.cuotaVencidaFecha) {
+        const choice = await askFechaChoice(clientSnapshot.cuotaVencidaFecha, colombiaDateStr)
         if (choice === null) {
           setSaving(false)
           return
         }
-        asociarAHoySnapNoPago = choice === "hoy"
+        if (choice === "pendiente") {
+          fechaAplicacionNp = clientSnapshot.cuotaVencidaFecha
+          retroAplicadoNp = true
+        }
       }
 
-      // Mismo razonamiento que `handleRegisterPayment`: el RPC atomico
-      // `registrar_pago_atomico` con tipo=no_pago corre dentro de UNA
-      // transaccion que fija las session vars con `SET LOCAL`, eliminando
-      // la carrera con PgBouncer. El RPC marca la cuota como `no_pago` y
-      // NO modifica `loans.saldo` ni `clients` (eso lo maneja internamente
-      // segun el contrato definido en scripts/010-fn-registrar-pago-atomico.sql).
+      const gestionIdNp = nuevaGestionId()
+
+      // Un no pago es una VISITA: queda registrada pase lo que pase. Antes,
+      // si la cuota ancla ya no estaba pendiente, el servidor devolvía "ok"
+      // sin escribir nada y la visita desaparecía en silencio.
       const { encolado: encoladoNoPago, resultado: resNoPago } = await enviarOEncolar({
-        tipo: "no_pago",
+        tipo: "gestion",
+        id: gestionIdNp,
         descripcion: `No pago — ${clientSnapshot.nombre}`,
         payload: {
+          id: gestionIdNp,
           tipo: "no_pago",
           loan_id: clientSnapshot.loanId,
           client_id: clientSnapshot.clientId,
           monto: 0,
           num_cuotas: 1,
-          fecha_pago: colombiaDateStr,
-          fecha_pago_real: fechaPagoReal,
+          fecha_gestion: fechaAplicacionNp,
+          fecha_hora: fechaPagoReal,
           latitud,
           longitud,
           geocerca_estado: geocerca.geo.estado,
           geocerca_motivo: geocerca.motivo,
           generar_cuota_si_debe: agregarCuotaSnapNoPago,
-          asociar_a_hoy: asociarAHoySnapNoPago,
-          // Ancla: se marca ESTA cuota, la que el cobrador vio en pantalla.
-          payment_plan_id: clientSnapshot.nextPaymentId,
+          cuota_objetivo: clientSnapshot.nextPaymentId || null,
           cliente_nombre: clientSnapshot.nombre,
+          observacion: noPaymentObservation.trim() || null,
         },
       })
 
+      const gestionLocalNp: Gestion = {
+        id: gestionIdNp,
+        loan_id: clientSnapshot.loanId,
+        client_id: clientSnapshot.clientId,
+        ruta: currentRutaId,
+        user_id: null,
+        tipo: "no_pago",
+        estado: "aplicada",
+        fecha_gestion: fechaAplicacionNp,
+        monto: 0,
+        cuota_objetivo: clientSnapshot.nextPaymentId || null,
+        num_cuotas: 1,
+        fecha_hora: fechaPagoReal,
+        metodo_pago: null,
+        origen: "campo",
+        referencia_gestion_id: null,
+        observacion: noPaymentObservation.trim() || null,
+      }
+
       if (encoladoNoPago) {
+        // Mismo tratamiento que el pago: el cliente sale de pendientes y el
+        // evento entra al cache, para que reabrir la app sin señal no lo
+        // vuelva a ofrecer.
+        void parcharCache<DashboardPagosResult>("dashboard-pagos", currentRutaId, (datos) =>
+          inyectarGestionEnCache(datos, gestionLocalNp),
+        )
+        if (!retroAplicadoNp) {
+          setClients((prev) => prev.filter((c) => c.loanId !== clientSnapshot.loanId))
+          setManagedToday((prev) => [
+            {
+              ...clientSnapshot,
+              gestionTipo: "no_pago",
+              gestionHora: fechaPagoReal.slice(11, 16),
+              valorAbonado: 0,
+              cuotasAbonadas: 0,
+              paymentPlanId: clientSnapshot.nextPaymentId || undefined,
+            },
+            ...prev,
+          ])
+        }
         toast({
           title: "No pago guardado sin conexión",
-          description: `Se registró en el teléfono. Se enviará solo cuando vuelva la señal.`,
+          description: retroAplicadoNp
+            ? `Quedó con fecha ${fechaAplicacionNp}. ${clientSnapshot.nombre} sigue disponible para la gestión de hoy.`
+            : "Se registró en el teléfono. Se enviará solo cuando vuelva la señal.",
         })
         setNoPaymentClient(null)
+        setNoPaymentObservation("")
         return
       }
 
       const rpcResultNoPago = resNoPago!
 
+      if (rpcResultNoPago.enviado_a_revision || rpcResultNoPago.estado_gestion === "en_revision") {
+        toast({
+          title: "No pago enviado a revisión",
+          description: `${rpcResultNoPago.motivo ?? "Necesita aprobación"}. La visita ya quedó registrada.`,
+        })
+        setNoPaymentClient(null)
+        setNoPaymentObservation("")
+        void fetchData({ silent: true })
+        return
+      }
+
+      // ── No pago aplicado al dia anterior ─────────────────────────────
+      // NO se mueve a Gestionados: quedo fechado ese dia y el cliente sigue
+      // vigente para la gestion de hoy.
+      if (retroAplicadoNp) {
+        toast({
+          title: `No pago aplicado al ${fechaAplicacionNp}`,
+          description: `La visita del ${fechaAplicacionNp} de ${clientSnapshot.nombre} quedó como no pago. El cliente sigue disponible para la gestión de hoy.`,
+        })
+        setNoPaymentClient(null)
+        setNoPaymentObservation("")
+        void fetchData({ silent: true })
+        return
+      }
+
       // Optimistic UI: quitar de pendientes y agregar a managedToday
-      const gestionHora = now.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })
       setClients((prev) => prev.filter((c) => c.loanId !== clientSnapshot.loanId))
       setManagedToday((prev) => [
         {
           ...clientSnapshot,
           gestionTipo: "no_pago",
-          gestionHora,
+          gestionHora: fechaPagoReal.slice(11, 16),
           valorAbonado: 0,
           cuotasAbonadas: 0,
-          paymentPlanId: clientSnapshot.nextPaymentId ?? undefined,
+          paymentPlanId: clientSnapshot.nextPaymentId || undefined,
         },
         ...prev,
       ])
@@ -1733,18 +1682,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               title: "No pago registrado — cuota adicional agregada",
               description: `Se registró que ${clientSnapshot.nombre} no realizó el pago. Como aún debe, se agregó una cuota adicional al plan de pagos.`,
             }
-          : rpcResultNoPago.fila_hoy_creada
-            ? {
-                title: "No pago de hoy registrado",
-                description: `Se registró la visita de hoy para ${clientSnapshot.nombre}. La cuota atrasada del ${cuotaFechaOriginalNoPago} sigue pendiente.`,
-              }
-            : {
-                title: "No pago registrado",
-                description: `Se registró que ${clientSnapshot.nombre} no realizó el pago`,
-              },
+          : {
+              title: "No pago registrado",
+              description: `Se registró que ${clientSnapshot.nombre} no realizó el pago`,
+            },
       )
 
       setNoPaymentClient(null)
+      setNoPaymentObservation("")
       // Refetch SILENCIOSO en background sin bloquear el cierre del dialogo
       // ni mostrar spinner overlay (el optimistic UI ya muestra al cliente
       // como gestionado).
@@ -1784,7 +1729,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     }
   }
 
-  // ── Historial de pagos: fetch payment_plan por loan_id ────────────────
+  // ── Historial de gestiones del cliente ────────────────────────────────
+  // Sale del LIBRO DE EVENTOS, no del cronograma: lo que el cobrador quiere
+  // ver es qué pasó cada día que se visitó al cliente. Antes se leían las
+  // cuotas gestionadas, que era una aproximación — un abono de tres cuotas
+  // aparecía como tres líneas y una cancelación como muchas.
   useEffect(() => {
     if (!paymentHistoryOpen || !paymentHistoryClient) return
     let cancelled = false
@@ -1794,19 +1743,28 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       try {
         const supabase = await getSupabaseSafe()
         const { data, error } = await supabase
-          .from("payment_plan")
-          .select("id, fecha_pago, valor_cuota, estado, monto_pagado, fecha_pago_real, numero_cuota")
+          .from("gestiones")
+          .select("id, tipo, estado, fecha_gestion, monto, num_cuotas, fecha_hora, observacion")
           .eq("loan_id", paymentHistoryClient.loanId)
-          // Solo lo GESTIONADO: el historial muestra los dias en que hubo un
-          // pago o un no pago, no la programacion completa del prestamo. Para
-          // ver lo que falta esta Control de Pagos.
-          .neq("estado", "pendiente")
-          .order("numero_cuota", { ascending: true })
+          .eq("estado", "aplicada")
+          .in("tipo", ["pago", "no_pago", "cancelacion", "abono_venta"])
+          .order("fecha_gestion", { ascending: true })
         if (cancelled) return
         if (error) throw error
-        setPaymentHistoryRows(data ?? [])
+        // Se mapea a la forma que ya renderiza el diálogo.
+        setPaymentHistoryRows(
+          (data ?? []).map((g: Record<string, unknown>) => ({
+            id: String(g.id),
+            fecha_pago: String(g.fecha_gestion),
+            valor_cuota: Number(g.monto) || 0,
+            estado: g.tipo === "no_pago" ? "no_pago" : "pagado",
+            monto_pagado: Number(g.monto) || 0,
+            fecha_pago_real: g.fecha_hora ? String(g.fecha_hora) : null,
+            numero_cuota: Number(g.num_cuotas) || 1,
+          })),
+        )
       } catch (e) {
-        console.error("[v0] paymentHistory fetch error:", e)
+        console.error("[v0] historial de gestiones error:", e)
       } finally {
         if (!cancelled) setPaymentHistoryLoading(false)
       }
@@ -1906,10 +1864,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     gestionHoy?: ManagedClient,
   ): Promise<{ blob: Blob; filename: string; dataUrl: string }> => {
     const supabase = await getSupabaseSafe()
-    const [saldoRes, clientRes] = await Promise.all([
+    const [finRes, clientRes] = await Promise.all([
       supabase
-        .from("saldo_prestamos_clientes")
-        .select("total_con_intereses, total_recaudado, saldo_pendiente")
+        .from("v_loan_financiero")
+        .select("total_a_pagar, total_pagado, saldo_hoy, cuotas_mora")
         .eq("loan_id", client.loanId)
         .maybeSingle(),
       supabase
@@ -1919,11 +1877,18 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         .maybeSingle(),
     ])
 
-    const saldo = saldoRes.data as {
-      total_con_intereses?: number | null
-      total_recaudado?: number | null
-      saldo_pendiente?: number | null
+    const finRow = finRes.data as {
+      total_a_pagar?: number | null
+      total_pagado?: number | null
+      saldo_hoy?: number | null
+      cuotas_mora?: number | null
     } | null
+    // Se conservan los nombres viejos para no reescribir el dibujo del recibo.
+    const saldo = finRow && {
+      total_con_intereses: finRow.total_a_pagar,
+      total_recaudado: finRow.total_pagado,
+      saldo_pendiente: finRow.saldo_hoy,
+    }
     // El recibo lleva el nombre del cliente, sin el apodo.
     //
     // En muchos registros el apodo (el oficio o el negocio) quedo guardado
@@ -1957,18 +1922,20 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     let cuotasAbonadas = gestionHoy?.cuotasAbonadas ?? 0
     let fechaAbono: string | null = gestionHoy ? todayColombia() : null
     if (abonoHoy == null) {
-      const { data: filasHoy } = await supabase
-        .from("payment_plan")
-        .select("monto_pagado, fecha_pago_real, estado")
+      // Del libro de eventos: los movimientos de hoy de este préstamo.
+      const { data: eventosHoy } = await supabase
+        .from("gestiones")
+        .select("tipo, monto, num_cuotas")
         .eq("loan_id", client.loanId)
-        .eq("fecha_pago", todayColombia())
-        .neq("estado", "pendiente")
-      const filas = (filasHoy ?? []) as { monto_pagado: number | null; fecha_pago_real: string | null; estado: string }[]
-      if (filas.length > 0) {
-        abonoHoy = filas.reduce((acc, f) => acc + (Number(f.monto_pagado) || 0), 0)
-        cuotasAbonadas = filas.filter((f) => f.estado !== "no_pago").length
-        const fpr = filas.find((f) => f.fecha_pago_real)?.fecha_pago_real
-        fechaAbono = fpr ? fpr.split("T")[0] : todayColombia()
+        .eq("fecha_gestion", todayColombia())
+        .eq("estado", "aplicada")
+      const evs = (eventosHoy ?? []) as { tipo: string; monto: number | null; num_cuotas: number | null }[]
+      if (evs.length > 0) {
+        abonoHoy = evs.reduce((acc, e) => acc + montoEfectivo({ tipo: e.tipo as Gestion["tipo"], monto: Number(e.monto) || 0 }), 0)
+        cuotasAbonadas = evs
+          .filter((e) => e.tipo !== "no_pago" && Number(e.monto) > 0)
+          .reduce((s, e) => s + (Number(e.num_cuotas) || 1), 0)
+        fechaAbono = todayColombia()
       }
     }
 
@@ -2004,7 +1971,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       ["Saldo pendiente:", fmt(saldo?.saldo_pendiente ?? client.saldo)],
       ["Cuotas:", `${client.cuotasPagadas} / ${client.cuotasTotales}${client.cuotasExtra > 0 ? ` (+${client.cuotasExtra} extra)` : ""}`],
       ["Frecuencia:", frecuenciaLabel(client.frecuenciaPago)],
-      ["Fallas:", `${client.mora}`],
+      // Antes esta fila decía "Fallas" pero imprimía la mora, que es otra
+      // cosa (cuotas vencidas sin cubrir, no visitas incumplidas).
+      ["Cuotas en mora:", `${client.mora}`],
       ["Saldo por sancion:", client.multaPendiente ? fmt(client.multaPendiente.valor) : "$0"],
     ]
 
@@ -2196,109 +2165,154 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     setClientForRenovation(null)
   }
 
-  const handleRenovationCancel = async () => {
-    // When user declines renovation after cancelada, mark client as no longer having active loan
-    if (clientForRenovation) {
-      try {
-        await fetch("/api/clients", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: clientForRenovation.clientId,
-            tiene_prestamo_activo: false,
-          }),
-        })
-      } catch (e) {
-        console.error("[v0] Error updating client tiene_prestamo_activo:", e)
-      }
-    }
+  const handleRenovationCancel = () => {
+    // El cliente dijo que no quiere renovar. No hay nada que escribir: la
+    // bandera `tiene_prestamo_activo` la mantiene `recalcular_prestamo` a
+    // partir de si le queda algún crédito activo.
+    //
+    // Antes esto hacía un PATCH suelto por REST que la ponía en false sin
+    // mirar los otros créditos del cliente: quien tenía dos préstamos perdía
+    // la bandera al cerrar uno.
     setShowRenovationDialog(false)
     setClientForRenovation(null)
   }
 
-  // No longer needed - clients are automatically moved to managed when payment_plan is updated
-  // fetchData() will reload from DB and properly categorize clients
-
-  // Resolve the paymentPlanId for a managed client — use stored one or fetch from DB
-  const resolvePaymentPlanId = async (m: ManagedClient): Promise<string | null> => {
-    if (m.paymentPlanId) return m.paymentPlanId
-    // Fetch today's payment plan row for this loan via safeQuery: garantiza
-    // RLS aplicada antes de la lectura y dispara session-lost si falla.
+  /**
+   * Busca en el libro el evento de HOY de este cliente.
+   *
+   * Antes esto resolvía una fila de `payment_plan` por fecha y estado, y con
+   * varias filas del mismo día (la cuota + una línea extra) podía devolver la
+   * equivocada. Un evento es una unidad: no hay ambigüedad.
+   */
+  const resolveGestionHoy = async (m: ManagedClient): Promise<Gestion | null> => {
     try {
       const supabase = await getSupabaseSafe()
-      const today = todayColombia()
-      // Puede haber MAS de una fila con fecha de hoy (p.ej. una cuota extra
-      // de "pago de hoy" + la cuota del dia). Resolvemos solo entre filas
-      // GESTIONADAS (lo que se esta revirtiendo/editando nunca esta
-      // 'pendiente') y tomamos la mas reciente.
       const { data } = await supabase
-        .from("payment_plan")
-        .select("id")
+        .from("gestiones")
+        .select("id, loan_id, tipo, monto, fecha_gestion, cuota_objetivo, num_cuotas, metodo_pago")
         .eq("loan_id", m.loanId)
-        .eq("fecha_pago", today)
-        .neq("estado", "pendiente")
-        .order("updated_at", { ascending: false })
+        .eq("fecha_gestion", todayColombia())
+        .eq("estado", "aplicada")
+        .in("tipo", ["pago", "no_pago", "cancelacion"])
+        .order("fecha_hora", { ascending: false })
         .limit(1)
         .maybeSingle()
-      return data?.id ?? null
+      return (data as unknown as Gestion) ?? null
     } catch (_e) {
       return null
     }
   }
 
-  // Edit a managed payment: update monto_pagado in payment_plan
+  /**
+   * Corregir el monto de una gestión de hoy = anular la anterior y registrar
+   * la corregida. El evento original nunca se modifica: queda en el historial
+   * junto con su anulación, así que la Auditoría 360 puede mostrar qué se
+   * cambió, cuándo y por quién.
+   */
   const handleEditManagedSave = async () => {
     if (!editingManaged) return
     const newMonto = Number.parseFloat(editMonto)
     if (isNaN(newMonto) || newMonto <= 0) return
+    const m = editingManaged
     setSavingManaged(true)
     try {
-      const resolvedId = await resolvePaymentPlanId(editingManaged)
-      if (!resolvedId) throw new Error("No payment plan row found")
-      await fetch("/api/payment-plan", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: resolvedId, monto_pagado: newMonto }),
+      const original = await resolveGestionHoy(m)
+      if (!original) throw new Error("No se encontró la gestión de hoy de este cliente")
+
+      const idReversa = nuevaGestionId()
+      await enviarOEncolar({
+        tipo: "gestion",
+        id: idReversa,
+        descripcion: `Corrección — ${m.nombre}`,
+        payload: {
+          id: idReversa,
+          tipo: "reversa",
+          loan_id: m.loanId,
+          client_id: m.clientId,
+          referencia_gestion_id: original.id,
+          fecha_gestion: todayColombia(),
+          fecha_hora: ahoraColombiaISO(),
+          cliente_nombre: m.nombre,
+          observacion: "Corrección del monto desde el módulo de pagos",
+        },
       })
+
+      const idNuevo = nuevaGestionId()
+      await enviarOEncolar({
+        tipo: "gestion",
+        id: idNuevo,
+        descripcion: `Pago corregido — ${m.nombre} ($${newMonto.toLocaleString()})`,
+        payload: {
+          id: idNuevo,
+          tipo: "pago",
+          loan_id: m.loanId,
+          client_id: m.clientId,
+          monto: newMonto,
+          num_cuotas: original.num_cuotas ?? 1,
+          fecha_gestion: todayColombia(),
+          fecha_hora: ahoraColombiaISO(),
+          cuota_objetivo: original.cuota_objetivo,
+          metodo_pago: original.metodo_pago,
+          cliente_nombre: m.nombre,
+          observacion: "Monto corregido desde el módulo de pagos",
+        },
+      })
+
       setEditingManaged(null)
-      toast({ title: "Pago actualizado", description: `Monto actualizado a $${newMonto.toLocaleString()}` })
-      // Refresh silencioso: el cambio es menor (solo monto), no vale la pena
-      // bloquear toda la lista con un spinner.
+      setManagedToday((prev) =>
+        prev.map((x) => (x.loanId === m.loanId ? { ...x, valorAbonado: newMonto } : x)),
+      )
+      toast({ title: "Pago corregido", description: `Monto actualizado a $${newMonto.toLocaleString()}` })
       void fetchData({ silent: true })
-    } catch (_e) {
-      toast({ title: "Error", description: "No se pudo actualizar el pago", variant: "destructive" })
+    } catch (e) {
+      toast({
+        title: "Error",
+        description: e instanceof Error ? e.message : "No se pudo corregir el pago",
+        variant: "destructive",
+      })
     } finally {
       setSavingManaged(false)
     }
   }
 
-  // Delete a managed payment: clear fecha_pago_real and monto_pagado so it returns to pending
+  /**
+   * Anular la gestión de hoy: se registra un evento de REVERSA que la
+   * compensa. Nada se borra — el historial conserva el pago y su anulación.
+   */
   const handleDeleteManagedPayment = async (m: ManagedClient) => {
     setSavingManaged(true)
     try {
-      const resolvedId = m.paymentPlanId || (await resolvePaymentPlanId(m))
-      if (!resolvedId) throw new Error("No payment plan row found")
+      const original = await resolveGestionHoy(m)
+      if (!original) throw new Error("No se encontró la gestión de hoy de este cliente")
 
-      // ----------------------------------------------------------------
-      // Llamada al RPC atomico `registrar_pago_revertir`.
-      //
-      // El RPC revierte los 4 efectos del pago original en UNA transaccion:
-      //   1. payment_plan.estado → 'pendiente' (limpia monto_pagado, fecha)
-      //   2. loans.saldo         → += capital de la cuota
-      //   3. loans.estado        → 'activo' si estaba 'cancelado'
-      //   4. clients.tiene_prestamo_activo → true si el loan se reactiva
-      //
-      // Como SET LOCAL aplica para toda la transaccion del RPC, no hay
-      // condicion de carrera con PgBouncer transaccional. La respuesta
-      // incluye `nuevo_saldo` para el optimistic UI sin necesidad de un
-      // SELECT adicional.
-      // ----------------------------------------------------------------
-      const rpcResult = await callRpcAtomic("registrar_pago_revertir", {
-        payment_plan_id: resolvedId,
+      const idReversa = nuevaGestionId()
+      const { resultado } = await enviarOEncolar({
+        tipo: "gestion",
+        id: idReversa,
+        descripcion: `Anulación — ${m.nombre}`,
+        payload: {
+          id: idReversa,
+          tipo: "reversa",
+          loan_id: m.loanId,
+          client_id: m.clientId,
+          referencia_gestion_id: original.id,
+          fecha_gestion: todayColombia(),
+          fecha_hora: ahoraColombiaISO(),
+          cliente_nombre: m.nombre,
+          observacion: "Gestión anulada desde el módulo de pagos",
+        },
       })
 
-      const nuevoSaldo = (rpcResult.nuevo_saldo as number | undefined) ?? m.saldo
-      const capitalARevertir = Math.max(0, nuevoSaldo - m.saldo)
+      if (resultado?.enviado_a_revision || resultado?.estado_gestion === "en_revision") {
+        toast({
+          title: "Anulación enviada a revisión",
+          description: String(resultado.motivo ?? "Secretaría debe autorizarla."),
+        })
+        void fetchData({ silent: true })
+        return
+      }
+
+      const nuevoSaldo = Number(resultado?.nuevo_saldo ?? m.saldo + m.valorAbonado)
 
       // Optimistic UI: mover de managed → pending sin esperar refetch.
       // ManagedClient extiende DisplayClient, asi que el spread es seguro.
@@ -2323,10 +2337,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         frecuenciaPago: m.frecuenciaPago,
         tipoAmortizacion: m.tipoAmortizacion,
         tasaInteres: m.tasaInteres,
-        nextPaymentId: resolvedId,
+        nextPaymentId: original.cuota_objetivo ?? m.nextPaymentId,
         nextPaymentCuota: m.nextPaymentCuota,
         nextPaymentNumero: m.nextPaymentNumero,
-        nextPaymentCapital: capitalARevertir,
+        nextPaymentCapital: m.nextPaymentCapital,
         nextPaymentValorCuota: m.nextPaymentValorCuota,
         nextPaymentEsFuturo: false,
         nextPaymentFecha: m.nextPaymentFecha,
@@ -2336,6 +2350,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         diaSemana: m.diaSemana,
         clienteLatitud: m.clienteLatitud,
         clienteLongitud: m.clienteLongitud,
+        cuotaVencidaId: m.cuotaVencidaId,
+        cuotaVencidaFecha: m.cuotaVencidaFecha,
       }
       setManagedToday((prev) => prev.filter((x) => x.loanId !== m.loanId))
       setClients((prev) => {
@@ -2347,12 +2363,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       // Refresh silencioso en background para sincronizar derivados
       // (mora, saldo_prestamos_clientes) sin bloquear la UI.
       void fetchData({ silent: true })
-      toast({ title: "Pago eliminado", description: `${m.nombre} volvió a la lista de pendientes` })
+      toast({ title: "Gestión anulada", description: `${m.nombre} volvió a la lista de pendientes` })
     } catch (e) {
       console.error("[v0] handleDeleteManagedPayment error:", e)
       toast({
         title: "Error",
-        description: e instanceof Error ? e.message : "No se pudo eliminar el pago",
+        description: e instanceof Error ? e.message : "No se pudo anular la gestión",
         variant: "destructive",
       })
     } finally {
@@ -2360,12 +2376,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     }
   }
 
+  // Colores de la lista de cobro. La escala vive en lib/gestion-core.ts para
+  // que todas las pantallas usen los mismos cortes.
   const getMoraColor = (mora: number) => {
-    // 0 to 4 days: green
-    if (mora <= 4) return "text-green-700 bg-green-100"
-    // 5 to 8 days: yellow
-    if (mora <= 8) return "text-yellow-700 bg-yellow-100"
-    // More than 8 days: red
+    const banda = colorMora(mora)
+    if (banda === "verde") return "text-green-700 bg-green-100"
+    if (banda === "amarillo") return "text-yellow-700 bg-yellow-100"
     return "text-red-700 bg-red-100"
   }
 
@@ -3043,8 +3059,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                   </span>
                                 )}
                               </div>
+                              {/* Mora en CUOTAS vencidas sin cubrir. Se venía
+                                  mostrando como "3d mora", que se leía como
+                                  días y no lo era. */}
                               <div className={`inline-flex items-center justify-center w-fit px-1.5 py-0.5 rounded text-[10px] md:text-sm font-semibold ${getMoraColor(client.mora)}`}>
-                                {client.mora}d mora
+                                {client.mora > 0 ? `${etiquetaMora(client.mora)} en mora` : "al día"}
                               </div>
                             </div>
                           </TableCell>
@@ -3713,17 +3732,18 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             <div className="flex items-center justify-center h-12 w-12 rounded-full bg-amber-100 mx-auto mb-2">
               <AlertCircle className="h-6 w-6 text-amber-600" />
             </div>
-            <DialogTitle className="text-sm md:text-lg text-center">Tiene una cuota pendiente</DialogTitle>
+            <DialogTitle className="text-sm md:text-lg text-center">Quedó un día sin gestionar</DialogTitle>
             <DialogDescription className="text-xs md:text-sm text-center">
-              La última cuota pendiente es del <strong>{fechaChoiceInfo?.fechaOriginal}</strong>. ¿Cómo quieres registrar esto?
+              La cuota del <strong>{fechaChoiceInfo?.fechaOriginal}</strong> no tiene pago ni no pago registrado.
+              ¿Para qué día registro esta gestión?
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2 pt-2 md:pt-4">
             <Button variant="outline" onClick={() => handleFechaChoice("pendiente")} className="h-auto py-2 text-xs md:text-sm whitespace-normal">
-              Asociar a la cuota pendiente ({fechaChoiceInfo?.fechaOriginal}) — se marcará pagada con fecha de hoy
+              Aplicar al {fechaChoiceInfo?.fechaOriginal} — queda en los registros de ese día y el cliente sigue disponible para gestionar hoy
             </Button>
             <Button onClick={() => handleFechaChoice("hoy")} className="h-auto py-2 text-xs md:text-sm whitespace-normal">
-              Registrar como pago de hoy ({fechaChoiceInfo?.fechaHoy}) — la cuota pendiente sigue igual
+              Registrar para hoy ({fechaChoiceInfo?.fechaHoy}) — la cuota del {fechaChoiceInfo?.fechaOriginal} seguirá pendiente
             </Button>
             <Button variant="ghost" onClick={() => handleFechaChoice(null)} className="h-8 text-xs md:text-sm">
               Cancelar
@@ -3797,11 +3817,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           ) : (
             <div className="overflow-auto max-h-[60vh] space-y-3">
               {(() => {
-                // El historial se agrupa POR DIA, lo mas reciente primero. Se
-                // usa `fecha_pago_real` (cuando el cobrador hizo la gestion) y
-                // no `fecha_pago`: esta ultima se sobrescribe con el dia del
-                // cobro, asi que ordenar por numero de cuota hacia zigzaguear
-                // las fechas y repetirlas al pagar varias cuotas de una vez.
+                // El historial se agrupa POR DIA de negocio, lo mas reciente
+                // primero. Cada fila es un EVENTO del libro, asi que un abono
+                // de tres cuotas es una sola linea y no tres.
                 const gestionadas = paymentHistoryRows
 
                 const porDia = new Map<string, typeof gestionadas>()

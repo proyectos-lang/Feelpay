@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, MoreVertical, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, PiggyBank, Users, PieChart, LockKeyhole, Eye, X, Play, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
  import { createClient } from "@/lib/supabase/client"
+import { todayColombia, bandaCartera, etiquetaFrecuencia } from "@/lib/gestion-core"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
@@ -42,7 +43,8 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
     }).format(new Date())
   )
 
-  // Real data from resumen_pagos_diarios
+  // Datos reales de `resumen_diario_v2` (la plata del dia sale del libro de
+  // eventos `gestiones`, no de los estados de `payment_plan`).
   const [collectedAmount, setCollectedAmount] = useState(0)
   const [metaAmount, setMetaAmount] = useState(0)
   const [cantidadPagos, setCantidadPagos] = useState(0)
@@ -52,15 +54,15 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
   const [valorRetiros, setValorRetiros] = useState(0)
   const [valorCanceladas, setValorCanceladas] = useState(0)
   // Total de ventas del dia (suma de loans creados hoy en la ruta).
-  // Viene del campo `valor_ventas` en `resumen_pagos_diarios`.
+  // Viene del campo `valor_ventas` en `resumen_diario_v2`.
   const [valorVentas, setValorVentas] = useState(0)
-  // Efectivo del dia y caja anterior (efectivo del ultimo dia con resumen
-  // anterior al actual). Ambos vienen de `resumen_pagos_diarios.efectivo`.
+  // Efectivo del dia y caja anterior. AMBOS son columnas de la MISMA fila de
+  // `resumen_diario_v2`: `efectivo` es el acumulado hasta hoy y
+  // `caja_anterior` ese mismo acumulado sin el neto del dia.
   const [efectivo, setEfectivo] = useState(0)
   const [cajaAnterior, setCajaAnterior] = useState(0)
-  // Sumas de capital e intereses del recaudo del dia. Salen de
-  // `payment_plan.pago_capital` y `payment_plan.pago_intereses` para las
-  // cuotas pagadas/parciales/canceladas hoy.
+  // Sumas de capital e intereses del recaudo del dia (aleman vs americano),
+  // calculadas por la vista sobre las gestiones del dia.
   const [pagoCapital, setPagoCapital] = useState(0)
   const [pagoIntereses, setPagoIntereses] = useState(0)
   const [loadingResumen, setLoadingResumen] = useState(true)
@@ -75,83 +77,57 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
     const fetchResumen = async () => {
       try {
         const supabase = createClient()
-        // Fecha de hoy en zona Colombia
-        const colombiaFormatter = new Intl.DateTimeFormat("en-CA", {
-          timeZone: "America/Bogota",
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-        })
-        const fechaHoy = colombiaFormatter.format(new Date())
+        const fechaHoy = todayColombia()
 
-        // ── Queries directas filtradas por ruta ──────────────────────
+        // ── Una sola query filtrada por ruta ─────────────────────────
         // RLS eliminado: filtramos explicitamente con `.eq('ruta', rutaId)`.
+        //
+        // `resumen_diario_v2` trae TODO el dia en una fila: la plata (desde
+        // `gestiones`), los conteos y la caja anterior. Antes habia que pegar
+        // tres consultas mas (el dia anterior para la caja y dos conteos
+        // sobre payment_plan) y cada una traia su propia definicion.
         const { data, error } = await supabase
-          .from("resumen_pagos_diarios")
-          .select("valor_pago, meta_pagos, valor_ingresos, valor_gastos, valor_retiros, valor_canceladas, valor_ventas, efectivo, pago_capital, pago_intereses")
+          .from("resumen_diario_v2")
+          .select("valor_pago, meta_pagos, cantidad_pagos, cantidad_no_pagos, valor_ingresos, valor_gastos, valor_retiros, valor_canceladas, valor_ventas, efectivo, caja_anterior, pago_capital, pago_intereses")
           .eq("fecha_pago", fechaHoy)
           .eq("ruta", rutaId)
           .maybeSingle()
 
         if (error) {
-          console.error("[v0] legacy resumen_pagos_diarios error:", error.message)
+          console.error("[v0] resumen_diario_v2 error:", error.message)
         }
         if (data) {
           const d = data as Record<string, number | null>
           setCollectedAmount(d.valor_pago ?? 0)
           setMetaAmount(d.meta_pagos ?? 0)
+          // Pagos / No Pagos salen de la MISMA fuente que la plata.
+          // POR QUE se quito el recuento propio sobre payment_plan: el
+          // predicado del cliente (estado `pagado|parcial|cancelada` con
+          // monto_pagado > 0) no coincidia con el de la vista (`pagado`), asi
+          // que el mismo numero salia distinto segun donde se mirara.
+          setCantidadPagos(d.cantidad_pagos ?? 0)
+          setCantidadNoPagos(d.cantidad_no_pagos ?? 0)
           setValorIngresos(d.valor_ingresos ?? 0)
           setValorGastos(d.valor_gastos ?? 0)
           setValorRetiros(d.valor_retiros ?? 0)
           setValorCanceladas(d.valor_canceladas ?? 0)
           setValorVentas(d.valor_ventas ?? 0)
           setEfectivo(d.efectivo ?? 0)
+          // Caja Anterior: ya viene calculada por la vista. Antes se consultaba
+          // el ultimo dia con resumen anterior a hoy, formula que divergia de
+          // la que usaba el cierre de caja para el MISMO numero.
+          setCajaAnterior(d.caja_anterior ?? 0)
           setPagoCapital(d.pago_capital ?? 0)
           setPagoIntereses(d.pago_intereses ?? 0)
         } else {
           // No hay resumen para hoy: dejamos todos los valores en 0.
+          setCantidadPagos(0)
+          setCantidadNoPagos(0)
           setEfectivo(0)
+          setCajaAnterior(0)
           setPagoCapital(0)
           setPagoIntereses(0)
         }
-
-        // ── Caja Anterior: efectivo del resumen mas reciente con
-        // `fecha_pago < fechaHoy` para esta ruta. Tomamos solo 1 registro
-        // ordenado descendentemente para obtener el "ultimo dia operado".
-        const { data: prevData, error: prevError } = await supabase
-          .from("resumen_pagos_diarios")
-          .select("efectivo, fecha_pago")
-          .eq("ruta", rutaId)
-          .lt("fecha_pago", fechaHoy)
-          .order("fecha_pago", { ascending: false })
-          .limit(1)
-          .maybeSingle()
-        if (prevError) {
-          console.error("[v0] caja anterior error:", prevError.message)
-        }
-        setCajaAnterior(
-          (prevData as { efectivo?: number | null } | null)?.efectivo ?? 0,
-        )
-
-        const { count: pagosCount, error: pagosError } = await supabase
-          .from("payment_plan")
-          .select("*", { count: "exact", head: true })
-          .eq("fecha_pago", fechaHoy)
-          .eq("ruta", rutaId)
-          .in("estado", ["pagado", "parcial", "cancelada"])
-          .gt("monto_pagado", 0)
-        if (pagosError) console.error("[v0] legacy pagos count error:", pagosError.message)
-        else setCantidadPagos(pagosCount ?? 0)
-
-        const { count: noPagosCount, error: noPagosError } = await supabase
-          .from("payment_plan")
-          .select("*", { count: "exact", head: true })
-          .eq("fecha_pago", fechaHoy)
-          .eq("ruta", rutaId)
-          .eq("estado", "no_pago")
-        if (noPagosError) console.error("[v0] legacy no_pagos count error:", noPagosError.message)
-        else setCantidadNoPagos(noPagosCount ?? 0)
-
       } catch (err) {
         console.error("[v0] Unexpected error fetching resumen:", err)
       } finally {
@@ -162,16 +138,8 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
     fetchResumen()
   }, [rutaId])
 
-  // Helper: obtener fecha de hoy en formato YYYY-MM-DD (zona Colombia)
-  const getFechaHoyColombia = () => {
-    const colombiaFormatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Bogota",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    })
-    return colombiaFormatter.format(new Date())
-  }
+  // La fecha de hoy en Colombia sale de `todayColombia()` (@/lib/gestion-core):
+  // una sola definicion para toda la app.
 
   // Consultar estado de la ruta diaria al montar / cambiar rutaId.
   //
@@ -182,7 +150,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
       try {
         setLoadingRutaDiaria(true)
         const supabase = createClient()
-        const fechaHoy = getFechaHoyColombia()
+        const fechaHoy = todayColombia()
 
         const { data, error } = await supabase
           .from("rutas_diarias")
@@ -220,7 +188,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
     try {
       setProcessingRuta(true)
       const supabase = createClient()
-      const fechaHoy = getFechaHoyColombia()
+      const fechaHoy = todayColombia()
 
       const { data, error } = await supabase
         .from("rutas_diarias")
@@ -258,21 +226,14 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
 
     try {
       const supabase = createClient()
-      
-      // Get today's date in Colombia timezone (start and end of day)
-      const now = new Date()
-      const colombiaFormatter = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "America/Bogota",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      })
-      const todayColombia = colombiaFormatter.format(now)
+
+      // Ventana del dia de hoy en zona Colombia (inicio y fin).
+      const fechaHoy = todayColombia()
       // El offset -05:00 es obligatorio: sin el, Postgres interpreta la
       // ventana en UTC y se pierde todo lo registrado despues de las 7 pm
       // hora Colombia.
-      const startOfDay = `${todayColombia}T00:00:00-05:00`
-      const endOfDay = `${todayColombia}T23:59:59-05:00`
+      const startOfDay = `${fechaHoy}T00:00:00-05:00`
+      const endOfDay = `${fechaHoy}T23:59:59-05:00`
 
       const { data, error } = await supabase
         .from("gastosregistros")
@@ -298,10 +259,11 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
 
   // ── Tarjeta trasera (Informe Recaudo): datos reales ─────────────────────
   // Frecuencias desde las cuotas del dia + loans.frecuencia_pago; "Intereses"
-  // = prestamos americanos con cuota hoy. Cartera desde v_loan_mora_status
-  // con las mismas bandas de mora que el modulo de pagos (0 al dia, 1-8
-  // mora, >8 vencido). Cuotas por cliente = cuotas vencidas pendientes
-  // (0-3 / >3). Ventas: renovacion = cliente que ya tenia otro prestamo.
+  // = prestamos americanos con cuota hoy. Cartera desde `v_loan_financiero`
+  // (columna `cuotas_mora`: CUOTAS vencidas sin cubrir, no dias) con las
+  // bandas de `bandaCartera()`. Cuotas por cliente = cuotas vencidas
+  // pendientes (0-3 / >3). Ventas: renovacion = cliente que ya tenia otro
+  // prestamo.
   const [backCard, setBackCard] = useState({
     frequency: {
       diario: { pagos: 0, total: 0 },
@@ -319,7 +281,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
     const loadBackCard = async () => {
       try {
         const supabase = createClient()
-        const fechaHoy = getFechaHoyColombia()
+        const fechaHoy = todayColombia()
 
         const [rowsHoyRes, activosRes, ventasHoyRes] = await Promise.all([
           supabase
@@ -341,7 +303,12 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
           monto_pagado: number | null
           loans: { frecuencia_pago: string | null; tipo_amortizacion: string | null } | null
         }[]
-        const esPagoReal = (row: { estado: string; monto_pagado: number | null }) =>
+        // OJO: este predicado NO es el `esPagoReal` de @/lib/gestion-core.
+        // Aquel evalua una GESTION ({tipo, monto, estado}); aqui las filas son
+        // CUOTAS de payment_plan, cuyo `estado` es el cache de la cascada. Se
+        // deja local a proposito para no forzar dos cosas distintas en el
+        // mismo nombre: este cuadro cuenta cuotas del cronograma, no eventos.
+        const cuotaConPago = (row: { estado: string; monto_pagado: number | null }) =>
           ["pagado", "parcial", "cancelada"].includes(row.estado) && Number(row.monto_pagado ?? 0) > 0
         const frequency = {
           diario: { pagos: 0, total: 0 },
@@ -351,19 +318,14 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
           intereses: { pagos: 0, total: 0 },
         }
         for (const row of rowsHoy) {
-          const key =
-            row.loans?.frecuencia_pago === "weekly"
-              ? "semanal"
-              : row.loans?.frecuencia_pago === "biweekly"
-                ? "quincenal"
-                : row.loans?.frecuencia_pago === "monthly"
-                  ? "mensual"
-                  : "diario"
+          // El mapeo frecuencia -> etiqueta vive en gestion-core (FRECUENCIAS).
+          const key = etiquetaFrecuencia(row.loans?.frecuencia_pago).toLowerCase() as
+            "diario" | "semanal" | "quincenal" | "mensual"
           frequency[key].total += 1
-          if (esPagoReal(row)) frequency[key].pagos += 1
+          if (cuotaConPago(row)) frequency[key].pagos += 1
           if (row.loans?.tipo_amortizacion?.toLowerCase().trim() === "americano") {
             frequency.intereses.total += 1
-            if (esPagoReal(row)) frequency.intereses.pagos += 1
+            if (cuotaConPago(row)) frequency.intereses.pagos += 1
           }
         }
 
@@ -373,28 +335,32 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         const portfolioStatus = { alDia: 0, mora: 0, vencidos: 0 }
         if (loanIds.length > 0) {
           const [vencidasRes, moraRes] = await Promise.all([
+            // Cuotas vencidas: `fecha_pago` es el VENCIMIENTO inmutable del
+            // cronograma, asi que pendiente + vencida antes de hoy sigue
+            // siendo la definicion correcta.
             supabase
               .from("payment_plan")
               .select("loan_id")
               .eq("estado", "pendiente")
               .lt("fecha_pago", fechaHoy)
               .in("loan_id", loanIds),
-            supabase.from("v_loan_mora_status").select("loan_id, dias_mora_calculada").in("loan_id", loanIds),
+            supabase.from("v_loan_financiero").select("loan_id, cuotas_mora").in("loan_id", loanIds),
           ])
           const vencidasPorLoan = new Map<string, number>()
           for (const v of (vencidasRes.data ?? []) as { loan_id: string }[]) {
             vencidasPorLoan.set(v.loan_id, (vencidasPorLoan.get(v.loan_id) ?? 0) + 1)
           }
           const moraPorLoan = new Map<string, number>()
-          for (const m of (moraRes.data ?? []) as { loan_id: string; dias_mora_calculada: number | null }[]) {
-            moraPorLoan.set(m.loan_id, Number(m.dias_mora_calculada ?? 0))
+          for (const m of (moraRes.data ?? []) as { loan_id: string; cuotas_mora: number | null }[]) {
+            moraPorLoan.set(m.loan_id, Number(m.cuotas_mora ?? 0))
           }
           for (const id of loanIds) {
             if ((vencidasPorLoan.get(id) ?? 0) > 3) installmentsByClient.large += 1
             else installmentsByClient.small += 1
-            const dias = moraPorLoan.get(id) ?? 0
-            if (dias === 0) portfolioStatus.alDia += 1
-            else if (dias <= 8) portfolioStatus.mora += 1
+            // Las bandas las decide `bandaCartera()`, no una escalera local.
+            const banda = bandaCartera(moraPorLoan.get(id) ?? 0)
+            if (banda === "al_dia") portfolioStatus.alDia += 1
+            else if (banda === "mora") portfolioStatus.mora += 1
             else portfolioStatus.vencidos += 1
           }
         }

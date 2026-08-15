@@ -28,6 +28,8 @@ import {
   ShieldCheck,
   AlertTriangle,
   FolderOpen,
+  SlidersHorizontal,
+  ScanSearch,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -77,6 +79,8 @@ const navGroups: NavGroup[] = [
       { id: "multas",                    label: "Multas",          icon: AlertTriangle, colorClass: "sidebar-item-expense"   },
       { id: "documentos",                label: "Documentos",      icon: FolderOpen,    colorClass: "sidebar-item-clients"   },
       { id: "payment-control",           label: "Control Pagos",   icon: ListChecks,    colorClass: "sidebar-item-payment"   },
+      { id: "sale-editor",               label: "Control Total",   icon: SlidersHorizontal, colorClass: "sidebar-item-payment" },
+      { id: "loan-audit",                label: "Auditoría 360",   icon: ScanSearch,    colorClass: "sidebar-item-summary"   },
       { id: "secretary-reports",         label: "Reportes",        icon: FileText,    colorClass: "sidebar-item-secretary" },
       { id: "secretary-admin-reportes",  label: "Rep. Admin",      icon: FileText,    colorClass: "sidebar-item-clients"   },
       { id: "user-route-management",     label: "Usuarios/Rutas",  icon: Users,       colorClass: "sidebar-item-clients"   },

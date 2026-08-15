@@ -44,6 +44,12 @@ import {
   ShoppingCart,
   ReceiptText,
 } from "lucide-react"
+import {
+  todayColombia,
+  horaColombia,
+  montoEfectivo,
+  type TipoGestion,
+} from "@/lib/gestion-core"
 import type { MapPoint } from "./admin-route-monitor-map"
 
 // Map is dynamically imported so Leaflet does not try to run during SSR.
@@ -95,13 +101,21 @@ type SaleRow = {
   } | null
 }
 
-type PaymentPlanRow = {
+/**
+ * Un movimiento de la ruta = UN evento del libro `gestiones`.
+ *
+ * Antes esto era una fila de `payment_plan` ordenada por `fecha_pago_real`.
+ * Esa columna ya no se escribe: el instante real de cada visita vive en
+ * `gestiones.fecha_hora` y el día de negocio en `gestiones.fecha_gestion`.
+ * Las coordenadas del cobrador también quedan en el evento.
+ */
+type GestionRow = {
   id: string
   loan_id: string
-  estado: string
-  monto_pagado: number | null
-  fecha_pago: string | null
-  fecha_pago_real: string | null
+  tipo: TipoGestion
+  monto: number | null
+  fecha_gestion: string | null
+  fecha_hora: string | null
   latitud: number | null
   longitud: number | null
   loans?: {
@@ -117,45 +131,49 @@ type PaymentPlanRow = {
 // ────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────────────────────
-const getTodayColombia = () => {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Bogota",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  })
-  return fmt.format(new Date()) // YYYY-MM-DD
-}
-
 const formatCurrency = (n: number | null | undefined) =>
   `$${(Number(n) || 0).toLocaleString()}`
 
-const formatHora = (iso: string | null) => {
-  if (!iso) return ""
-  try {
-    const d = new Date(iso)
-    return new Intl.DateTimeFormat("es-CO", {
-      timeZone: "America/Bogota",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(d)
-  } catch {
-    return ""
+const formatHora = (iso: string | null) => horaColombia(iso)
+
+/**
+ * El mapa y los badges hablan el vocabulario viejo de estados de cuota
+ * (`pagado` / `no_pago` / `cancelada`). Se traduce el tipo del evento a ese
+ * vocabulario para no cambiar ni los colores ni los textos de la pantalla.
+ */
+const estadoVisual = (tipo: TipoGestion): string => {
+  switch (tipo) {
+    case "pago":
+    case "abono_venta":
+      return "pagado"
+    case "cancelacion":
+      return "cancelada"
+    case "no_pago":
+      return "no_pago"
+    default:
+      return tipo
   }
 }
+
+/** Eventos que representan una visita del cobrador en el terreno. */
+const ES_VISITA: TipoGestion[] = ["pago", "no_pago", "cancelacion", "abono_venta"]
+
+const COLUMNAS_MOVIMIENTO =
+  "id, loan_id, tipo, monto, fecha_gestion, fecha_hora, latitud, longitud, " +
+  "loans:loans(id, clients:clients(nombre_completo, apodo, documento))"
 
 // ────────────────────────────────────────────────────────────────────────────
 // Component
 // ────────────────────────────────────────────────────────────────────────────
 export function AdminRouteMonitor() {
-  const [fecha, setFecha] = useState<string>(getTodayColombia())
+  const [fecha, setFecha] = useState<string>(todayColombia())
   const [rutas, setRutas] = useState<MonitoreoRuta[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   // Dialog state
   const [selectedRuta, setSelectedRuta] = useState<MonitoreoRuta | null>(null)
-  const [detalle, setDetalle] = useState<PaymentPlanRow[]>([])
+  const [detalle, setDetalle] = useState<GestionRow[]>([])
   const [loadingDetalle, setLoadingDetalle] = useState(false)
   // Token monotonico para descartar respuestas obsoletas / concurrentes.
   // Cada llamada a openDetalle incrementa el token; las respuestas con
@@ -333,17 +351,21 @@ export function AdminRouteMonitor() {
   // ── Load detail for a specific route ──────────────────────────────────────
   // RLS eliminado: las queries filtran por `.eq('ruta', rutaId)` directamente.
 
-  const fetchPaymentPlan = useCallback(
+  // Los movimientos del día salen del libro de eventos, no del cronograma:
+  // `fecha_gestion` es el día de negocio al que aplica la visita y `fecha_hora`
+  // el orden real del recorrido. Se excluye `homologacion` (historia migrada de
+  // otro sistema) para cuadrar con los contadores de `vista_monitoreo_admin`.
+  const fetchGestiones = useCallback(
     async (rutaId: number) => {
       const supabase = createClient()
       return supabase
-        .from("payment_plan")
-        .select(
-          "id, loan_id, estado, monto_pagado, fecha_pago, fecha_pago_real, latitud, longitud, loans:loans(id, clients:clients(nombre_completo, apodo, documento))",
-        )
+        .from("gestiones")
+        .select(COLUMNAS_MOVIMIENTO)
         .eq("ruta", rutaId)
-        .eq("fecha_pago", fecha)
-        .order("fecha_pago_real", { ascending: true, nullsFirst: false })
+        .eq("fecha_gestion", fecha)
+        .eq("estado", "aplicada")
+        .neq("origen", "homologacion")
+        .order("fecha_hora", { ascending: true })
     },
     [fecha],
   )
@@ -360,13 +382,13 @@ export function AdminRouteMonitor() {
 
       try {
         // Primer intento
-        let { data, error } = await fetchPaymentPlan(ruta.ruta_id)
+        let { data, error } = await fetchGestiones(ruta.ruta_id)
 
         // Si el usuario cerro o cambio de ruta mientras tanto, descartar.
         if (fetchTokenRef.current !== myToken) return
 
         if (error) {
-          console.error("[v0] payment_plan detalle error:", error.message)
+          console.error("[v0] gestiones detalle error:", error.message)
           setDetalle([])
           return
         }
@@ -378,16 +400,16 @@ export function AdminRouteMonitor() {
           // Pequena pausa para dar tiempo a que el RPC anterior haga commit
           await new Promise((r) => setTimeout(r, 120))
           if (fetchTokenRef.current !== myToken) return
-          const retry = await fetchPaymentPlan(ruta.ruta_id)
+          const retry = await fetchGestiones(ruta.ruta_id)
           if (fetchTokenRef.current !== myToken) return
           if (retry.error) {
-            console.error("[v0] payment_plan retry error:", retry.error.message)
+            console.error("[v0] gestiones retry error:", retry.error.message)
           } else if (retry.data && retry.data.length > 0) {
             data = retry.data
           }
         }
 
-        setDetalle((data ?? []) as unknown as PaymentPlanRow[])
+        setDetalle((data ?? []) as unknown as GestionRow[])
       } catch (err) {
         if (fetchTokenRef.current !== myToken) return
         const msg = err instanceof Error ? err.message : String(err)
@@ -399,7 +421,7 @@ export function AdminRouteMonitor() {
         }
       }
     },
-    [fetchPaymentPlan],
+    [fetchGestiones],
   )
 
   const closeDetalle = useCallback(() => {
@@ -427,22 +449,22 @@ export function AdminRouteMonitor() {
           typeof r.longitud === "number" &&
           !Number.isNaN(r.latitud) &&
           !Number.isNaN(r.longitud) &&
-          (r.estado === "pagado" || r.estado === "no_pago" || r.estado === "parcial" || r.estado === "cancelada"),
+          ES_VISITA.includes(r.tipo),
       )
       .sort((a, b) => {
-        const aT = a.fecha_pago_real ? new Date(a.fecha_pago_real).getTime() : 0
-        const bT = b.fecha_pago_real ? new Date(b.fecha_pago_real).getTime() : 0
+        const aT = a.fecha_hora ? new Date(a.fecha_hora).getTime() : 0
+        const bT = b.fecha_hora ? new Date(b.fecha_hora).getTime() : 0
         return aT - bT
       })
       .map((r, idx) => ({
         id: r.id,
         lat: r.latitud as number,
         lng: r.longitud as number,
-        estado: r.estado,
+        estado: estadoVisual(r.tipo),
         cliente:
           r.loans?.clients?.apodo || r.loans?.clients?.nombre_completo || "Cliente",
-        monto: Number(r.monto_pagado) || 0,
-        hora: formatHora(r.fecha_pago_real),
+        monto: montoEfectivo({ tipo: r.tipo, monto: Number(r.monto) || 0 }),
+        hora: formatHora(r.fecha_hora),
         orden: idx + 1,
       }))
   }, [detalle])
@@ -783,10 +805,11 @@ export function AdminRouteMonitor() {
                       "Cliente"
                     const hasGps =
                       typeof r.latitud === "number" && typeof r.longitud === "number"
+                    const estado = estadoVisual(r.tipo)
                     const color =
-                      r.estado === "pagado" || r.estado === "parcial" || r.estado === "cancelada"
+                      estado === "pagado" || estado === "parcial" || estado === "cancelada"
                         ? "bg-success text-success-foreground"
-                        : r.estado === "no_pago"
+                        : estado === "no_pago"
                           ? "bg-destructive text-destructive-foreground"
                           : "bg-muted text-muted-foreground"
                     return (
@@ -794,12 +817,12 @@ export function AdminRouteMonitor() {
                         <TableCell className="font-medium">{idx + 1}</TableCell>
                         <TableCell className="font-medium">{cliente}</TableCell>
                         <TableCell>
-                          <Badge className={`${color} border-0`}>{r.estado}</Badge>
+                          <Badge className={`${color} border-0`}>{estado}</Badge>
                         </TableCell>
                         <TableCell className="text-right font-semibold">
-                          {formatCurrency(r.monto_pagado)}
+                          {formatCurrency(montoEfectivo({ tipo: r.tipo, monto: Number(r.monto) || 0 }))}
                         </TableCell>
-                        <TableCell>{formatHora(r.fecha_pago_real) || "—"}</TableCell>
+                        <TableCell>{formatHora(r.fecha_hora) || "—"}</TableCell>
                         <TableCell className="text-center">
                           {hasGps ? (
                             <a

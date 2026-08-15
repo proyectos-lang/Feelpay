@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { todayColombia } from "@/lib/gestion-core"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -49,13 +50,8 @@ const pctColorClass = (val: number, meta: number) => {
   return "text-destructive font-semibold"
 }
 
-const todayColombia = () =>
-  new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Bogota",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date())
+// La fecha de hoy en Colombia sale de `todayColombia()` (@/lib/gestion-core):
+// una sola definicion para toda la app.
 
 export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
   const [fecha, setFecha] = useState(todayColombia)
@@ -96,7 +92,7 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
     load()
   }, [currentUserId])
 
-  // ── Cargar resumen_pagos_diarios ──────────────────────────────────────────
+  // ── Cargar resumen_diario_v2 ──────────────────────────────────────────────
   const fetchData = useCallback(async () => {
     if (rutasDisponibles.length === 0) {
       setLoading(false)
@@ -115,7 +111,7 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
       let data: any[] | null = null
 
       const res1 = await supabase
-        .from("resumen_pagos_diarios")
+        .from("resumen_diario_v2")
         .select(fullSelect)
         .eq("fecha_pago", fecha)
         .in("ruta", rutaIds)
@@ -126,7 +122,7 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
       } else {
         console.warn("[v0] AdminDashboard full select failed, retrying base:", res1.error.message)
         const res2 = await supabase
-          .from("resumen_pagos_diarios")
+          .from("resumen_diario_v2")
           .select("ruta, efectivo, valor_pago, meta_pagos, valor_gastos, valor_retiros, valor_ingresos")
           .eq("fecha_pago", fecha)
           .in("ruta", rutaIds)

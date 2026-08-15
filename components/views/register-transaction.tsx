@@ -135,7 +135,7 @@ export function RegisterTransaction({
       if (typeof navigator !== "undefined" && !navigator.onLine) return
       try {
         const { data } = await createClient()
-          .from("resumen_pagos_diarios")
+          .from("resumen_diario_v2")
           .select("efectivo")
           .eq("ruta", ruta)
           .eq("fecha_pago", todayColombia())

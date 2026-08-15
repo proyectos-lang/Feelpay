@@ -14,15 +14,32 @@ import {
   CheckCircle2, XCircle, ShoppingCart,
   Receipt, TrendingUp, ArrowDownCircle, Clock, User,
 } from "lucide-react"
+import {
+  todayColombia, horaColombia, fmtMoneda, etiquetaFrecuencia, montoEfectivo,
+  type TipoGestion,
+} from "@/lib/gestion-core"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type RutaInfo = { id: number; nombre: string; ciudad: string | null }
 
-type PagoRow = {
+/**
+ * Una fila de la actividad del día: UN evento del libro `gestiones`.
+ *
+ * Antes esto era una fila de `payment_plan` filtrada por `fecha_pago_real`.
+ * Esa columna ya no se escribe (queda NULL siempre), así que la actividad del
+ * día se lee del libro de eventos: `fecha_gestion` es el día de negocio y
+ * `fecha_hora` el instante real de la visita.
+ *
+ * La cuota (número, vencimiento y valor) viene del cronograma al que el evento
+ * quedó anclado (`cuota_objetivo`); puede no existir cuando el evento no apunta
+ * a una cuota concreta (por ejemplo una reversa de secretaría).
+ */
+type GestionRow = {
   id: string; loan_id: string; ruta: number; ruta_nombre: string
-  numero_cuota: number; fecha_pago: string; valor_cuota: number
-  monto_pagado: number; estado: string; hora: string
+  tipo: TipoGestion
+  numero_cuota: number | null; fecha_pago: string | null; valor_cuota: number
+  monto: number; hora: string
   cliente_nombre: string; cliente_documento: string
 }
 
@@ -47,17 +64,18 @@ interface AdminRouteDetailProps {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+// El vocabulario (hoy en Colombia, hora, moneda, frecuencia) sale de
+// lib/gestion-core.ts para que esta pantalla no tenga su propia definición.
 
-const fmt = (n: number) => `$${Math.round(n).toLocaleString("es-CO")}`
-const horaFmt = (ts: string | null) =>
-  ts ? new Date(ts).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" }) : "—"
-const frecuenciaLabel = (f: string) =>
-  ({ daily: "Diario", weekly: "Semanal", biweekly: "Quincenal", monthly: "Mensual" }[f] ?? f)
+const hora = (ts: string | null | undefined) => horaColombia(ts) || "—"
 
-const todayColombia = () =>
-  new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date())
+// Columnas del evento + el cronograma al que quedó anclado + el cliente.
+// `cuota_objetivo` apunta a payment_plan y `loan_id` a loans: PostgREST resuelve
+// ambos embebidos por su FK.
+const COLUMNAS_ACTIVIDAD =
+  "id, loan_id, ruta, tipo, monto, fecha_hora, " +
+  "cuota:payment_plan(numero_cuota, fecha_pago, valor_cuota), " +
+  "loans:loans(clients:clients(nombre_completo, documento))"
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -68,8 +86,8 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
   const [activeTab, setActiveTab] = useState<Tab>("pagos")
 
   const [rutasDisponibles, setRutasDisponibles] = useState<RutaInfo[]>([])
-  const [pagos, setPagos] = useState<PagoRow[]>([])
-  const [noPagos, setNoPagos] = useState<PagoRow[]>([])
+  const [pagos, setPagos] = useState<GestionRow[]>([])
+  const [noPagos, setNoPagos] = useState<GestionRow[]>([])
   const [ventas, setVentas] = useState<VentaRow[]>([])
   const [gastos, setGastos] = useState<TransaccionRow[]>([])
   const [ingresos, setIngresos] = useState<TransaccionRow[]>([])
@@ -115,16 +133,20 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
       const dayEnd   = `${fecha}T23:59:59-05:00`
 
       // 3 queries en paralelo
-      const [ppRes, ventasRes, gastosRes] = await Promise.all([
-        // payment_plan: pagos + no_pagos del día
+      const [gestionesRes, ventasRes, gastosRes] = await Promise.all([
+        // gestiones: la actividad del día (pagos + no pagos), del libro de eventos.
+        // `fecha_gestion` es el día de negocio, así que no hay que armar rangos
+        // de timestamps ni pelear con la zona horaria.
+        // `origen <> 'homologacion'`: esos eventos son historia migrada de otro
+        // sistema, no actividad de la ruta (mismo criterio que vista_monitoreo_admin).
         supabase
-          .from("payment_plan")
-          .select("id, loan_id, ruta, numero_cuota, fecha_pago, valor_cuota, monto_pagado, estado, fecha_pago_real")
+          .from("gestiones")
+          .select(COLUMNAS_ACTIVIDAD)
           .in("ruta", rutaIds)
-          .in("estado", ["pagado", "parcial", "no_pago"])
-          .gte("fecha_pago_real", dayStart)
-          .lte("fecha_pago_real", dayEnd)
-          .order("fecha_pago_real", { ascending: true }),
+          .eq("fecha_gestion", fecha)
+          .eq("estado", "aplicada")
+          .neq("origen", "homologacion")
+          .order("fecha_hora", { ascending: true }),
 
         // loans: ventas creadas hoy
         supabase
@@ -146,36 +168,36 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
           .order("fechahorasol", { ascending: true }),
       ])
 
-      // Fetch client names for payment_plan rows (via loans)
-      const ppData: any[] = ppRes.data ?? []
-      const uniqueLoanIds = [...new Set(ppData.map((p) => p.loan_id))]
-      const loanMap = new Map<string, { nombre: string; documento: string }>()
+      if (gestionesRes.error) throw gestionesRes.error
 
-      if (uniqueLoanIds.length > 0) {
-        const { data: loansData } = await supabase
-          .from("loans")
-          .select("id, clients(nombre_completo, documento)")
-          .in("id", uniqueLoanIds)
-        for (const l of (loansData ?? []) as any[]) {
-          loanMap.set(l.id, {
-            nombre: l.clients?.nombre_completo ?? "—",
-            documento: l.clients?.documento ?? "—",
-          })
-        }
-      }
-
-      // Normalizar payment_plan
-      const allPP: PagoRow[] = ppData.map((p) => ({
-        id: p.id, loan_id: p.loan_id, ruta: p.ruta,
-        ruta_nombre: rutaInfoMap.get(p.ruta)?.nombre ?? `Ruta ${p.ruta}`,
-        numero_cuota: p.numero_cuota, fecha_pago: p.fecha_pago,
-        valor_cuota: p.valor_cuota ?? 0, monto_pagado: p.monto_pagado ?? 0,
-        estado: p.estado, hora: horaFmt(p.fecha_pago_real),
-        cliente_nombre: loanMap.get(p.loan_id)?.nombre ?? "—",
-        cliente_documento: loanMap.get(p.loan_id)?.documento ?? "—",
+      // Normalizar gestiones. El nombre del cliente ya viene en el mismo viaje
+      // (gestiones → loans → clients), así que se acabó la consulta extra.
+      const eventos: GestionRow[] = ((gestionesRes.data ?? []) as any[]).map((g) => ({
+        id: g.id, loan_id: g.loan_id, ruta: g.ruta,
+        ruta_nombre: rutaInfoMap.get(g.ruta)?.nombre ?? `Ruta ${g.ruta}`,
+        tipo: g.tipo as TipoGestion,
+        numero_cuota: g.cuota?.numero_cuota ?? null,
+        fecha_pago: g.cuota?.fecha_pago ?? null,
+        valor_cuota: Number(g.cuota?.valor_cuota ?? 0),
+        // montoEfectivo: una reversa entra en negativo, para que el total del
+        // día sea la plata NETA que realmente entró (misma fórmula que
+        // vista_monitoreo_admin.total_recaudado).
+        monto: montoEfectivo({ tipo: g.tipo, monto: Number(g.monto ?? 0) }),
+        hora: hora(g.fecha_hora),
+        cliente_nombre: g.loans?.clients?.nombre_completo ?? "—",
+        cliente_documento: g.loans?.clients?.documento ?? "—",
       }))
-      setPagos(allPP.filter((p) => p.estado === "pagado" || p.estado === "parcial"))
-      setNoPagos(allPP.filter((p) => p.estado === "no_pago"))
+
+      // Un pago es un evento que movió plata hacia el préstamo; la reversa
+      // aparece en la misma pestaña restando, porque también es caja del día.
+      setPagos(
+        eventos.filter(
+          (e) =>
+            (["pago", "cancelacion", "abono_venta"].includes(e.tipo) && e.monto > 0) ||
+            e.tipo === "reversa",
+        ),
+      )
+      setNoPagos(eventos.filter((e) => e.tipo === "no_pago"))
 
       // Normalizar ventas
       setVentas(
@@ -185,7 +207,7 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
           valor: l.valor ?? 0, valor_cuota: l.valor_cuota ?? 0,
           numero_cuotas: l.numero_cuotas, frecuencia_pago: l.frecuencia_pago,
           tipo_amortizacion: l.tipo_amortizacion ?? "—", tipo_venta: l.tipo_venta ?? "—",
-          estado: l.estado, hora: horaFmt(l.fecha_creacion),
+          estado: l.estado, hora: hora(l.fecha_creacion),
           cliente_nombre: l.clients?.nombre_completo ?? "—",
           cliente_documento: l.clients?.documento ?? "—",
         })),
@@ -196,7 +218,7 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
         id: g.id, ruta: g.ruta,
         ruta_nombre: rutaInfoMap.get(g.ruta)?.nombre ?? `Ruta ${g.ruta}`,
         tipo: g.tipo, concepto: g.concepto, valor: g.valor ?? 0,
-        hora: horaFmt(g.fechahorasol), observacion: g.observacion ?? null,
+        hora: hora(g.fechahorasol), observacion: g.observacion ?? null,
         estadoadmin: g.estadoadmin ?? null,
       })
       const gastosData: any[] = gastosRes.data ?? []
@@ -232,7 +254,7 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
 
   const ciudades = Array.from(new Set(rutasDisponibles.map((r) => r.ciudad).filter(Boolean))) as string[]
 
-  const totalPagos    = fPagos.reduce((s, r) => s + r.monto_pagado, 0)
+  const totalPagos    = fPagos.reduce((s, r) => s + r.monto, 0)
   const totalVentas   = fVentas.reduce((s, r) => s + r.valor, 0)
   const totalGastos   = fGastos.reduce((s, r) => s + r.valor, 0)
   const totalIngresos = fIngresos.reduce((s, r) => s + r.valor, 0)
@@ -255,11 +277,19 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
     return <span className={`text-[9px] rounded px-1.5 py-0.5 font-medium ${cls}`}>{e}</span>
   }
 
-  const estadoPagoBadge = (estado: string) => {
-    if (estado === "pagado")  return <span className="text-[9px] rounded px-1.5 py-0.5 font-medium bg-success/20 text-success">Pagado</span>
-    if (estado === "parcial") return <span className="text-[9px] rounded px-1.5 py-0.5 font-medium bg-warning/20 text-warning">Parcial</span>
-    if (estado === "no_pago") return <span className="text-[9px] rounded px-1.5 py-0.5 font-medium bg-destructive/20 text-destructive">No pago</span>
-    return <span className="text-[9px] rounded px-1.5 py-0.5 font-medium bg-muted text-muted-foreground">{estado}</span>
+  // La columna "Estado" ahora describe el EVENTO, no el estado de la cuota:
+  // la fila es una gestión del libro, no una cuota del cronograma.
+  const tipoGestionBadge = (tipo: TipoGestion) => {
+    const meta: Record<string, { label: string; clase: string }> = {
+      pago:        { label: "Pago",        clase: "bg-success/20 text-success" },
+      cancelacion: { label: "Cancelación", clase: "bg-info/20 text-info" },
+      abono_venta: { label: "Abono venta", clase: "bg-success/20 text-success" },
+      reversa:     { label: "Reversa",     clase: "bg-warning/20 text-warning" },
+      no_pago:     { label: "No pago",     clase: "bg-destructive/20 text-destructive" },
+    }
+    const m = meta[tipo]
+    if (!m) return <span className="text-[9px] rounded px-1.5 py-0.5 font-medium bg-muted text-muted-foreground">{tipo}</span>
+    return <span className={`text-[9px] rounded px-1.5 py-0.5 font-medium ${m.clase}`}>{m.label}</span>
   }
 
   const TH = ({ children, right, center }: { children: React.ReactNode; right?: boolean; center?: boolean }) => (
@@ -351,7 +381,7 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
             {activeTab === "pagos" && (
               <>
                 <span className="text-xs text-muted-foreground">{fPagos.length} registros</span>
-                <span className="text-xs font-bold text-success">Total recaudado: {fmt(totalPagos)}</span>
+                <span className="text-xs font-bold text-success">Total recaudado: {fmtMoneda(totalPagos)}</span>
               </>
             )}
             {activeTab === "no_pagos" && (
@@ -360,25 +390,25 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
             {activeTab === "ventas" && (
               <>
                 <span className="text-xs text-muted-foreground">{fVentas.length} ventas</span>
-                <span className="text-xs font-bold text-info">Total colocado: {fmt(totalVentas)}</span>
+                <span className="text-xs font-bold text-info">Total colocado: {fmtMoneda(totalVentas)}</span>
               </>
             )}
             {activeTab === "gastos" && (
               <>
                 <span className="text-xs text-muted-foreground">{fGastos.length} gastos</span>
-                <span className="text-xs font-bold text-destructive">Total: {fmt(totalGastos)}</span>
+                <span className="text-xs font-bold text-destructive">Total: {fmtMoneda(totalGastos)}</span>
               </>
             )}
             {activeTab === "ingresos" && (
               <>
                 <span className="text-xs text-muted-foreground">{fIngresos.length} ingresos</span>
-                <span className="text-xs font-bold text-success">Total: {fmt(totalIngresos)}</span>
+                <span className="text-xs font-bold text-success">Total: {fmtMoneda(totalIngresos)}</span>
               </>
             )}
             {activeTab === "retiros" && (
               <>
                 <span className="text-xs text-muted-foreground">{fRetiros.length} retiros</span>
-                <span className="text-xs font-bold text-warning">Total: {fmt(totalRetiros)}</span>
+                <span className="text-xs font-bold text-warning">Total: {fmtMoneda(totalRetiros)}</span>
               </>
             )}
           </div>
@@ -413,10 +443,10 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
                           <TD className="font-medium text-foreground">{r.cliente_nombre}</TD>
                           <TD className="text-muted-foreground">{r.cliente_documento}</TD>
                           <TD className="text-muted-foreground">{r.ruta_nombre}</TD>
-                          <TD center className="text-muted-foreground">{r.numero_cuota}</TD>
-                          <TD right className="text-muted-foreground">{fmt(r.valor_cuota)}</TD>
-                          <TD right className="font-semibold text-success">{fmt(r.monto_pagado)}</TD>
-                          <TD center>{estadoPagoBadge(r.estado)}</TD>
+                          <TD center className="text-muted-foreground">{r.numero_cuota ?? "—"}</TD>
+                          <TD right className="text-muted-foreground">{fmtMoneda(r.valor_cuota)}</TD>
+                          <TD right className="font-semibold text-success">{fmtMoneda(r.monto)}</TD>
+                          <TD center>{tipoGestionBadge(r.tipo)}</TD>
                           <TD center><span className="inline-flex items-center gap-1 text-muted-foreground"><Clock className="h-2.5 w-2.5" />{r.hora}</span></TD>
                         </TableRow>
                       ))}
@@ -442,9 +472,9 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
                           <TD className="font-medium text-foreground">{r.cliente_nombre}</TD>
                           <TD className="text-muted-foreground">{r.cliente_documento}</TD>
                           <TD className="text-muted-foreground">{r.ruta_nombre}</TD>
-                          <TD center className="text-muted-foreground">{r.numero_cuota}</TD>
-                          <TD className="text-muted-foreground">{r.fecha_pago}</TD>
-                          <TD right className="text-destructive font-medium">{fmt(r.valor_cuota)}</TD>
+                          <TD center className="text-muted-foreground">{r.numero_cuota ?? "—"}</TD>
+                          <TD className="text-muted-foreground">{r.fecha_pago ?? "—"}</TD>
+                          <TD right className="text-destructive font-medium">{fmtMoneda(r.valor_cuota)}</TD>
                           <TD center><span className="inline-flex items-center gap-1 text-muted-foreground"><Clock className="h-2.5 w-2.5" />{r.hora}</span></TD>
                         </TableRow>
                       ))}
@@ -471,10 +501,10 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
                           <TD className="font-medium text-foreground">{r.cliente_nombre}</TD>
                           <TD className="text-muted-foreground">{r.cliente_documento}</TD>
                           <TD className="text-muted-foreground">{r.ruta_nombre}</TD>
-                          <TD right className="font-semibold text-info">{fmt(r.valor)}</TD>
-                          <TD right className="text-muted-foreground">{fmt(r.valor_cuota)}</TD>
+                          <TD right className="font-semibold text-info">{fmtMoneda(r.valor)}</TD>
+                          <TD right className="text-muted-foreground">{fmtMoneda(r.valor_cuota)}</TD>
                           <TD center className="text-muted-foreground">{r.numero_cuotas}</TD>
-                          <TD center className="text-muted-foreground">{frecuenciaLabel(r.frecuencia_pago)}</TD>
+                          <TD center className="text-muted-foreground">{etiquetaFrecuencia(r.frecuencia_pago)}</TD>
                           <TD center className="capitalize text-muted-foreground">{r.tipo_amortizacion}</TD>
                           <TD center><span className="inline-flex items-center gap-1 text-muted-foreground"><Clock className="h-2.5 w-2.5" />{r.hora}</span></TD>
                         </TableRow>
@@ -502,7 +532,7 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
                         <TableRow key={r.id} className="hover:bg-muted/20 border-b border-border/50">
                           <TD className="text-muted-foreground">{r.ruta_nombre}</TD>
                           <TD className="font-medium text-foreground">{r.concepto}</TD>
-                          <TD right className={`font-semibold ${valueColor}`}>{fmt(r.valor)}</TD>
+                          <TD right className={`font-semibold ${valueColor}`}>{fmtMoneda(r.valor)}</TD>
                           <TD center><span className="inline-flex items-center gap-1 text-muted-foreground"><Clock className="h-2.5 w-2.5" />{r.hora}</span></TD>
                           <TD className="text-muted-foreground max-w-[160px] truncate">{r.observacion ?? "—"}</TD>
                           <TD center>{estadoAdminBadge(r.estadoadmin) ?? <span className="text-muted-foreground">—</span>}</TD>

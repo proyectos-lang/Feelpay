@@ -156,14 +156,26 @@ export function getSessionIdentity(): SessionIdentity {
 
 export interface AtomicRpcResult {
   ok: boolean
+  /** Id del evento en el libro (`gestiones`). */
+  gestion_id?: string
+  /** Si quedo 'en_revision', la plata esta registrada pero aun no cuenta. */
+  estado_gestion?: "aplicada" | "en_revision" | "rechazada"
   cuotas_actualizadas?: number
   nuevo_saldo?: number
   loan_estado_final?: "activo" | "cancelado"
   cliente_marcado_sin_prestamo?: boolean
   cuota_adicional_generada?: boolean
-  fila_hoy_creada?: boolean
+  cuotas_cubiertas?: number
+  cuotas_totales?: number
+  /** Cuanto sobro cuando el abono supero el saldo (nunca se descarta plata). */
+  sobrepago?: number
+  /** Ya habia una gestion aplicada ese mismo dia para este prestamo. */
+  ya_gestionado_dia?: boolean
+  extension_aplicada?: boolean
+  /** Por que NO se aplico la extension (el pago si se registro). */
+  extension_motivo?: string
   multa_cobrada?: boolean
-  /** La operacion no se pudo aplicar limpio y quedo en la cola de secretaria. */
+  /** La operacion necesita el visto bueno de secretaria antes de contar. */
   enviado_a_revision?: boolean
   motivo?: string
   /** true si la llave de idempotencia ya se habia procesado (reintento). */

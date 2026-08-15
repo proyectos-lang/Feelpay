@@ -2,7 +2,7 @@
 
 import React from "react"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -19,6 +19,8 @@ import { Barcode as BarCode, X, Loader2, UserPlus, AlertCircle, CheckCircle2, Ch
 // de session vars RLS perdidas entre peticiones HTTP stateless.
 import { createClient } from "@/lib/supabase/client"
 import { todayColombia } from "@/lib/colombia-date"
+import { fmtFecha, fmtMoneda, sumarDias } from "@/lib/gestion-core"
+import { buildPaymentSchedule, type Frecuencia, type TipoAmortizacion } from "@/lib/loan-schedule"
 import { useToast } from "@/hooks/use-toast"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre } from "@/lib/ruta-umbrales"
 import { enviarOEncolar } from "@/lib/offline-queue"
@@ -195,6 +197,18 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   // Por defecto el plan arranca MAÑANA (regla de negocio de siempre). Con
   // esto marcado arranca HOY, el mismo dia de la venta.
   const [iniciaPagosHoy, setIniciaPagosHoy] = useState(false)
+
+  // ── Venta homologada ─────────────────────────────────────────────────────
+  // Para cargar créditos que ya venían corriendo en otro sistema: se elige la
+  // fecha real en que arrancó y se marca, día por día, qué pagó y qué no.
+  // Con eso el saldo, la mora y el X/Y quedan exactos al día de hoy, en vez
+  // de tener que "inventar" un préstamo nuevo por el saldo que quedaba.
+  const [ventaHomologada, setVentaHomologada] = useState(false)
+  const [fechaInicioHomologada, setFechaInicioHomologada] = useState("")
+  // Marcas por número de cuota: qué pasó ese día y cuánto entró.
+  const [marcasHomologacion, setMarcasHomologacion] = useState<
+    Record<number, { tipo: "pago" | "no_pago"; monto: string }>
+  >({})
   const [numeroCuotas, setNumeroCuotas] = useState(1)
   const [otroValor, setOtroValor] = useState(false)
   const [valorPago, setValorPago] = useState("")
@@ -336,6 +350,56 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   const [enrutarVenta, setEnrutarVenta] = useState("")
   const [amortizacionTable, setAmortizacionTable] = useState<AmortizationRow[]>([])
   const [showAmortization, setShowAmortization] = useState(false)
+
+  // ── Cuotas que ya vencieron en una venta homologada ─────────────────────
+  // Se calculan con la MISMA fórmula del servidor (lib/loan-schedule.ts es
+  // espejo de `generar_cronograma`), así que lo que se marca aquí es
+  // exactamente lo que quedará en el plan.
+  const cuotasHomologacion = useMemo(() => {
+    if (!ventaHomologada || !fechaInicioHomologada) return []
+    const valorNum = Number.parseFloat(valor)
+    const nCuotas = Number.parseInt(dias)
+    const tasaNum = prestamoEmpleado ? 0 : Number.parseFloat(tasaInteres)
+    if (!(valorNum > 0) || !(nCuotas >= 1)) return []
+    if (!prestamoEmpleado && (!tipoAmortizacion || Number.isNaN(tasaNum))) return []
+    if (!prestamoEmpleado && !frecuenciaPago) return []
+    try {
+      const { schedule } = buildPaymentSchedule({
+        valor: valorNum,
+        tasaInteres: tasaNum,
+        numeroCuotas: nCuotas,
+        frecuenciaPago: (prestamoEmpleado ? "daily" : frecuenciaPago) as Frecuencia,
+        tipoAmortizacion: (prestamoEmpleado ? "empleado" : tipoAmortizacion) as TipoAmortizacion,
+        prestamoEmpleado,
+        fechaInicio: fechaInicioHomologada,
+        diaSemana: diaSemana || null,
+      })
+      const hoy = todayColombia()
+      return schedule.filter((r) => r.fecha_pago <= hoy)
+    } catch (e) {
+      console.warn("[v0] No se pudo simular el cronograma homologado:", e)
+      return []
+    }
+  }, [
+    ventaHomologada, fechaInicioHomologada, valor, dias, tasaInteres,
+    tipoAmortizacion, frecuenciaPago, prestamoEmpleado, diaSemana,
+  ])
+
+  // Marca efectiva de una cuota: lo que eligió el usuario, o "pagó completo"
+  // por defecto (el caso normal al homologar es que venía al día).
+  const marcaDe = (numeroCuota: number, valorCuota: number) =>
+    marcasHomologacion[numeroCuota] ?? { tipo: "pago" as const, monto: String(valorCuota) }
+
+  const resumenHomologacion = useMemo(() => {
+    let pagado = 0
+    let noPagos = 0
+    for (const c of cuotasHomologacion) {
+      const m = marcaDe(c.numero_cuota, c.valor_cuota)
+      if (m.tipo === "pago") pagado += Number.parseFloat(m.monto) || 0
+      else noPagos += 1
+    }
+    return { pagado, noPagos, cuotas: cuotasHomologacion.length }
+  }, [cuotasHomologacion, marcasHomologacion])
 
   // Auto-calculate Saldo (Valor a Pagar) y valor de cuota.
   // - Empleado: sin interes, saldo = valor.
@@ -854,92 +918,61 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         }
       }
 
-      // ── Helpers de fecha (zona horaria local) ─────────────────────────
-      // Formatea un Date a YYYY-MM-DD usando partes LOCALES — evita el bug
-      // clasico de `.toISOString().split("T")[0]` que convierte a UTC y puede
-      // restar un dia segun el huso del navegador (en Colombia/UTC-5 ocurre
-      // cuando el Date se construye con hora 0).
-      const toLocalDateStr = (d: Date): string => {
-        const y = d.getFullYear()
-        const m = String(d.getMonth() + 1).padStart(2, "0")
-        const day = String(d.getDate()).padStart(2, "0")
-        return `${y}-${m}-${day}`
-      }
-      // REGLA DE NEGOCIO: por defecto el plan inicia al dia siguiente de la
-      // venta (hoy + 1). Con "Inicia pagos hoy" marcado arranca el mismo dia.
-      // - Construimos `hoy` desde partes locales para no arrastrar UTC.
-      // - Si el resultado cae en domingo y la frecuencia es diaria, se corre
-      //   al lunes.
-      const todayStr2 = todayColombia()
-      const [y2, m2, d2] = todayStr2.split("-").map(Number)
-      let fechaInicio = new Date(y2, m2 - 1, d2 + (iniciaPagosHoy ? 0 : 1))
-      fechaInicio = siguienteDiaDeCobro(fechaInicio, diasEntrePagos)
+      // ── Fecha de la primera cuota ─────────────────────────────────────
+      // REGLA DE NEGOCIO: por defecto el plan inicia al día siguiente de la
+      // venta. Con "Inicia pagos hoy" arranca el mismo día. En una venta
+      // homologada arranca el día real en que arrancó en el otro sistema.
+      //
+      // El CRONOGRAMA ya no se arma aquí: lo genera el servidor con
+      // `generar_cronograma` (script 045). Antes esta matemática vivía en
+      // tres copias distintas —dos en este archivo y una en la librería—
+      // y divergían entre sí.
+      const hoyStr = todayColombia()
+      const fechaPrimerPago = ventaHomologada && fechaInicioHomologada
+        ? fechaInicioHomologada
+        : sumarDias(hoyStr, iniciaPagosHoy ? 0 : 1)
 
-      const paymentSchedule: Array<{
-        numero_cuota: number
-        fecha_pago: string
-        valor_cuota: number
-        capital: number
-        interes: number
-        saldo: number
-      }> = []
+      // ── Historial de la venta homologada ──────────────────────────────
+      // Un evento por cada día ya vencido: qué pagó y qué no. El servidor
+      // los aplica como gestiones con origen 'homologacion' — cuentan para
+      // el saldo y la mora, pero NO entran en la caja de esos días (esa
+      // plata se recibió en el sistema anterior).
+      const historial = ventaHomologada
+        ? cuotasHomologacion.map((c) => {
+            const m = marcaDe(c.numero_cuota, c.valor_cuota)
+            return {
+              fecha: c.fecha_pago,
+              tipo: m.tipo,
+              monto: m.tipo === "pago" ? Number.parseFloat(m.monto) || 0 : 0,
+            }
+          })
+        : []
 
-      if (prestamoEmpleado) {
-        // Employee loan: no interest, simple daily division
-        const cuotaDiaria = Math.round((valorNum / numeroCuotasNum) * 100) / 100
-        for (let i = 1; i <= numeroCuotasNum; i++) {
-          const fechaPago = fechaDeCuota(fechaInicio, i, diasEntrePagos)
-          paymentSchedule.push({
-            numero_cuota: i,
-            fecha_pago: toLocalDateStr(fechaPago),
-            valor_cuota: cuotaDiaria,
-            capital: cuotaDiaria,
-            interes: 0,
-            saldo: Math.round(Math.max(0, valorNum - cuotaDiaria * i) * 100) / 100,
+      if (ventaHomologada) {
+        if (!fechaInicioHomologada) {
+          toast({
+            title: "Falta la fecha de inicio",
+            description: "Indica en qué fecha arrancó el crédito para poder cargar su historia.",
+            variant: "destructive",
           })
+          return
         }
-      } else if (tipoAmortizacion === "americano") {
-        // Americano (Interes plano): cada cuota paga (valor * tasa) de intereses
-        // y la ultima cuota incluye ademas el capital completo. El campo `saldo`
-        // representa el total pendiente por pagar despues de la cuota:
-        // capital + intereses de las cuotas que aun faltan.
-        const interesPorCuota = Math.round(valorNum * tasaNum * 100) / 100
-        for (let i = 1; i <= numeroCuotasNum; i++) {
-          const fechaPago = fechaDeCuota(fechaInicio, i, diasEntrePagos)
-          const esUltima = i === numeroCuotasNum
-          const capitalCuota = esUltima ? valorNum : 0
-          const cuotaPago = interesPorCuota + capitalCuota
-          const cuotasRestantesFinal = numeroCuotasNum - i
-          const saldoRestante = esUltima
-            ? 0
-            : valorNum + interesPorCuota * cuotasRestantesFinal
-          paymentSchedule.push({
-            numero_cuota: i,
-            fecha_pago: toLocalDateStr(fechaPago),
-            valor_cuota: Math.round(cuotaPago * 100) / 100,
-            capital: Math.round(capitalCuota * 100) / 100,
-            interes: interesPorCuota,
-            saldo: Math.round(saldoRestante * 100) / 100,
+        if (fechaInicioHomologada > hoyStr) {
+          toast({
+            title: "Fecha de inicio inválida",
+            description: "La fecha de inicio de una venta homologada no puede ser futura.",
+            variant: "destructive",
           })
+          return
         }
-      } else {
-        // Alemán – cuota fija simple: saldoTotal / numCuotas
-        const saldoTotalNum = valorNum + valorNum * tasaNum
-        const cuotaFija = Math.round((saldoTotalNum / numeroCuotasNum) * 100) / 100
-        const interesPorCuota = Math.round(((valorNum * tasaNum) / numeroCuotasNum) * 100) / 100
-        const capitalPorCuota = Math.round((valorNum / numeroCuotasNum) * 100) / 100
-        let saldoRestante = saldoTotalNum
-        for (let i = 1; i <= numeroCuotasNum; i++) {
-          const fechaPago = fechaDeCuota(fechaInicio, i, diasEntrePagos)
-          saldoRestante = Math.max(0, saldoRestante - cuotaFija)
-          paymentSchedule.push({
-            numero_cuota: i,
-            fecha_pago: toLocalDateStr(fechaPago),
-            valor_cuota: cuotaFija,
-            capital: capitalPorCuota,
-            interes: interesPorCuota,
-            saldo: Math.round(saldoRestante * 100) / 100,
+        const totalHistorial = historial.reduce((s, h) => s + h.monto, 0)
+        if (totalHistorial > valorAPagarNum) {
+          toast({
+            title: "Los pagos superan el total",
+            description: `Lo marcado como pagado (${fmtMoneda(totalHistorial)}) supera el total a pagar (${fmtMoneda(valorAPagarNum)}).`,
+            variant: "destructive",
           })
+          return
         }
       }
 
@@ -980,7 +1013,14 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         tipo_venta: tipoVenta,
         prestamo_empleado: prestamoEmpleado,
         enrutar_venta: enrutarVenta || null,
-        fecha_primer_pago: toLocalDateStr(fechaInicio),
+        cuenta_id: tipoVenta === "transferencia" && cuentaId ? cuentaId : null,
+        fecha_primer_pago: fechaPrimerPago,
+        // Fecha del DISPOSITIVO: si la venta se sincroniza mañana, el abono
+        // inicial debe quedar en el día en que el cliente entregó la plata,
+        // no en el día en que el servidor la recibió.
+        fecha_dispositivo: hoyStr,
+        // Historia de la venta homologada (vacío en una venta normal).
+        historial,
         // Abono inicial ("Pago adelantado"). Viaja DENTRO de p_loan igual que
         // la llave de idempotencia, para no cambiar la firma de la RPC — que
         // tiene otros callers, como la aprobacion de solicitudes.
@@ -992,16 +1032,10 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         abono_inicial: abonoInicialNum,
       }
 
-      // ── Construir p_payment_plan (array de cuotas amortizadas) ────────
-      const p_payment_plan = paymentSchedule.map((row) => ({
-        numero_cuota: row.numero_cuota,
-        fecha_pago: row.fecha_pago,
-        valor_cuota: row.valor_cuota,
-        capital: row.capital,
-        interes: row.interes,
-        saldo: row.saldo,
-        estado: "pendiente",
-      }))
+      // El plan lo genera el servidor: se manda vacío. Ver `crear_venta_atomica`
+      // en el script 045 — si llegara con filas las respeta (compatibilidad
+      // con dispositivos que aún tengan la versión anterior en su cola).
+      const p_payment_plan: unknown[] = []
 
       // ── Leer credenciales del usuario desde localStorage ──────────────
       // currentUser y selectedRuta los persiste el shell (app/page.tsx).
@@ -1712,27 +1746,189 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
           )}
 
           {/* Cuando arranca el cobro */}
+          {!ventaHomologada && (
+            <label
+              htmlFor="iniciaPagosHoy"
+              className={`flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all border ${
+                iniciaPagosHoy
+                  ? "bg-amber-100 border-amber-400 text-amber-800"
+                  : "bg-muted/50 border-border hover:bg-muted"
+              }`}
+            >
+              <Checkbox
+                id="iniciaPagosHoy"
+                checked={iniciaPagosHoy}
+                onCheckedChange={(checked) => setIniciaPagosHoy(checked as boolean)}
+                className="h-4 w-4 md:h-5 md:w-5"
+              />
+              <span className="text-[11px] md:text-sm font-medium">
+                Inicia pagos hoy
+                <span className="ml-1 font-normal opacity-80">
+                  (por defecto la primera cuota es mañana)
+                </span>
+              </span>
+            </label>
+          )}
+
+          {/* ── Venta homologada (crédito que ya venía corriendo) ────────── */}
           <label
-            htmlFor="iniciaPagosHoy"
+            htmlFor="ventaHomologada"
             className={`flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all border ${
-              iniciaPagosHoy
-                ? "bg-amber-100 border-amber-400 text-amber-800"
+              ventaHomologada
+                ? "bg-violet-100 border-violet-400 text-violet-800"
                 : "bg-muted/50 border-border hover:bg-muted"
             }`}
           >
             <Checkbox
-              id="iniciaPagosHoy"
-              checked={iniciaPagosHoy}
-              onCheckedChange={(checked) => setIniciaPagosHoy(checked as boolean)}
+              id="ventaHomologada"
+              checked={ventaHomologada}
+              onCheckedChange={(checked) => {
+                const v = checked as boolean
+                setVentaHomologada(v)
+                if (v) setIniciaPagosHoy(false)
+                else { setFechaInicioHomologada(""); setMarcasHomologacion({}) }
+              }}
               className="h-4 w-4 md:h-5 md:w-5"
             />
             <span className="text-[11px] md:text-sm font-medium">
-              Inicia pagos hoy
+              Venta homologada
               <span className="ml-1 font-normal opacity-80">
-                (por defecto la primera cuota es mañana)
+                (crédito que ya venía corriendo en otro sistema)
               </span>
             </span>
           </label>
+
+          {ventaHomologada && (
+            <div className="rounded-lg border border-violet-300 bg-violet-50/60 p-3 space-y-3">
+              <p className="text-[11px] md:text-sm text-violet-900">
+                Indica cuándo arrancó el crédito y marca qué días pagó y cuáles no.
+                Con eso el saldo, la mora y el conteo de cuotas quedan reales al día de hoy.
+                Estos pagos <strong>no entran en la caja</strong>: esa plata se recibió en el otro sistema.
+              </p>
+
+              <div className="grid gap-1.5">
+                <Label htmlFor="fechaInicioHomologada" className="text-[11px] md:text-sm">
+                  Fecha de la primera cuota
+                </Label>
+                <Input
+                  id="fechaInicioHomologada"
+                  type="date"
+                  max={todayColombia()}
+                  value={fechaInicioHomologada}
+                  onChange={(e) => { setFechaInicioHomologada(e.target.value); setMarcasHomologacion({}) }}
+                  className="h-8 md:h-10 text-[11px] md:text-sm"
+                />
+              </div>
+
+              {cuotasHomologacion.length === 0 && fechaInicioHomologada && (
+                <p className="text-[11px] md:text-sm text-violet-900">
+                  Completa el valor, las cuotas y la tasa para ver las cuotas ya vencidas.
+                </p>
+              )}
+
+              {cuotasHomologacion.length > 0 && (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] md:text-sm font-medium text-violet-900">
+                      {cuotasHomologacion.length} cuota{cuotasHomologacion.length === 1 ? "" : "s"} ya vencida{cuotasHomologacion.length === 1 ? "" : "s"}
+                    </span>
+                    <Button
+                      type="button" variant="outline" size="sm"
+                      className="h-7 text-[11px]"
+                      onClick={() => setMarcasHomologacion({})}
+                    >
+                      Marcar todas como pagadas
+                    </Button>
+                    <Button
+                      type="button" variant="outline" size="sm"
+                      className="h-7 text-[11px]"
+                      onClick={() => {
+                        const todas: Record<number, { tipo: "pago" | "no_pago"; monto: string }> = {}
+                        for (const c of cuotasHomologacion) todas[c.numero_cuota] = { tipo: "no_pago", monto: "0" }
+                        setMarcasHomologacion(todas)
+                      }}
+                    >
+                      Marcar todas como no pago
+                    </Button>
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto rounded-md border border-violet-200 bg-background">
+                    <table className="w-full text-[11px] md:text-sm">
+                      <thead className="sticky top-0 bg-violet-100 text-violet-900">
+                        <tr>
+                          <th className="px-2 py-1.5 text-left font-medium">#</th>
+                          <th className="px-2 py-1.5 text-left font-medium">Vencía</th>
+                          <th className="px-2 py-1.5 text-right font-medium">Cuota</th>
+                          <th className="px-2 py-1.5 text-center font-medium">¿Pagó?</th>
+                          <th className="px-2 py-1.5 text-right font-medium">Abonó</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cuotasHomologacion.map((c) => {
+                          const m = marcaDe(c.numero_cuota, c.valor_cuota)
+                          const pago = m.tipo === "pago"
+                          return (
+                            <tr key={c.numero_cuota} className="border-t border-violet-100">
+                              <td className="px-2 py-1 text-muted-foreground">{c.numero_cuota}</td>
+                              <td className="px-2 py-1">{fmtFecha(c.fecha_pago)}</td>
+                              <td className="px-2 py-1 text-right">{fmtMoneda(c.valor_cuota)}</td>
+                              <td className="px-2 py-1">
+                                <div className="flex justify-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setMarcasHomologacion((p) => ({
+                                      ...p, [c.numero_cuota]: { tipo: "pago", monto: String(c.valor_cuota) },
+                                    }))}
+                                    className={`rounded px-2 py-0.5 text-[10px] md:text-xs font-medium transition-colors ${
+                                      pago ? "bg-green-600 text-white" : "bg-muted text-muted-foreground hover:bg-green-100"
+                                    }`}
+                                  >
+                                    Pagó
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setMarcasHomologacion((p) => ({
+                                      ...p, [c.numero_cuota]: { tipo: "no_pago", monto: "0" },
+                                    }))}
+                                    className={`rounded px-2 py-0.5 text-[10px] md:text-xs font-medium transition-colors ${
+                                      !pago ? "bg-amber-600 text-white" : "bg-muted text-muted-foreground hover:bg-amber-100"
+                                    }`}
+                                  >
+                                    No pagó
+                                  </button>
+                                </div>
+                              </td>
+                              <td className="px-2 py-1 text-right">
+                                <Input
+                                  type="number" inputMode="decimal" min="0" disabled={!pago}
+                                  value={pago ? m.monto : "0"}
+                                  onChange={(e) => setMarcasHomologacion((p) => ({
+                                    ...p, [c.numero_cuota]: { tipo: "pago", monto: e.target.value },
+                                  }))}
+                                  className="h-7 w-24 ml-auto text-right text-[11px] md:text-sm"
+                                />
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex flex-wrap justify-between gap-2 rounded-md bg-violet-100 px-3 py-2 text-[11px] md:text-sm text-violet-900">
+                    <span>Ya abonado: <strong>{fmtMoneda(resumenHomologacion.pagado)}</strong></span>
+                    <span>No pagos: <strong>{resumenHomologacion.noPagos}</strong></span>
+                    <span>
+                      Saldo al crearla:{" "}
+                      <strong>
+                        {fmtMoneda(Math.max(0, (Number.parseFloat(valorAPagar) || 0) - resumenHomologacion.pagado))}
+                      </strong>
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Pago Adelantado - Préstamo Empleado Checkboxes */}
           <div className="grid gap-2 md:gap-4 grid-cols-2">
