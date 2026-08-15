@@ -32,6 +32,16 @@
 -- ============================================================================
 
 
+-- ── PASO 0) Soltar la versión anterior de la vista ────────────────────────
+-- `CREATE OR REPLACE VIEW` sabe agregar columnas al final, pero NO sabe
+-- renombrarlas ni reordenarlas: si una versión nueva mete una columna en el
+-- medio, falla con «cannot change name of view column X to Y».
+-- Soltarla primero hace que este script se pueda volver a correr siempre.
+-- Es seguro: ninguna otra vista ni función depende de ella (la app la
+-- consulta en caliente, no es una dependencia de la base).
+DROP VIEW IF EXISTS public.resumen_diario_v2;
+
+
 -- ── PASO 1) resumen_diario_v2 ─────────────────────────────────────────────
 CREATE OR REPLACE VIEW public.resumen_diario_v2 AS
 WITH pagos AS (
@@ -118,13 +128,6 @@ base AS (
                       AND v.ruta  = COALESCE(p.ruta,  m.ruta,  g.ruta)
 )
 SELECT b.*,
-       -- Alias con los nombres de la vista vieja: ahí los conteos de caja se
-       -- llamaban `recuento_*` mientras los de pagos y ventas se llamaban
-       -- `cantidad_*`. Se conservan los dos para que ninguna pantalla quede
-       -- colgada, pero los nombres buenos son los `cantidad_*`.
-       b.cantidad_ingresos AS recuento_ingresos,
-       b.cantidad_gastos   AS recuento_gastos,
-       b.cantidad_retiros  AS recuento_retiros,
        SUM(b.valor_ingresos + b.valor_pago - b.valor_ventas
            - b.valor_gastos - b.valor_retiros)
          OVER (PARTITION BY b.ruta ORDER BY b.fecha_pago)   AS efectivo,
@@ -132,7 +135,19 @@ SELECT b.*,
            - b.valor_gastos - b.valor_retiros)
          OVER (PARTITION BY b.ruta ORDER BY b.fecha_pago)
        - (b.valor_ingresos + b.valor_pago - b.valor_ventas
-          - b.valor_gastos - b.valor_retiros)               AS caja_anterior
+          - b.valor_gastos - b.valor_retiros)               AS caja_anterior,
+       -- Alias con los nombres de la vista vieja: ahí los conteos de caja se
+       -- llamaban `recuento_*` mientras los de pagos y ventas se llamaban
+       -- `cantidad_*`. Se conservan los dos para que ninguna pantalla quede
+       -- colgada, pero los nombres buenos son los `cantidad_*`.
+       --
+       -- VAN AL FINAL A PROPÓSITO: `CREATE OR REPLACE VIEW` permite AGREGAR
+       -- columnas al final, pero no renombrarlas ni reordenarlas. Ponerlas
+       -- antes de `efectivo` hacía fallar el reemplazo con
+       -- «cannot change name of view column "efectivo" to "recuento_ingresos"».
+       b.cantidad_ingresos AS recuento_ingresos,
+       b.cantidad_gastos   AS recuento_gastos,
+       b.cantidad_retiros  AS recuento_retiros
   FROM base b
  ORDER BY b.fecha_pago DESC, b.ruta;
 
