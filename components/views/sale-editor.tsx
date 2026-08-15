@@ -95,6 +95,7 @@ import {
   Info,
   ListChecks,
   Loader2,
+  MapPin,
   Plus,
   RotateCcw,
   Save,
@@ -235,6 +236,10 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
   const [cargandoLista, setCargandoLista] = useState(true)
   const [busqueda, setBusqueda] = useState("")
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>("activos")
+  // Filtro de ruta: secretaría atiende varias, y el préstamo que hay que
+  // corregir no tiene por qué estar en la que uno tenga abierta.
+  const [rutas, setRutas] = useState<{ id: number; nombre: string }[]>([])
+  const [rutaFiltro, setRutaFiltro] = useState<number | "todas">(currentRutaId)
 
   // Préstamo abierto
   const [loanId, setLoanId] = useState<string | null>(loanIdInicial ?? null)
@@ -322,18 +327,39 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
     }
   }, [currentRutaId])
 
-  // ── Listado de préstamos de la ruta ───────────────────────────────────────
+  // ── Catálogo de rutas ─────────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelado = false
+    getSupabaseSafe()
+      .then((supabase) => supabase.from("rutas").select("id, nombre").order("id"))
+      .then(({ data }) => {
+        if (!cancelado) setRutas((data ?? []) as { id: number; nombre: string }[])
+      })
+      .catch((err) => console.error("[v0] SaleEditor rutas error:", err))
+    return () => {
+      cancelado = true
+    }
+  }, [])
+
+  const nombreRuta = useCallback(
+    (id: number) => rutas.find((r) => r.id === id)?.nombre ?? `Ruta ${id}`,
+    [rutas],
+  )
+
+  // ── Listado de préstamos de la ruta elegida ───────────────────────────────
   useEffect(() => {
     let cancelado = false
     ;(async () => {
       setCargandoLista(true)
       try {
         const supabase = await getSupabaseSafe()
-        const { data, error } = await supabase
+        let q = supabase
           .from("loans")
           .select(COLUMNAS_LOAN)
-          .eq("ruta", currentRutaId)
           .order("fecha_creacion", { ascending: false })
+        // Sin RLS, el filtro por ruta es responsabilidad de la app.
+        if (rutaFiltro !== "todas") q = q.eq("ruta", rutaFiltro)
+        const { data, error } = await q
         if (cancelado) return
         if (error) throw error
         setPrestamos((data ?? []).map(mapPrestamo))
@@ -346,7 +372,7 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
     return () => {
       cancelado = true
     }
-  }, [currentRutaId, errorToast])
+  }, [rutaFiltro, errorToast])
 
   // ── Detalle del préstamo abierto ──────────────────────────────────────────
   const cargarDetalle = useCallback(
@@ -355,7 +381,9 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
       try {
         const supabase = await getSupabaseSafe()
         const [resPrestamo, resFin, resCuotas, resPlan, resGestiones] = await Promise.all([
-          supabase.from("loans").select(COLUMNAS_LOAN).eq("id", id).eq("ruta", currentRutaId).maybeSingle(),
+          // Se busca por id, sin atar a una ruta: este módulo trabaja sobre
+          // todas y el préstamo se eligió de una lista que el usuario ya vio.
+          supabase.from("loans").select(COLUMNAS_LOAN).eq("id", id).maybeSingle(),
           supabase.from("v_loan_financiero").select(COLUMNAS_FINANCIERO).eq("loan_id", id).maybeSingle(),
           supabase
             .from("v_cobertura_cuotas")
@@ -369,7 +397,7 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
 
         if (resPrestamo.error) throw resPrestamo.error
         if (!resPrestamo.data) {
-          throw new Error("El préstamo no existe o no pertenece a esta ruta.")
+          throw new Error("El préstamo no existe.")
         }
         setPrestamo(mapPrestamo(resPrestamo.data))
 
@@ -805,14 +833,33 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
 
         <Card>
           <CardContent className="p-3 md:p-4 space-y-3">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar por apodo, nombre o documento..."
-                value={busqueda}
-                onChange={(e) => setBusqueda(e.target.value)}
-                className="pl-8 h-9"
-              />
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar por apodo, nombre o documento..."
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                  className="pl-8 h-9"
+                />
+              </div>
+              <Select
+                value={String(rutaFiltro)}
+                onValueChange={(v) => setRutaFiltro(v === "todas" ? "todas" : Number(v))}
+              >
+                <SelectTrigger className="h-9 w-full sm:w-52">
+                  <MapPin className="h-3.5 w-3.5 mr-1.5 shrink-0 text-muted-foreground" />
+                  <SelectValue placeholder="Ruta" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas las rutas</SelectItem>
+                  {rutas.map((r) => (
+                    <SelectItem key={r.id} value={String(r.id)}>
+                      {r.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {([

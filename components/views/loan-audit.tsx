@@ -39,6 +39,13 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Separator } from "@/components/ui/separator"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -66,6 +73,7 @@ import {
   FileSearch,
   History,
   Loader2,
+  MapPin,
   RefreshCw,
   Search,
   Wallet,
@@ -171,6 +179,7 @@ interface LoanBusqueda {
   numero_cuotas: number
   origen: string
   fecha_creacion: string | null
+  ruta: number | null
   nombre: string
   apodo: string | null
   documento: string
@@ -547,6 +556,11 @@ export function LoanAudit({ currentRutaId, loanIdInicial, onBack }: LoanAuditPro
   const [cargandoLista, setCargandoLista] = useState(true)
   const [errorLista, setErrorLista] = useState<string | null>(null)
   const [termino, setTermino] = useState("")
+  // Filtro de ruta. Arranca en la ruta de la sesión, pero secretaría atiende
+  // varias: cuando un cobrador reclama por un número, no tiene por qué ser de
+  // la ruta que uno tenga abierta. "todas" busca en la cartera completa.
+  const [rutas, setRutas] = useState<{ id: number; nombre: string }[]>([])
+  const [rutaFiltro, setRutaFiltro] = useState<number | "todas">(currentRutaId)
 
   // ── Préstamo auditado ────────────────────────────────────────────────
   const [loanId, setLoanId] = useState<string | null>(loanIdInicial ?? null)
@@ -557,7 +571,21 @@ export function LoanAudit({ currentRutaId, loanIdInicial, onBack }: LoanAuditPro
   const [soloMovimiento, setSoloMovimiento] = useState(true)
   const [detalleAbierto, setDetalleAbierto] = useState<AudEvento | null>(null)
 
-  // ── Préstamos de la ruta ─────────────────────────────────────────────
+  // ── Catálogo de rutas ────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelado = false
+    getSupabaseSafe()
+      .then((supabase) => supabase.from("rutas").select("id, nombre").order("id"))
+      .then(({ data }) => {
+        if (!cancelado) setRutas((data ?? []) as { id: number; nombre: string }[])
+      })
+      .catch((err) => console.error("[v0] LoanAudit rutas error:", err))
+    return () => {
+      cancelado = true
+    }
+  }, [])
+
+  // ── Préstamos de la ruta elegida ─────────────────────────────────────
   useEffect(() => {
     let cancelado = false
     const cargar = async () => {
@@ -565,15 +593,18 @@ export function LoanAudit({ currentRutaId, loanIdInicial, onBack }: LoanAuditPro
       setErrorLista(null)
       try {
         const supabase = await getSupabaseSafe()
-        const { data, error } = await supabase
+        let q = supabase
           .from("loans")
           .select(
-            "id, valor, saldo, estado, numero_cuotas, origen, fecha_creacion, " +
+            "id, valor, saldo, estado, numero_cuotas, origen, fecha_creacion, ruta, " +
               "clients:clients(nombre_completo, apodo, documento)",
           )
-          .eq("ruta", currentRutaId)
           .order("fecha_creacion", { ascending: false })
           .limit(500)
+        // Sin RLS, el filtro por ruta es responsabilidad de la app.
+        if (rutaFiltro !== "todas") q = q.eq("ruta", rutaFiltro)
+
+        const { data, error } = await q
         if (cancelado) return
         if (error) throw new Error(error.message)
 
@@ -586,6 +617,7 @@ export function LoanAudit({ currentRutaId, loanIdInicial, onBack }: LoanAuditPro
           numero_cuotas: n(l.numero_cuotas),
           origen: l.origen ?? "normal",
           fecha_creacion: l.fecha_creacion ?? null,
+          ruta: l.ruta ?? null,
           nombre: l.clients?.nombre_completo ?? "Sin nombre",
           apodo: l.clients?.apodo ?? null,
           documento: l.clients?.documento ?? "",
@@ -606,7 +638,7 @@ export function LoanAudit({ currentRutaId, loanIdInicial, onBack }: LoanAuditPro
     return () => {
       cancelado = true
     }
-  }, [currentRutaId])
+  }, [rutaFiltro])
 
   // Si el padre cambia el préstamo inicial, se sigue.
   useEffect(() => {
@@ -649,6 +681,11 @@ export function LoanAudit({ currentRutaId, loanIdInicial, onBack }: LoanAuditPro
     }
     cargarAuditoria(loanId)
   }, [loanId, cargarAuditoria])
+
+  const nombreRuta = useCallback(
+    (id: number) => rutas.find((r) => r.id === id)?.nombre ?? `Ruta ${id}`,
+    [rutas],
+  )
 
   // ── Filtrado del buscador ────────────────────────────────────────────
   const resultados = useMemo(() => {
@@ -731,16 +768,42 @@ export function LoanAudit({ currentRutaId, loanIdInicial, onBack }: LoanAuditPro
         {encabezado}
 
         <Card>
-          <CardContent className="p-3 md:p-4">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar por apodo, nombre o documento..."
-                value={termino}
-                onChange={(e) => setTermino(e.target.value)}
-                className="pl-8 h-9"
-              />
+          <CardContent className="p-3 md:p-4 space-y-2">
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar por apodo, nombre o documento..."
+                  value={termino}
+                  onChange={(e) => setTermino(e.target.value)}
+                  className="pl-8 h-9"
+                />
+              </div>
+              <Select
+                value={String(rutaFiltro)}
+                onValueChange={(v) => setRutaFiltro(v === "todas" ? "todas" : Number(v))}
+              >
+                <SelectTrigger className="h-9 w-full sm:w-52">
+                  <MapPin className="h-3.5 w-3.5 mr-1.5 shrink-0 text-muted-foreground" />
+                  <SelectValue placeholder="Ruta" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas las rutas</SelectItem>
+                  {rutas.map((r) => (
+                    <SelectItem key={r.id} value={String(r.id)}>
+                      {r.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
+            <p className="text-[11px] text-muted-foreground">
+              {cargandoLista
+                ? "Cargando préstamos..."
+                : `${prestamos.length} préstamo${prestamos.length === 1 ? "" : "s"} en ${
+                    rutaFiltro === "todas" ? "todas las rutas" : nombreRuta(rutaFiltro)
+                  }${prestamos.length >= 500 ? " (se muestran los 500 más recientes)" : ""}`}
+            </p>
           </CardContent>
         </Card>
 
@@ -763,8 +826,20 @@ export function LoanAudit({ currentRutaId, loanIdInicial, onBack }: LoanAuditPro
                 <span className="text-sm">
                   {termino
                     ? "Ningún préstamo coincide con la búsqueda."
-                    : "Esta ruta no tiene préstamos registrados."}
+                    : rutaFiltro === "todas"
+                      ? "No hay préstamos registrados."
+                      : `${nombreRuta(rutaFiltro)} no tiene préstamos registrados.`}
                 </span>
+                {termino && rutaFiltro !== "todas" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-1 h-7 text-xs"
+                    onClick={() => setRutaFiltro("todas")}
+                  >
+                    Buscar en todas las rutas
+                  </Button>
+                )}
               </div>
             ) : (
               <ul className="divide-y">
@@ -786,6 +861,14 @@ export function LoanAudit({ currentRutaId, loanIdInicial, onBack }: LoanAuditPro
                           {p.estado !== "activo" && (
                             <Badge variant="secondary" className="text-[9px] px-1.5 py-0">
                               {p.estado}
+                            </Badge>
+                          )}
+                          {/* Al buscar en todas las rutas hay que poder ver de
+                              cuál es cada préstamo: dos clientes distintos
+                              pueden llamarse igual en rutas distintas. */}
+                          {rutaFiltro === "todas" && p.ruta != null && (
+                            <Badge variant="outline" className="text-[9px] px-1.5 py-0">
+                              {nombreRuta(p.ruta)}
                             </Badge>
                           )}
                           {p.origen === "homologado" && (
