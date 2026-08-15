@@ -19,7 +19,7 @@ import { Barcode as BarCode, X, Loader2, UserPlus, AlertCircle, CheckCircle2, Ch
 // de session vars RLS perdidas entre peticiones HTTP stateless.
 import { createClient } from "@/lib/supabase/client"
 import { todayColombia } from "@/lib/colombia-date"
-import { fmtFecha, fmtMoneda, sumarDias } from "@/lib/gestion-core"
+import { fmtFecha, fmtMoneda, sumarDias, ayerColombia } from "@/lib/gestion-core"
 import { buildPaymentSchedule, type Frecuencia, type TipoAmortizacion } from "@/lib/loan-schedule"
 import { useToast } from "@/hooks/use-toast"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre } from "@/lib/ruta-umbrales"
@@ -374,8 +374,11 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         fechaInicio: fechaInicioHomologada,
         diaSemana: diaSemana || null,
       })
-      const hoy = todayColombia()
-      return schedule.filter((r) => r.fecha_pago <= hoy)
+      // Hasta AYER, no hasta hoy: la homologación carga la HISTORIA del
+      // crédito. La cuota de hoy queda pendiente para gestionarse en la ruta
+      // como la de cualquier otro cliente — si se pudiera marcar aquí, el
+      // cliente nacería ya gestionado y desaparecería de la lista del día.
+      return schedule.filter((r) => r.fecha_pago <= ayerColombia())
     } catch (e) {
       console.warn("[v0] No se pudo simular el cronograma homologado:", e)
       return []
@@ -1801,9 +1804,14 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
           {ventaHomologada && (
             <div className="rounded-lg border border-violet-300 bg-violet-50/60 p-3 space-y-3">
               <p className="text-[11px] md:text-sm text-violet-900">
-                Indica cuándo arrancó el crédito y marca qué días pagó y cuáles no.
-                Con eso el saldo, la mora y el conteo de cuotas quedan reales al día de hoy.
-                Estos pagos <strong>no entran en la caja</strong>: esa plata se recibió en el otro sistema.
+                Indica cuándo arrancó el crédito y marca qué días pagó y cuáles no,
+                <strong> hasta ayer</strong>. Con eso el saldo, la mora y el conteo de cuotas
+                quedan reales al día de hoy. Estos pagos <strong>no entran en la caja</strong>:
+                esa plata se recibió en el otro sistema.
+              </p>
+              <p className="text-[11px] md:text-sm text-violet-900">
+                La cuota de <strong>hoy</strong> no se marca aquí: queda pendiente y el cobrador
+                le registra el pago o el no pago en la ruta, como a cualquier otro cliente.
               </p>
 
               <div className="grid gap-1.5">
@@ -1813,16 +1821,22 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                 <Input
                   id="fechaInicioHomologada"
                   type="date"
-                  max={todayColombia()}
+                  max={ayerColombia()}
                   value={fechaInicioHomologada}
                   onChange={(e) => { setFechaInicioHomologada(e.target.value); setMarcasHomologacion({}) }}
                   className="h-8 md:h-10 text-[11px] md:text-sm"
                 />
+                <p className="text-[10px] md:text-xs text-violet-800/80">
+                  Tiene que ser una fecha anterior a hoy. Si el crédito arranca hoy no es una
+                  homologación: es una venta normal con &quot;Inicia pagos hoy&quot;.
+                </p>
               </div>
 
               {cuotasHomologacion.length === 0 && fechaInicioHomologada && (
                 <p className="text-[11px] md:text-sm text-violet-900">
-                  Completa el valor, las cuotas y la tasa para ver las cuotas ya vencidas.
+                  {fechaInicioHomologada >= todayColombia()
+                    ? "Esa fecha no deja ninguna cuota vencida. Elige una fecha anterior a hoy, o desmarca la casilla y usa \"Inicia pagos hoy\"."
+                    : "Completa el valor, las cuotas y la tasa para ver las cuotas ya vencidas."}
                 </p>
               )}
 
@@ -1830,7 +1844,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                 <>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[11px] md:text-sm font-medium text-violet-900">
-                      {cuotasHomologacion.length} cuota{cuotasHomologacion.length === 1 ? "" : "s"} ya vencida{cuotasHomologacion.length === 1 ? "" : "s"}
+                      {cuotasHomologacion.length} cuota{cuotasHomologacion.length === 1 ? "" : "s"} vencida{cuotasHomologacion.length === 1 ? "" : "s"} hasta ayer
                     </span>
                     <Button
                       type="button" variant="outline" size="sm"
