@@ -869,8 +869,19 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
               <div key={doc.id} className="group relative flex flex-col gap-1.5 rounded-xl border bg-card p-2.5">
                 <button type="button" onClick={() => openPreview(doc)} className="flex flex-col items-center gap-1.5 text-left">
                   {doc.tipo_mime?.startsWith("image/") ? (
+                    // `object-contain`, NO `object-cover`. Con cover la miniatura
+                    // se recortaba para llenar la caja: en el celular, donde la
+                    // caja es angosta, de una cedula o un recibo solo se veia la
+                    // franja del centro y no se distinguia un documento de otro.
+                    // Ahora entra completa y sobra fondo a los lados — el mismo
+                    // `bg-muted` que usa el recuadro del icono de archivo, para
+                    // que el borde sobrante se lea como parte del marco.
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={doc.url} alt={doc.nombre_archivo} className={`${GRID_SIZE_CONFIG[iconSize].thumbClass} w-full object-cover rounded-lg`} />
+                    <img
+                      src={doc.url}
+                      alt={doc.nombre_archivo}
+                      className={`${GRID_SIZE_CONFIG[iconSize].thumbClass} w-full object-contain rounded-lg bg-muted`}
+                    />
                   ) : (
                     <div className={`flex ${GRID_SIZE_CONFIG[iconSize].thumbClass} w-full items-center justify-center rounded-lg bg-muted`}>
                       <Icon className={`h-8 w-8 ${className}`} />
@@ -936,8 +947,9 @@ export function DocumentosView({ currentUser }: DocumentosViewProps) {
                 <button type="button" onClick={() => openPreview(doc)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
                   <span className="shrink-0">
                     {doc.tipo_mime?.startsWith("image/") ? (
+                      // Misma regla en la vista de lista: entra completa.
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={doc.url} alt={doc.nombre_archivo} className="h-9 w-9 object-cover rounded-md" />
+                      <img src={doc.url} alt={doc.nombre_archivo} className="h-9 w-9 object-contain rounded-md bg-muted" />
                     ) : (
                       <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
                         <Icon className={`h-4 w-4 ${className}`} />
