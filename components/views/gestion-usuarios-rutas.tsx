@@ -426,45 +426,71 @@ function RutasTab() {
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {rutas.length === 0 && (
-            <div className="col-span-full py-10 text-center text-sm text-muted-foreground">
-              No hay rutas registradas
-            </div>
-          )}
-          {rutas.map((r) => (
-            <div key={r.id} className="group relative rounded-xl border border-border bg-card p-4 hover:border-brand/40 transition-colors">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
-                    <RouteIcon className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-semibold text-sm leading-tight truncate">{r.nombre}</p>
-                    <p className="text-[10px] font-bold text-muted-foreground">Ruta #{r.id}</p>
-                  </div>
-                </div>
-                <div className="flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Button variant="ghost" size="icon" className="h-7 w-7" title="Editar" onClick={() => openEdit(r)}>
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" title="Eliminar" onClick={() => setConfirmDeleteId(r.id)}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </div>
-              {(r.ciudad || r.pais) && (
-                <div className="mt-2.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                  {r.ciudad && (
-                    <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{r.ciudad}</span>
-                  )}
-                  {r.pais && (
-                    <span className="flex items-center gap-1"><Globe2 className="h-3 w-3" />{r.pais}</span>
-                  )}
-                </div>
+        // Listado, no tarjetas: con muchas rutas la grilla obligaba a barrer
+        // la pantalla en dos ejes para encontrar una. Mismo formato que la
+        // pestaña Usuarios — una fila por ruta, escaneable de arriba abajo.
+        <div className="rounded-xl border border-border overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50 border-b border-border">
+              <tr>
+                <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Ruta</th>
+                <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden sm:table-cell">Ciudad</th>
+                <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell">País</th>
+                <th className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {rutas.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-3 py-10 text-center text-sm text-muted-foreground">
+                    No hay rutas registradas
+                  </td>
+                </tr>
               )}
-            </div>
-          ))}
+              {rutas.map((r) => (
+                <tr key={r.id} className="hover:bg-muted/20 transition-colors">
+                  <td className="px-3 py-2.5">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                        <RouteIcon className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm leading-tight truncate">{r.nombre}</p>
+                        {/* Ciudad y país se caen en pantallas chicas: se
+                            repiten aquí para que la fila no quede coja. */}
+                        <p className="text-[10px] font-bold text-muted-foreground sm:hidden">
+                          Ruta #{r.id}
+                          {r.ciudad ? ` · ${r.ciudad}` : ""}
+                          {r.pais ? ` · ${r.pais}` : ""}
+                        </p>
+                        <p className="text-[10px] font-bold text-muted-foreground hidden sm:block">Ruta #{r.id}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2.5 text-muted-foreground text-xs hidden sm:table-cell">
+                    {r.ciudad ? (
+                      <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{r.ciudad}</span>
+                    ) : "—"}
+                  </td>
+                  <td className="px-3 py-2.5 text-muted-foreground text-xs hidden md:table-cell">
+                    {r.pais ? (
+                      <span className="flex items-center gap-1"><Globe2 className="h-3 w-3" />{r.pais}</span>
+                    ) : "—"}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <div className="flex items-center justify-end gap-0.5">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" title="Editar" onClick={() => openEdit(r)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" title="Eliminar" onClick={() => setConfirmDeleteId(r.id)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
