@@ -161,11 +161,11 @@ export function RutaNoIniciada({
       </div>
       <div className="flex flex-col items-center gap-2">
         <h2 className="text-xl font-bold text-foreground">
-          {estado === "cerrada" ? "Ruta cerrada" : "Ruta no iniciada"}
+          {estado === "cerrada" ? "Jornada cerrada" : "Ruta no iniciada"}
         </h2>
         <p className="max-w-sm text-sm text-muted-foreground leading-relaxed">
           {estado === "cerrada"
-            ? "La jornada de hoy ya se cerró. Contacta al administrador si necesitas reabrirla."
+            ? "La caja de hoy ya se cuadró y se cerró. No se pueden registrar más movimientos hasta mañana, cuando inicies la ruta de nuevo. Si necesitas reabrir el día, contacta al administrador."
             : mensaje}
         </p>
       </div>
