@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DollarSign, X, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, RotateCcw, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown } from "lucide-react"
+import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
@@ -546,9 +547,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // Cuando la lista se sirve desde el dispositivo (sin señal), guarda el
   // momento en que esos datos se trajeron del servidor. null = datos frescos.
   const [datosDesdeCache, setDatosDesdeCache] = useState<string | null>(null)
-
-  // Estado para iniciar la ruta del dia desde el guard
-  const [iniciandoRuta, setIniciandoRuta] = useState(false)
 
   // Token monotonico para descartar respuestas obsoletas / concurrentes de fetchData.
   // Cada llamada incrementa el token; las respuestas con token distinto al actual
@@ -2406,183 +2404,21 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     return "text-red-700 bg-red-100"
   }
 
-  // Iniciar ruta del dia. Es idempotente: si ya existe la fila en rutas_diarias
-  // (porque otro flujo, otra pestana o Resumen del Dia ya la creo) recupera el
-  // estado real con SELECT y sincroniza el guard, en vez de fallar al usuario.
-  const handleIniciarRutaInline = async () => {
-    if (iniciandoRuta) return
-    // Abrir la jornada SI necesita servidor: es la fila que despues consultan
-    // el cierre de caja y el monitoreo del admin, y encolarla dejaria a dos
-    // dispositivos creyendo cada uno que abrio la ruta. Lo que si funciona
-    // sin señal es SEGUIR trabajando una ruta ya abierta: el estado queda
-    // guardado en el dispositivo.
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      toast({
-        title: "Sin conexión",
-        description: "Para iniciar la ruta necesitas señal. Si ya la habías iniciado hoy, vuelve a abrir la app con señal una vez y podrás seguir trabajando sin conexión.",
-        variant: "destructive",
-      })
-      return
-    }
-    try {
-      setIniciandoRuta(true)
-      // Centralizado en `safeQuery`: garantiza RLS lista o redirige al login.
-      const supabase = await getSupabaseSafe()
-      // Fecha hoy en zona Colombia (YYYY-MM-DD)
-      const fechaHoy = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "America/Bogota",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      }).format(new Date())
-
-      // 1) Verificar primero si ya existe una fila para hoy.
-      const { data: existente, error: errorSelect } = await supabase
-        .from("rutas_diarias")
-        .select("id, estado")
-        .eq("ruta_id", currentRutaId)
-        .eq("fecha", fechaHoy)
-        .maybeSingle()
-
-      if (errorSelect) {
-        console.error("[v0] Error consultando rutas_diarias:", errorSelect.message)
-      }
-
-      if (existente) {
-        const estadoExistente = existente.estado as "abierta" | "cerrada" | null
-        // Si ya esta abierta, simplemente sincronizamos el guard.
-        if (estadoExistente === "abierta") {
-          onRouteStateChange?.("abierta")
-          toast({
-            title: "Ruta ya iniciada",
-            description: "La ruta ya estaba abierta para hoy. Sincronizando...",
-          })
-          return
-        }
-        // Si esta cerrada, no podemos reabrir desde aqui — informar al usuario.
-        if (estadoExistente === "cerrada") {
-          onRouteStateChange?.("cerrada")
-          toast({
-            title: "La ruta del dia esta cerrada",
-            description: "Contacta al administrador para reabrir la ruta.",
-            variant: "destructive",
-          })
-          return
-        }
-      }
-
-      // 2) No existe — insertar normalmente.
-      const { data, error } = await supabase
-        .from("rutas_diarias")
-        .insert({
-          ruta_id: currentRutaId,
-          fecha: fechaHoy,
-          estado: "abierta",
-        })
-        .select("id, estado")
-        .single()
-
-      if (error) {
-        // Si el INSERT falla con duplicate key (codigo 23505) significa que otra
-        // peticion la creo entre nuestro SELECT y nuestro INSERT — releemos.
-        const isDuplicate =
-          (error as { code?: string }).code === "23505" ||
-          /unique_ruta_por_dia|duplicate key/i.test(error.message)
-
-        if (isDuplicate) {
-          const { data: refetch } = await supabase
-            .from("rutas_diarias")
-            .select("estado")
-            .eq("ruta_id", currentRutaId)
-            .eq("fecha", fechaHoy)
-            .maybeSingle()
-          const estado = (refetch?.estado ?? null) as "abierta" | "cerrada" | null
-          if (estado) onRouteStateChange?.(estado)
-          toast({
-            title: estado === "abierta" ? "Ruta ya iniciada" : "Sincronizando estado de ruta",
-            description:
-              estado === "abierta"
-                ? "La ruta ya estaba abierta para hoy."
-                : "Se actualizo el estado actual de la ruta.",
-          })
-          return
-        }
-
-        console.error("[v0] Error iniciando ruta:", error.message)
-        toast({
-          title: "No se pudo iniciar la ruta",
-          description: error.message,
-          variant: "destructive",
-        })
-        return
-      }
-
-      if (data) {
-        onRouteStateChange?.("abierta")
-        toast({
-          title: "Ruta iniciada",
-          description: "Ya puedes registrar pagos y no pagos.",
-        })
-      }
-    } catch (err) {
-      console.error("[v0] Unexpected error iniciando ruta:", err)
-    } finally {
-      setIniciandoRuta(false)
-    }
-  }
-
-  // Mientras el padre todavia no haya resuelto el estado de rutas_diarias,
-  // mostramos un spinner neutro (no el guard "Ruta no iniciada") para
-  // evitar el flash confuso de ~500ms en cada recarga. El guard solo se
-  // renderiza con respuesta DEFINITIVA del servidor o de cache local.
-  if (!rutaActivaResolved && rutaActivaEstado === null) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-card px-6 py-16 text-center shadow-steel">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">Verificando estado de la ruta...</p>
-      </div>
-    )
-  }
-
-  // Guard: ruta must be in "abierta" state before allowing payments
+  // El guard y el boton de iniciar ruta viven en <RutaNoIniciada>: los usan
+  // esta pantalla y el bloqueo global de los vendedores, y dos copias de la
+  // logica terminarian discrepando en cuando se considera abierta una ruta.
+  // Aca la exigencia es ABIERTA y no solo iniciada: con la jornada cerrada ya
+  // no se cobra.
   if (rutaActivaEstado !== "abierta") {
     return (
-      <div className="flex flex-col items-center justify-center gap-6 rounded-2xl border border-border bg-card px-6 py-16 text-center shadow-steel">
-        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-warning/10 ring-4 ring-warning/20">
-          <AlertCircle className="h-8 w-8 text-warning" />
-        </div>
-        <div className="flex flex-col items-center gap-2">
-          <h2 className="text-xl font-bold text-foreground">Ruta no iniciada</h2>
-          <p className="max-w-sm text-sm text-muted-foreground leading-relaxed">
-            Para registrar pagos o no pagos primero debes iniciar la ruta del dia. Tambien puedes hacerlo desde la pestana{" "}
-            <strong className="text-foreground">Resumen del Dia</strong>.
-          </p>
-        </div>
-        <div className="flex flex-col items-center gap-2 sm:flex-row">
-          <Button
-            size="lg"
-            className="gap-2 bg-success text-success-foreground hover:bg-success/90"
-            onClick={handleIniciarRutaInline}
-            disabled={iniciandoRuta}
-          >
-            {iniciandoRuta ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Play className="h-4 w-4" />
-            )}
-            {iniciandoRuta ? "Iniciando..." : "Iniciar Ruta"}
-          </Button>
-          <Button
-            size="lg"
-            variant="outline"
-            className="gap-2"
-            onClick={() => onViewChange("daily-summary")}
-            disabled={iniciandoRuta}
-          >
-            Ir a Resumen del Dia
-          </Button>
-        </div>
-      </div>
+      <RutaNoIniciada
+        rutaId={currentRutaId}
+        resuelto={rutaActivaResolved}
+        estado={rutaActivaEstado ?? null}
+        onEstadoChange={onRouteStateChange}
+        mensaje="Para registrar pagos o no pagos primero debes iniciar la ruta del dia. Tambien puedes hacerlo desde la pestana Resumen del Dia."
+        onIrAResumen={() => onViewChange("daily-summary")}
+      />
     )
   }
 
