@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DollarSign, X, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, RotateCcw, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown } from "lucide-react"
+import { DollarSign, X, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown } from "lucide-react"
 import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -2938,14 +2938,18 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                   linea (flex-col); en md+ vuelven a
                                   estar en fila horizontal (md:flex-row). */}
                               <div className="flex flex-col md:flex-row md:flex-wrap justify-end md:items-center gap-y-0.5 md:gap-x-2 text-[10px] md:text-xs text-muted-foreground">
+                                {/* El sufijo "+N extra" NO se muestra acá. En
+                                    la lista de cobro lo unico que importa es
+                                    por que cuota va el cliente; las cuotas
+                                    extra de extensiones y prorrogas eran ruido
+                                    en una fila que ya va apretada en movil.
+                                    Siguen contadas en `cuotasExtra` y se ven
+                                    en el recibo y en la Auditoria 360. */}
                                 <span className="whitespace-nowrap text-right">
                                   Cta{" "}
                                   <strong className="text-foreground tabular-nums">
                                     {client.cuotasPagadas}/{client.cuotasTotales}
                                   </strong>
-                                  {client.cuotasExtra > 0 && (
-                                    <span className="text-amber-700"> +{client.cuotasExtra} extra</span>
-                                  )}
                                 </span>
                                 <span className="whitespace-nowrap text-right">
                                   Vlr{" "}
@@ -3033,10 +3037,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 <Pencil className="h-3 w-3" />
                               </Button>
                             )}
-                            {/* ANULAR, no eliminar: nada se borra. Queda el
-                                evento original y su anulación en el historial,
-                                y el cliente vuelve a Pendientes para
-                                gestionarlo bien. */}
+                            {/* El icono es un basurero rojo porque es lo que el
+                                cobrador busca cuando quiere deshacer algo. Pero
+                                OJO al tocar este flujo: por dentro NO borra
+                                nada. Registra una reversa — quedan el evento
+                                original y su anulación en el historial, y el
+                                cliente vuelve a Pendientes para gestionarlo
+                                bien. El texto dice "Anular", no "Eliminar",
+                                y el diálogo de confirmación lo repite. */}
                             <Button
                               size="icon"
                               variant="ghost"
@@ -3046,7 +3054,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               onClick={() => setAnularManaged(m)}
                               disabled={savingManaged}
                             >
-                              <RotateCcw className="h-3 w-3" />
+                              <Trash2 className="h-3 w-3" />
                             </Button>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
