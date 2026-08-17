@@ -42,6 +42,7 @@ import { AdminRouteMonitor } from "@/components/views/admin-route-monitor"
 import { AdminDashboard } from "@/components/views/admin-dashboard"
 import { AdminRouteDetail } from "@/components/views/admin-route-detail"
 import { RouteSelector, type SelectedRuta } from "@/components/route-selector"
+import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
 import { LoginView, type AuthenticatedUser } from "@/components/views/login-view"
 import { LoginSplash } from "@/components/login-splash"
 import { SESSION_LOST_EVENT, getSupabaseSafe } from "@/lib/api-helper"
@@ -761,6 +762,24 @@ export default function Page() {
   const rutaId = selectedRuta?.id ?? 0
   const rutaPais = selectedRuta?.pais ?? ""
 
+  // ── El vendedor no entra a nada antes de iniciar la ruta ──────────────
+  //
+  // Antes el guard vivia solo dentro del modulo de pagos, asi que un vendedor
+  // podia registrar una venta, un gasto o mirar clientes sin haber abierto la
+  // jornada. La fila de `rutas_diarias` es la que despues consultan el cierre
+  // de caja y el monitoreo del admin: si no existe, ese dia no aparece por
+  // ningun lado aunque se haya trabajado.
+  //
+  // Se bloquea cuando NO hay fila para hoy (estado null), no cuando la ruta
+  // esta 'cerrada'. Una ruta cerrada YA se inicio: bloquear tambien ese caso
+  // dejaria al vendedor sin acceso a nada despues de cada cierre de caja, que
+  // es algo que pasa todos los dias. Cobrar con la ruta cerrada sigue estando
+  // prohibido — de eso se encarga el guard propio del modulo de pagos, que
+  // exige 'abierta'.
+  const rolExigeRutaIniciada = ["vendedor", "asesor"].includes(userRol)
+  const rutaSinIniciar =
+    rolExigeRutaIniciada && !!selectedRuta && (!rutaActivaResolved || rutaActivaEstado === null)
+
   const renderView = () => {
     switch (currentView) {
       case "dashboard":
@@ -941,7 +960,17 @@ export default function Page() {
         userPermissions={userPermissions}
         moduleBadgeCounts={moduleBadgeCounts}
       >
-        {renderView()}
+        {rutaSinIniciar ? (
+          <RutaNoIniciada
+            rutaId={rutaId}
+            resuelto={rutaActivaResolved}
+            estado={rutaActivaEstado}
+            onEstadoChange={handleRutaActivaEstadoChange}
+            mensaje="Antes de trabajar tienes que iniciar la ruta del dia. Hasta entonces no se puede entrar a ningun modulo."
+          />
+        ) : (
+          renderView()
+        )}
       </DashboardLayout>
     )
   }
