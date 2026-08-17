@@ -90,8 +90,12 @@ type DisplayClient = {
   valorCuota: number
   saldo: number
   // Conteos sobre las cuotas BASE del plan (excluyen cuotas extra de
-  // extensiones/prorrogas/pagos de hoy). cuotasExtra cuenta esas aparte
-  // para mostrarlas como sufijo "+N extra".
+  // extensiones/prorrogas/pagos de hoy). `cuotasExtra` cuenta esas aparte.
+  //
+  // OJO: en ESTE modulo `cuotasExtra` ya no se muestra en ningun lado — ni en
+  // la lista de cobro ni en el recibo. Se conserva porque es parte de la foto
+  // financiera del prestamo y lo consumen las pantallas de revision
+  // (Auditoria 360 y Control Total), que lo leen de la vista, no de aqui.
   cuotasPagadas: number
   cuotasTotales: number
   cuotasExtra: number
@@ -873,8 +877,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         }
 
         const paymentPlan = paymentPlansByLoan.get(loan.id) || []
-        // Conteos sobre cuotas BASE (las extra de extensiones se muestran
-        // aparte como "+N extra" y no alteran el X/Y del prestamo).
+        // Conteos sobre cuotas BASE: las extra de extensiones no alteran el
+        // X/Y del prestamo, que es lo que el cliente pacto.
         // Una cuota saldada por CANCELACION TOTAL queda en estado 'cancelada',
         // no en 'pagado'. Contando solo 'pagado', un cliente que pagaba su
         // prestamo completo aparecia con "0 de 24 cuotas" — como si no
@@ -1980,7 +1984,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     // mora. Justo los dos números que el cliente revisa.
     const cuotasCubiertas = finRow?.cuotas_cubiertas ?? client.cuotasPagadas
     const cuotasTotales = finRow?.cuotas_totales ?? client.cuotasTotales
-    const cuotasExtra = finRow?.cuotas_extra ?? client.cuotasExtra
     const moraActual = finRow?.cuotas_mora ?? client.mora
 
     const rows: [string, string][] = [
@@ -1988,7 +1991,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       ["Total a pagar:", fmt(saldo?.total_con_intereses)],
       ["Total recaudado:", fmt(saldo?.total_recaudado)],
       ["Saldo pendiente:", fmt(saldo?.saldo_pendiente ?? client.saldo)],
-      ["Cuotas:", `${cuotasCubiertas} / ${cuotasTotales}${Number(cuotasExtra) > 0 ? ` (+${cuotasExtra} extra)` : ""}`],
+      // Sin el sufijo "(+N extra)": el recibo es lo que el cliente se lleva a
+      // la mano y las cuotas extra de extensiones y prorrogas le agregaban un
+      // numero que no sabe leer. El X/Y sigue siendo sobre las cuotas BASE del
+      // plan, que es lo que el cliente pacto.
+      ["Cuotas:", `${cuotasCubiertas} / ${cuotasTotales}`],
       ["Frecuencia:", frecuenciaLabel(client.frecuenciaPago)],
       // Antes esta fila decía "Fallas" pero imprimía la mora, que es otra
       // cosa (cuotas vencidas sin cubrir, no visitas incumplidas).
@@ -2938,13 +2945,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                   linea (flex-col); en md+ vuelven a
                                   estar en fila horizontal (md:flex-row). */}
                               <div className="flex flex-col md:flex-row md:flex-wrap justify-end md:items-center gap-y-0.5 md:gap-x-2 text-[10px] md:text-xs text-muted-foreground">
-                                {/* El sufijo "+N extra" NO se muestra acá. En
-                                    la lista de cobro lo unico que importa es
-                                    por que cuota va el cliente; las cuotas
-                                    extra de extensiones y prorrogas eran ruido
-                                    en una fila que ya va apretada en movil.
-                                    Siguen contadas en `cuotasExtra` y se ven
-                                    en el recibo y en la Auditoria 360. */}
+                                {/* El sufijo "+N extra" NO se muestra acá, ni
+                                    tampoco en el recibo. En la lista de cobro
+                                    lo unico que importa es por que cuota va el
+                                    cliente; las cuotas extra de extensiones y
+                                    prorrogas eran ruido en una fila que ya va
+                                    apretada en movil. Siguen contadas y
+                                    visibles en Auditoria 360 y Control Total,
+                                    que son las pantallas de revision. */}
                                 <span className="whitespace-nowrap text-right">
                                   Cta{" "}
                                   <strong className="text-foreground tabular-nums">
@@ -3014,7 +3022,18 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                       >
                         {/* Línea 1: nombre · estado · hora · acciones */}
                         <div className="flex items-center gap-1.5">
-                          <span className="flex-1 font-medium text-sm leading-tight truncate">{m.nombre}</span>
+                          {/* El nombre ENVUELVE, no se corta. Con `truncate` un
+                              nombre largo terminaba en "..." y el cobrador no
+                              podia distinguir dos clientes del mismo apellido.
+                              Va un punto mas pequeño en movil, que es donde se
+                              acaba el ancho; en pantalla grande se queda igual.
+
+                              `min-w-0` es CRITICO: sin eso el span impone su
+                              ancho intrinseco al flex item, desborda la fila y
+                              se solapa con el badge de estado. */}
+                          <span className="flex-1 min-w-0 font-medium text-[13px] md:text-sm leading-tight break-words [overflow-wrap:anywhere]">
+                            {m.nombre}
+                          </span>
                           {m.gestionTipo === "pago" ? (
                             <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-green-600 bg-green-50 px-1.5 py-0.5 rounded-full shrink-0">
                               <CheckCircle2 className="h-2.5 w-2.5" />Pago
