@@ -4,23 +4,20 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Search, TrendingDown, TrendingUp, Wallet } from "lucide-react"
+import { Search, TrendingDown, TrendingUp, Wallet, Pencil, PencilLine } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { todayColombia, tsToColombiaDate } from "@/lib/colombia-date"
+import { fmtMoneda, fmtFechaHora } from "@/lib/gestion-core"
+import {
+  getUsuarioSesion, puedeEditarComoAsesor, movimientoEditado, type Movimiento,
+} from "@/lib/movimientos"
+import { EditMovimientoDialog } from "@/components/views/edit-movimiento-dialog"
 
-type Transaction = {
-  id: number
-  tipo: string
-  fechahorasol: string
-  concepto: string
-  valor: number
-  estadoadmin: string
-  estadosecre: string
-  limite: string
-}
+type Transaction = Movimiento
 
 interface ViewExpensesIncomeProps {
   /** Ruta activa. Sin esto la pantalla mostraba los movimientos de TODAS
@@ -39,6 +36,13 @@ export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
   const todayCol = todayColombia()
   const [startDate, setStartDate] = useState(todayCol)
   const [endDate, setEndDate] = useState(todayCol)
+  // Corregir un movimiento mal registrado. El asesor solo alcanza los suyos,
+  // de hoy y sin resolver — `puedeEditarComoAsesor` es quien lo decide, y el
+  // servidor lo vuelve a validar por si la pantalla está vieja.
+  const [editando, setEditando] = useState<Transaction | null>(null)
+  const [usuarioId, setUsuarioId] = useState<number | null>(null)
+
+  useEffect(() => { setUsuarioId(getUsuarioSesion().id) }, [])
 
   useEffect(() => {
     fetchTransactions()
@@ -90,12 +94,19 @@ export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
       filtered = filtered.filter((t) => t.estadosecre === filterSecreStatus)
     }
 
-    // Search by description or limite
+    // Busqueda por concepto u observacion.
+    //
+    // Antes el segundo campo era `limite`, que es NUMERICO y casi siempre
+    // null: en cuanto el termino no coincidia con el concepto, la segunda
+    // condicion hacia `null.toLowerCase()` y reventaba el filtro entero.
+    // Ademas buscar por el limite del item nunca fue util — lo que uno busca
+    // es lo que escribio en la observacion.
     if (searchTerm) {
+      const t0 = searchTerm.toLowerCase()
       filtered = filtered.filter(
         (t) =>
-          t.concepto.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          t.limite.toLowerCase().includes(searchTerm.toLowerCase())
+          (t.concepto ?? "").toLowerCase().includes(t0) ||
+          (t.observacion ?? "").toLowerCase().includes(t0)
       )
     }
 
@@ -208,7 +219,7 @@ export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
                   <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     id="search"
-                    placeholder="Descripción o item..."
+                    placeholder="Concepto u observación..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="pl-8 h-8 md:h-10 text-xs md:text-sm"
@@ -328,10 +339,13 @@ export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
                     <TableHead className="text-[10px] md:text-sm text-right">Monto</TableHead>
                     <TableHead className="text-[10px] md:text-sm">Admin</TableHead>
                     <TableHead className="text-[10px] md:text-sm">Secretaria</TableHead>
+                    <TableHead className="text-[10px] md:text-sm" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredTransactions.map((transaction) => (
+                  {filteredTransactions.map((transaction) => {
+                    const permiso = puedeEditarComoAsesor(transaction, usuarioId)
+                    return (
                     <TableRow key={transaction.id}>
                       <TableCell className="text-[9px] md:text-sm">
                         {formatDate(transaction.fechahorasol)}
@@ -342,22 +356,58 @@ export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
                           <span className="text-[9px] md:text-sm capitalize">{transaction.tipo}</span>
                         </div>
                       </TableCell>
-                      <TableCell className="text-[9px] md:text-sm max-w-[150px] md:max-w-xs truncate">
-                        {transaction.concepto}
+                      <TableCell className="text-[9px] md:text-sm max-w-[150px] md:max-w-xs">
+                        <span className="block truncate">{transaction.concepto}</span>
+                        {movimientoEditado(transaction) && (
+                          <span
+                            className="mt-0.5 inline-flex items-center gap-1 rounded px-1 py-0.5 text-[8px] md:text-[9px] font-semibold bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200"
+                            title={`Editado por ${transaction.editado_por} el ${fmtFechaHora(transaction.fechahoraedicion)}${
+                              transaction.valor_anterior !== null ? ` · antes: ${fmtMoneda(transaction.valor_anterior)}` : ""
+                            }`}
+                          >
+                            <PencilLine className="h-2.5 w-2.5" /> editado
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="text-[9px] md:text-sm text-right font-semibold">
                         {formatCurrency(transaction.valor)}
                       </TableCell>
                       <TableCell>{getStatusBadge(transaction.estadoadmin)}</TableCell>
                       <TableCell>{getStatusBadge(transaction.estadosecre)}</TableCell>
+                      <TableCell>
+                        {/* Se muestra solo si de verdad se puede: un botón
+                            deshabilitado en cada fila sería puro ruido, porque
+                            la mayoría de movimientos no son editables. El
+                            `title` explica el porqué cuando sí aparece. */}
+                        {permiso.puede && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            title="Editar este movimiento"
+                            onClick={() => setEditando(transaction)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </TableCell>
                     </TableRow>
-                  ))}
+                    )
+                  })}
                 </TableBody>
               </Table>
             </div>
           )}
         </CardContent>
       </Card>
+
+      <EditMovimientoDialog
+        movimiento={editando}
+        open={editando !== null}
+        onOpenChange={(o) => !o && setEditando(null)}
+        comoAsesor
+        onSaved={fetchTransactions}
+      />
     </div>
   )
 }
