@@ -545,6 +545,23 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // son ignoradas (evita race conditions cuando dos fetches solapan).
   const fetchDataTokenRef = useRef(0)
 
+  // Candado contra el DOBLE TOQUE al registrar una gestion.
+  //
+  // No basta con el estado `saving`: entre el primer toque y `setSaving(true)`
+  // hay un `await` del GPS que en movil tarda 1-2s, y en esa ventana el boton
+  // sigue habilitado. El cobrador ve que "no pasa nada", vuelve a tocar, y
+  // cada toque genera su PROPIA llave de idempotencia — asi que el candado del
+  // servidor no los atrapa: no son reenvios de la misma captura, son capturas
+  // distintas, y las escribe todas.
+  //
+  // Paso de verdad el 17/08/2026 en la ruta 190: cuatro pagos identicos de
+  // $6.500 con la misma marca de tiempo al segundo. $19.500 de plata que
+  // nunca entro, contados en la caja del dia.
+  //
+  // Es un ref y no un estado porque `setState` es asincrono: dos toques en el
+  // mismo tick leerian ambos el valor viejo y los dos pasarian.
+  const enviandoRef = useRef(false)
+
   // Ref a toast para no recrear fetchData en cada render (evita disparos
   // duplicados del useEffect que escucha fetchData).
   const toastRef = useRef(toast)
@@ -1089,13 +1106,20 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   }
 
   const handleRegisterPayment = async () => {
+    // El candado se toma ANTES de cualquier `await` y se suelta en el finally
+    // de mas abajo, que cubre TODAS las salidas de esta funcion.
+    if (enviandoRef.current) return
+    enviandoRef.current = true
+    // Deshabilita el boton de una vez, sin esperar al GPS: el ref evita el
+    // duplicado, pero el cobrador tambien necesita ver que su toque entro.
+    setSaving(true)
+    try {
     if (!selectedClient || !selectedClient.nextPaymentId) {
       toast({ title: "Error", description: "No hay cuota pendiente para este cliente", variant: "destructive" })
       return
     }
 
-    // Validaciones sincronicas ANTES de mostrar saving / pedir GPS para no
-    // bloquear la UI innecesariamente.
+    // Validaciones sincronicas ANTES de pedir GPS.
     const monto = Number.parseFloat(paymentAmount)
     if (isNaN(monto) || monto <= 0) {
       toast({ title: "Error", description: "Ingrese un monto valido", variant: "destructive" })
@@ -1513,12 +1537,24 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     } finally {
       setSaving(false)
     }
+    } finally {
+      // Cubre todas las salidas, incluidas las validaciones que retornan
+      // temprano y el caso en que el cobrador cancela el aviso de geocerca.
+      enviandoRef.current = false
+      setSaving(false)
+    }
   }
 
   const handleRegisterNoPayment = async () => {
+    // Mismo candado que en el pago: este flujo tambien espera al GPS antes de
+    // deshabilitar el boton. No mueve plata, pero un doble toque dejaba dos
+    // "no pago" del mismo cliente el mismo dia.
+    if (enviandoRef.current) return
+    enviandoRef.current = true
+    setSaving(true)
+    try {
     if (!noPaymentClient || !noPaymentClient.nextPaymentId) return
 
-    // GPS y geocerca antes de mostrar saving para no bloquear la UI si falla
     const geocerca = await resolverGeocerca(noPaymentClient, "no pagos")
     if (!geocerca) return
     const coords = geocerca.coords
@@ -1697,6 +1733,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       console.error("[v0] Error registering no-payment:", error)
       toast({ title: "Error", description: "No se pudo registrar el no pago", variant: "destructive" })
     } finally {
+      setSaving(false)
+    }
+    } finally {
+      enviandoRef.current = false
       setSaving(false)
     }
   }
