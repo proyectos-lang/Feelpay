@@ -138,27 +138,44 @@ export async function loadDashboardPagos(
     }
   }
 
-  // ── 1) Cargar loans filtrados por ruta ────────────────────────────
-  const { data: loansData, error: loansError } = await supabase
-    .from("loans")
-    .select("*, clients(nombre_completo, apodo, documento, latitud, longitud)")
-    .eq("ruta", args.rutaId)
-    .order("ordenvisita", { ascending: true })
+  // ── 1) Loans de la ruta + eventos recientes, en paralelo ──────────
+  //
+  // Los eventos se piden por RUTA y no por loan_id porque hacen falta ANTES
+  // de decidir qué préstamos entran. Un préstamo que se cancela hoy pasa a
+  // `estado = 'cancelado'` (lo hace `recalcular_prestamo`), y si se filtrara
+  // solo por "activo" desapareceria de Gestionados en el siguiente refresco:
+  // el cobrador acaba de cobrarlo y deja de verlo, sin forma de revisar ni
+  // anular esa gestion.
+  //
+  // Se traen desde AYER porque el flujo "ayer no se gestiono" necesita saber
+  // que paso ese dia para ofrecer la gestion retro.
+  const desde = ayerColombia()
 
-  if (loansError) {
-    console.error("[v0] loans error:", loansError.message)
+  const [loansRes, gesRes] = await Promise.all([
+    supabase
+      .from("loans")
+      .select("*, clients(nombre_completo, apodo, documento, latitud, longitud)")
+      .eq("ruta", args.rutaId)
+      .order("ordenvisita", { ascending: true }),
+    supabase
+      .from("gestiones")
+      .select(COLUMNAS_GESTION)
+      .eq("ruta", args.rutaId)
+      .eq("estado", "aplicada")
+      .gte("fecha_gestion", desde)
+      .order("fecha_hora", { ascending: true }),
+  ])
+
+  if (loansRes.error) {
+    console.error("[v0] loans error:", loansRes.error.message)
     // La red pudo caerse entre el chequeo de arriba y esta consulta.
     const guardado = await leerCache<DashboardPagosResult>("dashboard-pagos", args.rutaId)
     if (guardado) {
       console.log("[v0] Fallo la consulta; sirviendo dashboard desde cache offline")
       return { ...guardado.datos, source: "cache", cacheGuardadoEn: guardado.guardadoEn }
     }
-    throw new Error(`loans: ${loansError.message}`)
+    throw new Error(`loans: ${loansRes.error.message}`)
   }
-
-  const loans = (loansData ?? []) as unknown as LoanWithClient[]
-  const activeLoans = loans.filter((l) => l.estado === "activo" || !l.estado)
-  const loanIds = activeLoans.map((l) => l.id)
 
   const saldoMap = new Map<string, number>()
   const moraMap = new Map<string, number>()
@@ -166,6 +183,25 @@ export async function loadDashboardPagos(
   const finMap = new Map<string, LoanFinanciero>()
   let gestiones: Gestion[] = []
   let allPaymentPlans: PaymentPlanEntry[] = []
+
+  if (gesRes.error) {
+    console.error("[v0] gestiones error:", gesRes.error.message)
+  } else {
+    gestiones = (gesRes.data ?? []) as unknown as Gestion[]
+  }
+
+  const loans = (loansRes.data ?? []) as unknown as LoanWithClient[]
+
+  // Préstamos que se movieron desde ayer. Un cancelado que esté acá sigue
+  // entrando: `register-payment` ya lo excluye de Pendientes por su estado,
+  // así que solo puede aparecer en Gestionados — que es justo lo que se
+  // quiere. Un cancelado SIN eventos recientes se queda fuera, y por eso el
+  // historial viejo de la ruta no engorda ninguna de las consultas de abajo.
+  const tocadosRecientemente = new Set(gestiones.map((g) => g.loan_id))
+  const activeLoans = loans.filter(
+    (l) => l.estado === "activo" || !l.estado || tocadosRecientemente.has(l.id),
+  )
+  const loanIds = activeLoans.map((l) => l.id)
 
   if (loanIds.length === 0) {
     const vacio: DashboardPagosResult = {
@@ -176,17 +212,12 @@ export async function loadDashboardPagos(
     return vacio
   }
 
-  // ── 2) Financiero + cronograma + eventos del día, en paralelo ─────
+  // ── 2) Financiero + cronograma, en paralelo ──────────────────────
   //
-  // `v_loan_financiero` y `gestiones` sí tienen columna `ruta`, pero se
-  // filtra igual por loan_id para que las tres consultas hablen exactamente
-  // del mismo conjunto de préstamos (los activos de esta ruta).
-  //
-  // Se traen los eventos desde AYER porque el flujo "ayer no se gestionó"
-  // necesita saber qué pasó ese día para ofrecer la gestión retro.
-  const desde = ayerColombia()
-
-  const [finRes, ppRes, gesRes] = await Promise.all([
+  // Los eventos ya se trajeron arriba: hacian falta para decidir el conjunto
+  // de prestamos. Estas dos sí se filtran por loan_id, para que hablen
+  // exactamente del mismo conjunto.
+  const [finRes, ppRes] = await Promise.all([
     supabase
       .from("v_loan_financiero")
       .select(
@@ -201,13 +232,6 @@ export async function loadDashboardPagos(
       )
       .in("loan_id", loanIds)
       .order("numero_cuota", { ascending: true }),
-    supabase
-      .from("gestiones")
-      .select(COLUMNAS_GESTION)
-      .in("loan_id", loanIds)
-      .eq("estado", "aplicada")
-      .gte("fecha_gestion", desde)
-      .order("fecha_hora", { ascending: true }),
   ])
 
   if (finRes.error) {
@@ -227,12 +251,6 @@ export async function loadDashboardPagos(
     console.error("[v0] payment_plan error:", ppRes.error.message)
   } else {
     allPaymentPlans = (ppRes.data ?? []) as unknown as PaymentPlanEntry[]
-  }
-
-  if (gesRes.error) {
-    console.error("[v0] gestiones error:", gesRes.error.message)
-  } else {
-    gestiones = (gesRes.data ?? []) as unknown as Gestion[]
   }
 
   const resultado: DashboardPagosResult = {
