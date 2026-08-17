@@ -114,8 +114,8 @@ export function RegisterTransaction({
   const [pendingTransaction, setPendingTransaction] = useState<PendingTransaction | null>(null)
 
   // Umbral de aprobacion por item (configurado por secretaria en Gestion de
-  // Usuarios y Rutas > Control de Aprobaciones, por concepto especifico y
-  // por ruta). Si un movimiento lo supera, se envia a revision en vez de
+  // Usuarios y Rutas > Rutas > editar la ruta, por concepto especifico y por
+  // ruta). Si un movimiento lo supera, se envia a revision en vez de
   // aplicarse directamente.
   const [itemUmbrales, setItemUmbrales] = useState<Map<string, ItemUmbral>>(new Map())
   const [confirmingRevision, setConfirmingRevision] = useState(false)
