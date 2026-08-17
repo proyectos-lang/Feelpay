@@ -67,6 +67,7 @@ import {
 import {
   AlertCircle,
   AlertTriangle,
+  ArrowLeftRight,
   CalendarDays,
   ChevronLeft,
   ClipboardList,
@@ -78,6 +79,8 @@ import {
   Search,
   Wallet,
 } from "lucide-react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { MovimientosPanel } from "@/components/views/movimientos-panel"
 
 // ───────────────────────────────────────────────────────────────────────────
 // El contrato de `auditoria_prestamo` (scripts/048)
@@ -561,6 +564,8 @@ export function LoanAudit({ currentRutaId, loanIdInicial, onBack }: LoanAuditPro
   // la ruta que uno tenga abierta. "todas" busca en la cartera completa.
   const [rutas, setRutas] = useState<{ id: number; nombre: string }[]>([])
   const [rutaFiltro, setRutaFiltro] = useState<number | "todas">(currentRutaId)
+  // Qué se está auditando: préstamos (lo de siempre) o los movimientos de caja.
+  const [modo, setModo] = useState("prestamos")
 
   // ── Préstamo auditado ────────────────────────────────────────────────
   const [loanId, setLoanId] = useState<string | null>(loanIdInicial ?? null)
@@ -767,6 +772,31 @@ export function LoanAudit({ currentRutaId, loanIdInicial, onBack }: LoanAuditPro
       <div className="space-y-4">
         {encabezado}
 
+        {/* Dos modos, no dos módulos: los movimientos de caja no cuelgan de
+            ningún préstamo (`gastosregistros` no tiene loan_id), así que no
+            caben dentro del detalle de una venta. Se filtran por ruta y
+            fecha, y por eso viven como pestaña propia del buscador. */}
+        <Tabs value={modo} onValueChange={setModo}>
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="prestamos" className="text-[11px] md:text-sm gap-1">
+              <FileSearch className="h-3.5 w-3.5" />
+              <span className="truncate">Préstamos</span>
+            </TabsTrigger>
+            <TabsTrigger value="movimientos" className="text-[11px] md:text-sm gap-1">
+              <ArrowLeftRight className="h-3.5 w-3.5" />
+              <span className="truncate">Ingresos, gastos y retiros</span>
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="movimientos" className="mt-3">
+            <MovimientosPanel
+              rutaId={rutaFiltro}
+              rutas={rutas}
+              onRutaChange={setRutaFiltro}
+            />
+          </TabsContent>
+
+          <TabsContent value="prestamos" className="mt-3 space-y-4">
         <Card>
           <CardContent className="p-3 md:p-4 space-y-2">
             <div className="flex flex-col sm:flex-row gap-2">
@@ -898,6 +928,8 @@ export function LoanAudit({ currentRutaId, loanIdInicial, onBack }: LoanAuditPro
             )}
           </CardContent>
         </Card>
+          </TabsContent>
+        </Tabs>
       </div>
     )
   }
