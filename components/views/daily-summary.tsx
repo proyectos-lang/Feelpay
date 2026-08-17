@@ -4,7 +4,7 @@ import React from "react"
 import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, MoreVertical, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, PiggyBank, Users, PieChart, LockKeyhole, Eye, X, Play, Loader2 } from "lucide-react"
+import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, PiggyBank, Users, PieChart, FileChartColumn, Vault, Eye, X, Play, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
  import { createClient } from "@/lib/supabase/client"
 import { todayColombia, bandaCartera, etiquetaFrecuencia } from "@/lib/gestion-core"
@@ -441,7 +441,25 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
           <div className="bg-brand-gradient text-brand-foreground px-4 pt-4 pb-3 rounded-b-2xl shadow-lg">
             <div className="flex items-center justify-between mb-2 gap-2">
               <h1 className="text-2xl font-bold tracking-tight">Resumen del Día</h1>
-              <div className="flex items-center gap-1">
+              {/* Barra de acciones. Los iconos van en pastilla blanca con el
+                  icono a color: en ghost sobre el degradado de marca se
+                  perdian contra el fondo y no se leian como botones.
+                  Se quito el menu de 3 puntos, que no tenia onClick — no
+                  hacia absolutamente nada al tocarlo. */}
+              <div className="flex items-center gap-1.5">
+                {/* Informe Recaudo, de primero. Antes era una flecha circular,
+                    que se lee como "deshacer" o "recargar" y no daba ninguna
+                    pista de que lleva a un informe. */}
+                <Button
+                  size="icon"
+                  className="h-8 w-8 rounded-full bg-white hover:bg-white/90 text-info shadow-sm shrink-0"
+                  title="Ver el Informe de Recaudo"
+                  aria-label="Ver el Informe de Recaudo"
+                  onClick={() => setIsFlipped(true)}
+                >
+                  <FileChartColumn className="h-[18px] w-[18px]" />
+                </Button>
+
                 {/* Botón Iniciar / Finalizar Ruta */}
                 {!loadingRutaDiaria && (
                   <>
@@ -469,25 +487,20 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     )}
                   </>
                 )}
+
+                {/* Cierre de Caja: mas grande que los demas y en ambar. Es la
+                    accion mas consecuente de la pantalla — cuadra la plata del
+                    dia y deja al vendedor sin poder registrar mas — asi que
+                    pesa mas visualmente. La caja fuerte dice "cierre de caja";
+                    la llave anterior podia leerse como bloquear la sesion. */}
                 <Button
-                  variant="ghost"
                   size="icon"
-                  className="text-brand-foreground hover:bg-white/20 h-8 w-8"
+                  className="h-10 w-10 rounded-full bg-white hover:bg-white/90 text-warning shadow-sm shrink-0"
                   title="Cierre de Caja"
+                  aria-label="Cierre de Caja"
                   onClick={() => onViewChange?.("cierre-caja")}
                 >
-                  <LockKeyhole className="h-5 w-5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-brand-foreground hover:bg-white/20 h-8 w-8"
-                  onClick={() => setIsFlipped(true)}
-                >
-                  <RotateCcw className="h-5 w-5" />
-                </Button>
-                <Button variant="ghost" size="icon" className="text-brand-foreground hover:bg-white/20 h-8 w-8">
-                  <MoreVertical className="h-5 w-5" />
+                  <Vault className="h-[22px] w-[22px]" />
                 </Button>
               </div>
             </div>
