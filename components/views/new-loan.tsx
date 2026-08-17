@@ -232,6 +232,20 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   const [marcasHomologacion, setMarcasHomologacion] = useState<
     Record<number, { tipo: "pago" | "no_pago"; monto: string }>
   >({})
+  // Cuotas del cronograma que NO se cargan al historial. La lista automática
+  // asume que el crédito se pagó al ritmo pactado, y no siempre fue así: a
+  // veces conviene borrarla toda y dejar un solo pago consolidado. Quitar una
+  // fila no crea ningún evento para ese día — es distinto de marcarla
+  // "No pagó", que sí deja constancia de que se visitó y no entró plata.
+  const [cuotasOmitidas, setCuotasOmitidas] = useState<Set<number>>(new Set())
+  // Pagos que no caen en una fecha del cronograma: el cliente abonó días
+  // seguidos, o con montos que no son la cuota. Fecha y monto libres.
+  // El `id` es solo la llave de React: un contador y no un UUID, porque
+  // `crypto.randomUUID` no existe si se entra por http (la IP de la LAN).
+  const [pagosManuales, setPagosManuales] = useState<
+    { id: number; fecha: string; monto: string }[]
+  >([])
+  const proximoIdPagoManual = useRef(1)
   const [numeroCuotas, setNumeroCuotas] = useState(1)
   const [otroValor, setOtroValor] = useState(false)
   const [valorPago, setValorPago] = useState("")
@@ -438,6 +452,12 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     tipoAmortizacion, frecuenciaPago, prestamoEmpleado, diaSemana,
   ])
 
+  // Las que de verdad se van a cargar: el cronograma menos las quitadas.
+  const cuotasVigentes = useMemo(
+    () => cuotasHomologacion.filter((c) => !cuotasOmitidas.has(c.numero_cuota)),
+    [cuotasHomologacion, cuotasOmitidas],
+  )
+
   // Marca efectiva de una cuota: lo que eligió el usuario, o "pagó completo"
   // por defecto (el caso normal al homologar es que venía al día).
   const marcaDe = (numeroCuota: number, valorCuota: number) =>
@@ -446,13 +466,14 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   const resumenHomologacion = useMemo(() => {
     let pagado = 0
     let noPagos = 0
-    for (const c of cuotasHomologacion) {
+    for (const c of cuotasVigentes) {
       const m = marcaDe(c.numero_cuota, c.valor_cuota)
       if (m.tipo === "pago") pagado += Number.parseFloat(m.monto) || 0
       else noPagos += 1
     }
-    return { pagado, noPagos, cuotas: cuotasHomologacion.length }
-  }, [cuotasHomologacion, marcasHomologacion])
+    for (const p of pagosManuales) pagado += Number.parseFloat(p.monto) || 0
+    return { pagado, noPagos, cuotas: cuotasVigentes.length + pagosManuales.length }
+  }, [cuotasVigentes, marcasHomologacion, pagosManuales])
 
   // Auto-calculate Saldo (Valor a Pagar) y valor de cuota.
   // - Empleado: sin interes, saldo = valor.
@@ -992,15 +1013,26 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       // los aplica como gestiones con origen 'homologacion' — cuentan para
       // el saldo y la mora, pero NO entran en la caja de esos días (esa
       // plata se recibió en el sistema anterior).
+      // A las cuotas del cronograma (menos las quitadas) se suman los pagos
+      // manuales. Al servidor le da igual de dónde salga cada fila: acepta
+      // cualquier {fecha, tipo, monto} con fecha <= hoy, sin cruzarla contra
+      // el cronograma.
       const historial = ventaHomologada
-        ? cuotasHomologacion.map((c) => {
-            const m = marcaDe(c.numero_cuota, c.valor_cuota)
-            return {
-              fecha: c.fecha_pago,
-              tipo: m.tipo,
-              monto: m.tipo === "pago" ? Number.parseFloat(m.monto) || 0 : 0,
-            }
-          })
+        ? [
+            ...cuotasVigentes.map((c) => {
+              const m = marcaDe(c.numero_cuota, c.valor_cuota)
+              return {
+                fecha: c.fecha_pago,
+                tipo: m.tipo,
+                monto: m.tipo === "pago" ? Number.parseFloat(m.monto) || 0 : 0,
+              }
+            }),
+            ...pagosManuales.map((p) => ({
+              fecha: p.fecha,
+              tipo: "pago" as const,
+              monto: Number.parseFloat(p.monto) || 0,
+            })),
+          ]
         : []
 
       if (ventaHomologada) {
@@ -1019,6 +1051,35 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
             variant: "destructive",
           })
           return
+        }
+        // Las filas manuales se validan una por una: si se descartaran en
+        // silencio, el usuario creería que cargó un pago que nunca se guardó.
+        const ayerStr = ayerColombia()
+        for (const p of pagosManuales) {
+          if (!p.fecha) {
+            toast({
+              title: "Falta la fecha de un pago adicional",
+              description: "Cada pago que agregaste a mano necesita su fecha, o quítalo de la lista.",
+              variant: "destructive",
+            })
+            return
+          }
+          if (p.fecha > ayerStr) {
+            toast({
+              title: "Fecha de pago inválida",
+              description: `El pago del ${fmtFecha(p.fecha)} no puede ser de hoy ni futuro: el historial carga solo lo ya ocurrido.`,
+              variant: "destructive",
+            })
+            return
+          }
+          if (!(Number.parseFloat(p.monto) > 0)) {
+            toast({
+              title: "Monto inválido",
+              description: `El pago del ${fmtFecha(p.fecha)} debe tener un monto mayor a cero, o quítalo de la lista.`,
+              variant: "destructive",
+            })
+            return
+          }
         }
         const totalHistorial = historial.reduce((s, h) => s + h.monto, 0)
         if (totalHistorial > valorAPagarNum) {
@@ -1842,7 +1903,12 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                 const v = checked as boolean
                 setVentaHomologada(v)
                 if (v) setIniciaPagosHoy(false)
-                else { setFechaInicioHomologada(""); setMarcasHomologacion({}) }
+                else {
+                  setFechaInicioHomologada("")
+                  setMarcasHomologacion({})
+                  setCuotasOmitidas(new Set())
+                  setPagosManuales([])
+                }
               }}
               className="h-4 w-4 md:h-5 md:w-5"
             />
@@ -1863,6 +1929,11 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                 esa plata se recibió en el otro sistema.
               </p>
               <p className="text-[11px] md:text-sm text-violet-900">
+                La lista sale del cronograma, pero no manda: puedes <strong>quitar</strong> las
+                fechas que no apliquen y <strong>agregar</strong> pagos con la fecha y el monto
+                reales, si el cliente abonó días seguidos o distinto a la cuota.
+              </p>
+              <p className="text-[11px] md:text-sm text-violet-900">
                 La cuota de <strong>hoy</strong> no se marca aquí: queda pendiente y el cobrador
                 le registra el pago o el no pago en la ruta, como a cualquier otro cliente.
               </p>
@@ -1876,7 +1947,13 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                   type="date"
                   max={ayerColombia()}
                   value={fechaInicioHomologada}
-                  onChange={(e) => { setFechaInicioHomologada(e.target.value); setMarcasHomologacion({}) }}
+                  onChange={(e) => {
+                    // Otra fecha de inicio = otro cronograma: las marcas y las
+                    // filas quitadas apuntaban a cuotas que ya no existen.
+                    setFechaInicioHomologada(e.target.value)
+                    setMarcasHomologacion({})
+                    setCuotasOmitidas(new Set())
+                  }}
                   className="h-8 md:h-10 text-[11px] md:text-sm"
                 />
                 <p className="text-[10px] md:text-xs text-violet-800/80">
@@ -1893,11 +1970,11 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                 </p>
               )}
 
-              {cuotasHomologacion.length > 0 && (
+              {cuotasVigentes.length > 0 && (
                 <>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[11px] md:text-sm font-medium text-violet-900">
-                      {cuotasHomologacion.length} cuota{cuotasHomologacion.length === 1 ? "" : "s"} vencida{cuotasHomologacion.length === 1 ? "" : "s"} hasta ayer
+                      {cuotasVigentes.length} cuota{cuotasVigentes.length === 1 ? "" : "s"} vencida{cuotasVigentes.length === 1 ? "" : "s"} hasta ayer
                     </span>
                     <Button
                       type="button" variant="outline" size="sm"
@@ -1911,11 +1988,18 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                       className="h-7 text-[11px]"
                       onClick={() => {
                         const todas: Record<number, { tipo: "pago" | "no_pago"; monto: string }> = {}
-                        for (const c of cuotasHomologacion) todas[c.numero_cuota] = { tipo: "no_pago", monto: "0" }
-                        setMarcasHomologacion(todas)
+                        for (const c of cuotasVigentes) todas[c.numero_cuota] = { tipo: "no_pago", monto: "0" }
+                        setMarcasHomologacion((p) => ({ ...p, ...todas }))
                       }}
                     >
                       Marcar todas como no pago
+                    </Button>
+                    <Button
+                      type="button" variant="outline" size="sm"
+                      className="h-7 text-[11px] text-destructive hover:text-destructive"
+                      onClick={() => setCuotasOmitidas(new Set(cuotasHomologacion.map((c) => c.numero_cuota)))}
+                    >
+                      Quitar todas
                     </Button>
                   </div>
 
@@ -1928,10 +2012,11 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                           <th className="px-2 py-1.5 text-right font-medium">Cuota</th>
                           <th className="px-2 py-1.5 text-center font-medium">¿Pagó?</th>
                           <th className="px-2 py-1.5 text-right font-medium">Abonó</th>
+                          <th className="px-2 py-1.5 w-8" aria-label="Quitar" />
                         </tr>
                       </thead>
                       <tbody>
-                        {cuotasHomologacion.map((c) => {
+                        {cuotasVigentes.map((c) => {
                           const m = marcaDe(c.numero_cuota, c.valor_cuota)
                           const pago = m.tipo === "pago"
                           return (
@@ -1975,24 +2060,121 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                                   className="h-7 w-24 ml-auto text-right text-[11px] md:text-sm"
                                 />
                               </td>
+                              <td className="px-1 py-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setCuotasOmitidas((p) => new Set(p).add(c.numero_cuota))}
+                                  className="rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                                  title="Quitar esta fecha del historial"
+                                  aria-label={`Quitar la cuota ${c.numero_cuota} del historial`}
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </td>
                             </tr>
                           )
                         })}
                       </tbody>
                     </table>
                   </div>
-
-                  <div className="flex flex-wrap justify-between gap-2 rounded-md bg-violet-100 px-3 py-2 text-[11px] md:text-sm text-violet-900">
-                    <span>Ya abonado: <strong>{fmtMoneda(resumenHomologacion.pagado)}</strong></span>
-                    <span>No pagos: <strong>{resumenHomologacion.noPagos}</strong></span>
-                    <span>
-                      Saldo al crearla:{" "}
-                      <strong>
-                        {fmtMoneda(Math.max(0, (Number.parseFloat(valorAPagar) || 0) - resumenHomologacion.pagado))}
-                      </strong>
-                    </span>
-                  </div>
                 </>
+              )}
+
+              {/* Filas quitadas: siempre hay vuelta atrás. */}
+              {cuotasOmitidas.size > 0 && (
+                <p className="text-[11px] md:text-sm text-violet-900">
+                  {cuotasOmitidas.size} fecha{cuotasOmitidas.size === 1 ? "" : "s"} quitada
+                  {cuotasOmitidas.size === 1 ? "" : "s"} del historial.{" "}
+                  <button
+                    type="button"
+                    onClick={() => setCuotasOmitidas(new Set())}
+                    className="font-semibold underline underline-offset-2 hover:text-violet-700"
+                  >
+                    Restaurar
+                  </button>
+                </p>
+              )}
+
+              {/* ── Pagos adicionales ─────────────────────────────────────
+                  Fuera del bloque de la tabla a propósito: si se quitaron
+                  todas las cuotas, este es el único lugar donde se puede
+                  cargar la historia. Fecha y monto libres — el cliente pudo
+                  abonar días seguidos o montos que no son la cuota. */}
+              {fechaInicioHomologada && (
+                <div className="space-y-2 rounded-md border border-dashed border-violet-300 p-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[11px] md:text-sm font-medium text-violet-900">
+                      Pagos adicionales
+                      <span className="ml-1 font-normal opacity-80">
+                        (fechas y montos que no siguen el cronograma)
+                      </span>
+                    </span>
+                    <Button
+                      type="button" variant="outline" size="sm"
+                      className="h-7 text-[11px]"
+                      onClick={() => setPagosManuales((p) => [
+                        ...p,
+                        { id: proximoIdPagoManual.current++, fecha: "", monto: "" },
+                      ])}
+                    >
+                      + Agregar pago
+                    </Button>
+                  </div>
+
+                  {pagosManuales.length === 0 ? (
+                    <p className="text-[10px] md:text-xs text-violet-800/80">
+                      Úsalo si el cliente abonó en días que no son los del cronograma, o si
+                      prefieres quitar las cuotas de arriba y dejar un solo pago consolidado.
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {pagosManuales.map((p) => (
+                        <div key={p.id} className="flex items-center gap-1.5">
+                          <Input
+                            type="date"
+                            max={ayerColombia()}
+                            value={p.fecha}
+                            onChange={(e) => setPagosManuales((prev) => prev.map(
+                              (x) => (x.id === p.id ? { ...x, fecha: e.target.value } : x),
+                            ))}
+                            className="h-7 flex-1 min-w-0 text-[11px] md:text-sm"
+                          />
+                          <Input
+                            type="number" inputMode="decimal" min="0" placeholder="Monto"
+                            value={p.monto}
+                            onChange={(e) => setPagosManuales((prev) => prev.map(
+                              (x) => (x.id === p.id ? { ...x, monto: e.target.value } : x),
+                            ))}
+                            className="h-7 w-28 shrink-0 text-right text-[11px] md:text-sm"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setPagosManuales((prev) => prev.filter((x) => x.id !== p.id))}
+                            className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                            title="Quitar este pago"
+                            aria-label="Quitar este pago"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* El resumen cuenta las dos fuentes: cronograma y manuales. */}
+              {(cuotasVigentes.length > 0 || pagosManuales.length > 0) && (
+                <div className="flex flex-wrap justify-between gap-2 rounded-md bg-violet-100 px-3 py-2 text-[11px] md:text-sm text-violet-900">
+                  <span>Ya abonado: <strong>{fmtMoneda(resumenHomologacion.pagado)}</strong></span>
+                  <span>No pagos: <strong>{resumenHomologacion.noPagos}</strong></span>
+                  <span>
+                    Saldo al crearla:{" "}
+                    <strong>
+                      {fmtMoneda(Math.max(0, (Number.parseFloat(valorAPagar) || 0) - resumenHomologacion.pagado))}
+                    </strong>
+                  </span>
+                </div>
               )}
             </div>
           )}
