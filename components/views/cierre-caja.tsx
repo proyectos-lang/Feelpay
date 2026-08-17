@@ -17,9 +17,16 @@ interface CierreCajaProps {
   onBack: () => void
   rutaId?: number
   rutaNombre?: string
+  /**
+   * Avisa al contenedor que la jornada quedó cerrada. Sin esto el estado de
+   * `rutas_diarias` que tiene la app arriba se queda en "abierta" hasta la
+   * siguiente recarga, y el bloqueo del vendedor no entraba en vigor sino
+   * hasta que cerraba y volvía a abrir la app.
+   */
+  onRouteStateChange?: (estado: "abierta" | "cerrada" | null) => void
 }
 
-export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaProps) {
+export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateChange }: CierreCajaProps) {
   const _now = new Date()
   const fecha = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "2-digit", month: "2-digit", year: "numeric" }).format(_now)
   const hora = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", hour: "numeric", minute: "2-digit", hour12: true }).format(_now)
@@ -273,6 +280,10 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
 
       setCajaCerrada(true)
       setShowConfirm(false)
+      // La jornada quedó cerrada: para el vendedor el día se acabó y no puede
+      // hacer más movimientos. Se avisa hacia arriba para que el bloqueo entre
+      // en vigor de inmediato, sin esperar a que recargue la app.
+      onRouteStateChange?.("cerrada")
     } catch (err) {
       console.error("[v0] Unexpected error finalizando jornada:", err)
       setCierreError("Ocurrió un error al cerrar la caja.")
@@ -430,14 +441,17 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
             <Badge className={`border-0 text-xs bg-white ${cajaCerrada ? "text-destructive" : "text-success"}`}>
               {cajaCerrada ? "Cerrada" : "Abierta"}
             </Badge>
+            {/* Pastilla blanca sólida y con texto, no un icono fantasma: sobre
+                el degradado del encabezado un ghost se confundía con el fondo
+                y el usuario no sabía que ahí había un botón. */}
             <Button
-              variant="ghost"
-              size="icon"
-              className="text-brand-foreground hover:bg-white/20 h-8 w-8"
-              title="Descargar PDF"
+              size="sm"
+              className="h-8 gap-1.5 rounded-full bg-white px-3 text-brand hover:bg-white/90 shadow-sm font-semibold"
+              title="Descargar el PDF del cierre"
               onClick={handlePDF}
             >
-              <FileDown className="h-5 w-5" />
+              <FileDown className="h-4 w-4" />
+              <span className="text-xs">PDF</span>
             </Button>
           </div>
         </div>
@@ -484,8 +498,8 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
         </div>
       </div>
 
-      {/* Footer — Cerrar Caja */}
-      <div className="px-3 py-3 shrink-0">
+      {/* Footer — Cerrar Caja + PDF */}
+      <div className="px-3 py-3 shrink-0 space-y-2">
         {cajaCerrada ? (
           <div className="flex items-center justify-center gap-2 bg-muted rounded-xl py-3">
             <Lock className="h-4 w-4 text-muted-foreground" />
@@ -500,6 +514,22 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "" }: CierreCajaPr
             Cerrar Caja y Finalizar Jornada
           </Button>
         )}
+
+        {/* El PDF tambien al pie, que es donde el usuario esta mirando cuando
+            termina de cerrar. Con la caja ya cerrada pasa a ser LA accion que
+            queda —el comprobante de la jornada— asi que se muestra solido; con
+            la caja abierta va en secundario para no competir con el boton de
+            cerrar. */}
+        <Button
+          variant={cajaCerrada ? "default" : "outline"}
+          className={`w-full rounded-xl py-5 text-sm font-semibold flex items-center gap-2 ${
+            cajaCerrada ? "bg-success hover:bg-success/90 text-success-foreground" : ""
+          }`}
+          onClick={handlePDF}
+        >
+          <FileDown className="h-4 w-4" />
+          Descargar PDF del cierre
+        </Button>
       </div>
 
       {/* Modal — Requisitos no cumplidos */}

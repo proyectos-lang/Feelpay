@@ -770,15 +770,23 @@ export default function Page() {
   // de caja y el monitoreo del admin: si no existe, ese dia no aparece por
   // ningun lado aunque se haya trabajado.
   //
-  // Se bloquea cuando NO hay fila para hoy (estado null), no cuando la ruta
-  // esta 'cerrada'. Una ruta cerrada YA se inicio: bloquear tambien ese caso
-  // dejaria al vendedor sin acceso a nada despues de cada cierre de caja, que
-  // es algo que pasa todos los dias. Cobrar con la ruta cerrada sigue estando
-  // prohibido — de eso se encarga el guard propio del modulo de pagos, que
-  // exige 'abierta'.
+  // La jornada tiene que estar ABIERTA, no solo iniciada. Cerrar la caja
+  // termina el dia: el conteo ya se cuadro y se firmo, asi que cualquier
+  // movimiento posterior lo descuadraria hacia atras. El vendedor queda
+  // bloqueado hasta el dia siguiente, cuando vuelve a iniciar ruta.
+  //
+  // UNICA EXCEPCION: `cierre-caja`. Es la pantalla donde acaba de cerrar y
+  // donde esta el resumen y el PDF de la jornada. Bloquearla le arrancaria el
+  // comprobante de las manos en el mismo momento de generarlo, y ademas no
+  // permite hacer ningun movimiento: el propio cierre solo aplica sobre una
+  // ruta 'abierta', asi que volver a entrar ahi no puede reabrir ni alterar
+  // nada.
   const rolExigeRutaIniciada = ["vendedor", "asesor"].includes(userRol)
   const rutaSinIniciar =
-    rolExigeRutaIniciada && !!selectedRuta && (!rutaActivaResolved || rutaActivaEstado === null)
+    rolExigeRutaIniciada &&
+    !!selectedRuta &&
+    currentView !== "cierre-caja" &&
+    (!rutaActivaResolved || rutaActivaEstado !== "abierta")
 
   const renderView = () => {
     switch (currentView) {
@@ -793,7 +801,14 @@ export default function Page() {
           />
         )
       case "cierre-caja":
-        return <CierreCaja onBack={() => handleViewChange("daily-summary")} rutaId={rutaId} rutaNombre={rutaPais} />
+        return (
+          <CierreCaja
+            onBack={() => handleViewChange("daily-summary")}
+            rutaId={rutaId}
+            rutaNombre={rutaPais}
+            onRouteStateChange={handleRutaActivaEstadoChange}
+          />
+        )
       case "view-clients":
         return <ViewClients />
       case "new-client":
