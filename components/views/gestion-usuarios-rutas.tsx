@@ -319,30 +319,100 @@ function UsuariosTab() {
 }
 
 // ─── Tab Rutas ────────────────────────────────────────────────────────────────
+//
+// Aquí vive TODA la configuración de una ruta. Antes estaba partida en dos
+// pestañas: "Rutas" tenía nombre, ciudad y país, y "Aprobaciones" los umbrales
+// de revisión, la geocerca y los métodos de interés. Configurar una unidad
+// obligaba a saltar entre pestañas y a acordarse de en cuál vivía cada cosa —
+// y los métodos de interés nunca fueron un umbral de aprobación, así que ahí
+// no los encontraba nadie.
+
+type RutaConfigRow = {
+  ruta_id: number
+  venta_nueva_habilitado: boolean
+  venta_nueva_umbral: number | null
+  venta_renovacion_habilitado: boolean
+  venta_renovacion_umbral: number | null
+  abono_habilitado: boolean
+  abono_umbral_cuotas: number | null
+  geocerca_habilitada: boolean
+  geocerca_radio_metros: number | null
+  amortizaciones_habilitadas: string[] | null
+  amortizacion_default: string | null
+}
+
+type CatalogItem = { id: number; nombre: string }
+
+type ItemFormRow = { habilitado: boolean; umbral: string }
+
+const ITEM_TIPOS = [
+  { tipo: "ingreso" as const, label: "Ingresos" },
+  { tipo: "gasto" as const, label: "Gastos" },
+  { tipo: "retiro" as const, label: "Retiros" },
+]
+
+// Una ruta sin fila de configuración ve los dos métodos, como siempre.
+const AMORTIZACIONES_DEFAULT = ["aleman", "americano"]
 
 function RutasTab() {
   const { toast } = useToast()
   const [rutas, setRutas] = useState<Ruta[]>([])
+  const [configs, setConfigs] = useState<Map<number, RutaConfigRow>>(new Map())
   const [loading, setLoading] = useState(true)
+  const [loadingItems, setLoadingItems] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Ruta | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
 
+  // Datos de la ruta
   const [fNombre, setFNombre] = useState("")
   const [fCiudad, setFCiudad] = useState("")
   const [fPais, setFPais] = useState("")
 
-  const fetchRutas = useCallback(async () => {
+  // Catálogos de items: son globales, se cargan una vez y no cambian por ruta.
+  const [ingresoItems, setIngresoItems] = useState<CatalogItem[]>([])
+  const [gastoItems, setGastoItems] = useState<CatalogItem[]>([])
+  const [retiroItems, setRetiroItems] = useState<CatalogItem[]>([])
+
+  // Umbrales de revisión de secretaría
+  const [fVentaNuevaHab, setFVentaNuevaHab] = useState(false)
+  const [fVentaNuevaUmbral, setFVentaNuevaUmbral] = useState("")
+  const [fVentaRenovacionHab, setFVentaRenovacionHab] = useState(false)
+  const [fVentaRenovacionUmbral, setFVentaRenovacionUmbral] = useState("")
+  const [fAbonoHab, setFAbonoHab] = useState(false)
+  const [fAbonoUmbralCuotas, setFAbonoUmbralCuotas] = useState("")
+  const [fGeocercaHab, setFGeocercaHab] = useState(false)
+  const [fGeocercaRadio, setFGeocercaRadio] = useState("100")
+  // Métodos de interés que usa la unidad, y cuál llega preseleccionado en la
+  // venta. Antes el formulario ofrecía siempre los dos y ninguno marcado.
+  const [fAmortizaciones, setFAmortizaciones] = useState<string[]>(AMORTIZACIONES_DEFAULT)
+  const [fAmortizacionDefault, setFAmortizacionDefault] = useState<string>("")
+  const [itemForm, setItemForm] = useState<Map<string, ItemFormRow>>(new Map())
+
+  const itemsByTipo: Record<string, CatalogItem[]> = {
+    ingreso: ingresoItems,
+    gasto: gastoItems,
+    retiro: retiroItems,
+  }
+
+  const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
       const supabase = createClient()
-      const { data, error } = await supabase
-        .from("rutas")
-        .select("id, nombre, ciudad, pais")
-        .order("id", { ascending: true })
-      if (error) throw error
-      setRutas(data ?? [])
+      const [rutasRes, configsRes, ingresosRes, gastosRes, retirosRes] = await Promise.all([
+        supabase.from("rutas").select("id, nombre, ciudad, pais").order("id", { ascending: true }),
+        supabase.from("ruta_config_umbrales").select("*"),
+        supabase.from("ingresos").select("id, nombre").order("nombre"),
+        supabase.from("gastos").select("id, nombre").order("nombre"),
+        supabase.from("retiros").select("id, nombre").order("nombre"),
+      ])
+      if (rutasRes.error) throw rutasRes.error
+      setRutas((rutasRes.data as Ruta[]) ?? [])
+      setConfigs(new Map(((configsRes.data as RutaConfigRow[]) ?? []).map((c) => [c.ruta_id, c])))
+      setIngresoItems((ingresosRes.data as CatalogItem[]) ?? [])
+      setGastoItems((gastosRes.data as CatalogItem[]) ?? [])
+      setRetiroItems((retirosRes.data as CatalogItem[]) ?? [])
     } catch (err) {
       console.error("[v0] Error fetching rutas:", err)
       toast({ title: "Error", description: "No se pudieron cargar las rutas", variant: "destructive" })
@@ -351,16 +421,69 @@ function RutasTab() {
     }
   }, [toast])
 
-  useEffect(() => { fetchRutas() }, [fetchRutas])
+  useEffect(() => { fetchAll() }, [fetchAll])
+
+  // Deja el formulario con la configuración de una ruta, o con los defaults
+  // si todavía no tiene fila (ruta nueva o nunca configurada).
+  const cargarConfig = (c: RutaConfigRow | undefined) => {
+    setFVentaNuevaHab(c?.venta_nueva_habilitado ?? false)
+    setFVentaNuevaUmbral(c?.venta_nueva_umbral?.toString() ?? "")
+    setFVentaRenovacionHab(c?.venta_renovacion_habilitado ?? false)
+    setFVentaRenovacionUmbral(c?.venta_renovacion_umbral?.toString() ?? "")
+    setFAbonoHab(c?.abono_habilitado ?? false)
+    setFAbonoUmbralCuotas(c?.abono_umbral_cuotas?.toString() ?? "")
+    setFGeocercaHab(c?.geocerca_habilitada ?? false)
+    setFGeocercaRadio(c?.geocerca_radio_metros?.toString() ?? "100")
+    const amort = c?.amortizaciones_habilitadas
+    setFAmortizaciones(amort && amort.length > 0 ? amort : AMORTIZACIONES_DEFAULT)
+    setFAmortizacionDefault(c?.amortizacion_default ?? "")
+  }
 
   const openCreate = () => {
     setEditing(null); setFNombre(""); setFCiudad(""); setFPais("")
+    cargarConfig(undefined)
+    setItemForm(new Map())
     setShowForm(true)
   }
 
-  const openEdit = (r: Ruta) => {
+  const openEdit = async (r: Ruta) => {
     setEditing(r); setFNombre(r.nombre); setFCiudad(r.ciudad ?? ""); setFPais(r.pais ?? "")
+    cargarConfig(configs.get(r.id))
+    setItemForm(new Map())
     setShowForm(true)
+
+    // Los umbrales por item son muchos y solo importan para la ruta abierta:
+    // se traen al abrir el diálogo, no en la carga general.
+    setLoadingItems(true)
+    try {
+      const { data } = await createClient()
+        .from("ruta_item_umbrales")
+        .select("item_tipo, item_id, habilitado, umbral")
+        .eq("ruta_id", r.id)
+      const map = new Map<string, ItemFormRow>()
+      for (const row of (data ?? []) as { item_tipo: string; item_id: number; habilitado: boolean; umbral: number | null }[]) {
+        map.set(`${row.item_tipo}:${row.item_id}`, { habilitado: row.habilitado, umbral: row.umbral?.toString() ?? "" })
+      }
+      setItemForm(map)
+    } finally {
+      setLoadingItems(false)
+    }
+  }
+
+  const toggleItemHabilitado = (key: string, habilitado: boolean) => {
+    setItemForm((prev) => {
+      const next = new Map(prev)
+      next.set(key, { habilitado, umbral: next.get(key)?.umbral ?? "" })
+      return next
+    })
+  }
+
+  const setItemUmbralValue = (key: string, umbral: string) => {
+    setItemForm((prev) => {
+      const next = new Map(prev)
+      next.set(key, { habilitado: next.get(key)?.habilitado ?? false, umbral })
+      return next
+    })
   }
 
   const handleSave = async () => {
@@ -376,17 +499,73 @@ function RutasTab() {
         ciudad: fCiudad.trim() || null,
         pais: fPais.trim() || null,
       }
+
+      // La ruta primero: si es nueva hay que conocer su id antes de poder
+      // guardarle la configuración.
+      let rutaId: number
       if (editing) {
         const { error } = await supabase.from("rutas").update(payload).eq("id", editing.id)
         if (error) throw error
-        toast({ title: "Ruta actualizada" })
+        rutaId = editing.id
       } else {
-        const { error } = await supabase.from("rutas").insert(payload)
+        const { data, error } = await supabase.from("rutas").insert(payload).select("id").single()
         if (error) throw error
-        toast({ title: "Ruta creada" })
+        rutaId = (data as { id: number }).id
       }
+
+      const configPayload = {
+        ruta_id: rutaId,
+        venta_nueva_habilitado: fVentaNuevaHab,
+        venta_nueva_umbral: fVentaNuevaUmbral ? Number.parseFloat(fVentaNuevaUmbral) : null,
+        venta_renovacion_habilitado: fVentaRenovacionHab,
+        venta_renovacion_umbral: fVentaRenovacionUmbral ? Number.parseFloat(fVentaRenovacionUmbral) : null,
+        abono_habilitado: fAbonoHab,
+        abono_umbral_cuotas: fAbonoUmbralCuotas ? Number.parseInt(fAbonoUmbralCuotas, 10) : null,
+        geocerca_habilitada: fGeocercaHab,
+        // La columna es NOT NULL: si el campo queda vacio se guarda el
+        // default en vez de mandar null y romper el upsert.
+        geocerca_radio_metros: Number.parseInt(fGeocercaRadio, 10) || 100,
+        amortizaciones_habilitadas: fAmortizaciones,
+        // Si el predeterminado dejó de estar habilitado se guarda vacío: la
+        // base rechaza un predeterminado que no esté en la lista, y con esa
+        // combinación el upsert entero fallaría sin explicar por qué.
+        amortizacion_default: fAmortizaciones.includes(fAmortizacionDefault)
+          ? fAmortizacionDefault
+          : null,
+        updated_at: new Date().toISOString(),
+      }
+      const { error: configErr } = await supabase
+        .from("ruta_config_umbrales")
+        .upsert(configPayload, { onConflict: "ruta_id" })
+      if (configErr) throw configErr
+
+      // Solo se guardan los items que el usuario tocó. En una ruta nueva el
+      // mapa viene vacío y no hay nada que escribir.
+      const itemRows = ITEM_TIPOS.flatMap(({ tipo }) =>
+        itemsByTipo[tipo].flatMap((item) => {
+          const key = `${tipo}:${item.id}`
+          const f = itemForm.get(key)
+          if (!f) return []
+          return [{
+            ruta_id: rutaId,
+            item_tipo: tipo,
+            item_id: item.id,
+            habilitado: f.habilitado,
+            umbral: f.umbral ? Number.parseFloat(f.umbral) : null,
+            updated_at: new Date().toISOString(),
+          }]
+        })
+      )
+      if (itemRows.length > 0) {
+        const { error: itemsErr } = await supabase
+          .from("ruta_item_umbrales")
+          .upsert(itemRows, { onConflict: "ruta_id,item_tipo,item_id" })
+        if (itemsErr) throw itemsErr
+      }
+
+      toast({ title: editing ? "Ruta actualizada" : "Ruta creada" })
       setShowForm(false)
-      fetchRutas()
+      fetchAll()
     } catch (err: any) {
       console.error("[v0] Error saving ruta:", err)
       toast({ title: "Error", description: err?.message ?? "Error desconocido", variant: "destructive" })
@@ -403,11 +582,22 @@ function RutasTab() {
       if (error) throw error
       toast({ title: "Ruta eliminada" })
       setConfirmDeleteId(null)
-      fetchRutas()
+      fetchAll()
     } catch (err: any) {
       console.error("[v0] Error deleting ruta:", err)
       toast({ title: "Error", description: "No se pudo eliminar la ruta", variant: "destructive" })
     }
+  }
+
+  // Qué métodos de interés usa la ruta, para la columna del listado.
+  const interesDeRuta = (rutaId: number) => {
+    const c = configs.get(rutaId)
+    const habilitados = c?.amortizaciones_habilitadas?.length
+      ? c.amortizaciones_habilitadas
+      : AMORTIZACIONES_DEFAULT
+    return AMORTIZACIONES
+      .filter((a) => habilitados.includes(a.valor))
+      .map((a) => ({ etiqueta: a.etiqueta, esDefault: a.valor === c?.amortizacion_default }))
   }
 
   return (
@@ -436,13 +626,14 @@ function RutasTab() {
                 <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Ruta</th>
                 <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden sm:table-cell">Ciudad</th>
                 <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell">País</th>
+                <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Interés</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {rutas.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-3 py-10 text-center text-sm text-muted-foreground">
+                  <td colSpan={5} className="px-3 py-10 text-center text-sm text-muted-foreground">
                     No hay rutas registradas
                   </td>
                 </tr>
@@ -477,6 +668,26 @@ function RutasTab() {
                       <span className="flex items-center gap-1"><Globe2 className="h-3 w-3" />{r.pais}</span>
                     ) : "—"}
                   </td>
+                  {/* Qué métodos de interés ofrece la venta en esta ruta. El
+                      predeterminado va resaltado; con uno solo habilitado no
+                      hace falta marcarlo porque se usa siempre. */}
+                  <td className="px-3 py-2.5 hidden lg:table-cell">
+                    <div className="flex flex-wrap gap-1">
+                      {interesDeRuta(r.id).map((a) => (
+                        <span
+                          key={a.etiqueta}
+                          title={a.esDefault ? "Llega preseleccionado en la venta" : undefined}
+                          className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                            a.esDefault
+                              ? "bg-brand/15 text-brand"
+                              : "bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          {a.etiqueta}{a.esDefault ? " ·" : ""}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
                   <td className="px-3 py-2.5">
                     <div className="flex items-center justify-end gap-0.5">
                       <Button variant="ghost" size="icon" className="h-7 w-7" title="Editar" onClick={() => openEdit(r)}>
@@ -494,11 +705,16 @@ function RutasTab() {
         </div>
       )}
 
-      {/* Formulario */}
+      {/* Formulario: datos de la ruta + toda su configuración */}
       <Dialog open={showForm} onOpenChange={(o) => !saving && setShowForm(o)}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader><DialogTitle>{editing ? "Editar ruta" : "Nueva ruta"}</DialogTitle></DialogHeader>
-          <div className="space-y-3 py-1">
+        <DialogContent className="sm:max-w-lg max-h-[88vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{editing ? `Configurar ${editing.nombre}` : "Nueva ruta"}</DialogTitle>
+          </DialogHeader>
+
+          {/* El cuerpo scrollea y los botones quedan fijos abajo: la
+              configuración completa no cabe en una pantalla de celular. */}
+          <div className="flex-1 overflow-y-auto space-y-4 py-1 pr-1">
             <div className="space-y-1">
               <Label className="text-xs">Nombre de la ruta <span className="text-destructive">*</span></Label>
               <Input value={fNombre} onChange={(e) => setFNombre(e.target.value)} placeholder="Ruta Norte" className="h-9 text-sm" />
@@ -513,11 +729,207 @@ function RutasTab() {
                 <Input value={fPais} onChange={(e) => setFPais(e.target.value)} placeholder="Colombia" className="h-9 text-sm" />
               </div>
             </div>
+
+            {/* ── Métodos de interés ────────────────────────────────────── */}
+            <div className="space-y-2 border-t pt-3">
+              <Label className="text-sm">Métodos de interés que usa esta unidad</Label>
+              <p className="text-[11px] text-muted-foreground">
+                El formulario de venta solo ofrecerá los que marques aquí, y el predeterminado
+                llegará ya elegido. Si la unidad usa uno solo, el vendedor ni siquiera tiene que
+                escogerlo.
+              </p>
+              <div className="space-y-1.5">
+                {AMORTIZACIONES.map((a) => {
+                  const marcado = fAmortizaciones.includes(a.valor)
+                  // No se puede dejar la unidad sin ningún método: sin al menos
+                  // uno no se podría registrar ninguna venta.
+                  const esElUltimo = marcado && fAmortizaciones.length === 1
+                  return (
+                    <div key={a.valor} className="rounded-md border p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium">{a.etiqueta}</p>
+                          <p className="text-[11px] text-muted-foreground">{a.ayuda}</p>
+                        </div>
+                        <Switch
+                          checked={marcado}
+                          disabled={esElUltimo}
+                          onCheckedChange={(on) =>
+                            setFAmortizaciones((prev) =>
+                              on ? [...prev, a.valor] : prev.filter((x) => x !== a.valor),
+                            )
+                          }
+                        />
+                      </div>
+                      {marcado && fAmortizaciones.length > 1 && (
+                        <label className="mt-2 flex items-center gap-1.5 text-[11px] cursor-pointer">
+                          <input
+                            type="radio"
+                            name="amortizacion-default"
+                            checked={fAmortizacionDefault === a.valor}
+                            onChange={() => setFAmortizacionDefault(a.valor)}
+                            className="h-3 w-3"
+                          />
+                          Usar como predeterminado
+                        </label>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+              {fAmortizaciones.length === 1 && (
+                <p className="text-[11px] text-muted-foreground">
+                  Con un solo método habilitado no hace falta predeterminado: ese se usa siempre.
+                </p>
+              )}
+            </div>
+
+            {/* ── Control de aprobaciones ───────────────────────────────── */}
+            <div className="space-y-2 border-t pt-3">
+              <div className="flex items-center gap-1.5">
+                <Gauge className="h-3.5 w-3.5 text-muted-foreground" />
+                <Label className="text-sm">Control de aprobaciones</Label>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Por encima del umbral, el movimiento pasa a revisión de secretaría en vez de
+                aplicarse directo.
+              </p>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-normal">Ventas nuevas</Label>
+                  <Switch checked={fVentaNuevaHab} onCheckedChange={setFVentaNuevaHab} />
+                </div>
+                <Input
+                  type="number"
+                  disabled={!fVentaNuevaHab}
+                  value={fVentaNuevaUmbral}
+                  onChange={(e) => setFVentaNuevaUmbral(e.target.value)}
+                  placeholder="Umbral en $ (ej. 1000000)"
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-normal">Renovaciones</Label>
+                  <Switch checked={fVentaRenovacionHab} onCheckedChange={setFVentaRenovacionHab} />
+                </div>
+                <Input
+                  type="number"
+                  disabled={!fVentaRenovacionHab}
+                  value={fVentaRenovacionUmbral}
+                  onChange={(e) => setFVentaRenovacionUmbral(e.target.value)}
+                  placeholder="Umbral en $ (ej. 1000000)"
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-normal">Abonos (cuotas pagadas de una vez)</Label>
+                  <Switch checked={fAbonoHab} onCheckedChange={setFAbonoHab} />
+                </div>
+                <Input
+                  type="number"
+                  min={1}
+                  step={1}
+                  disabled={!fAbonoHab}
+                  value={fAbonoUmbralCuotas}
+                  onChange={(e) => setFAbonoUmbralCuotas(e.target.value)}
+                  placeholder="Cantidad de cuotas (ej. 3)"
+                  className="h-9 text-sm"
+                />
+              </div>
+
+              {/* Umbral por item de ingreso / gasto / retiro */}
+              {!editing ? (
+                <p className="text-[11px] text-muted-foreground pt-1">
+                  Los umbrales de ingresos, gastos y retiros se configuran al editar la ruta,
+                  una vez creada.
+                </p>
+              ) : loadingItems ? (
+                <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+              ) : (
+                <Accordion type="multiple" className="rounded-lg border px-3">
+                  {ITEM_TIPOS.map(({ tipo, label }) => {
+                    const items = itemsByTipo[tipo]
+                    const activos = items.filter((item) => itemForm.get(`${tipo}:${item.id}`)?.habilitado).length
+                    return (
+                      <AccordionItem key={tipo} value={tipo}>
+                        <AccordionTrigger className="text-sm">
+                          {label}
+                          {activos > 0 && (
+                            <span className="text-[10px] font-normal text-muted-foreground mr-auto ml-2">
+                              {activos} con umbral
+                            </span>
+                          )}
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          {items.length === 0 ? (
+                            <p className="text-xs text-muted-foreground py-1">Sin items configurados en {label.toLowerCase()}</p>
+                          ) : (
+                            <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                              {items.map((item) => {
+                                const key = `${tipo}:${item.id}`
+                                const f = itemForm.get(key)
+                                return (
+                                  <div key={item.id} className="space-y-1">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <Label className="text-xs font-normal truncate">{item.nombre}</Label>
+                                      <Switch
+                                        checked={f?.habilitado ?? false}
+                                        onCheckedChange={(v) => toggleItemHabilitado(key, v)}
+                                      />
+                                    </div>
+                                    {f?.habilitado && (
+                                      <Input
+                                        type="number"
+                                        value={f?.umbral ?? ""}
+                                        onChange={(e) => setItemUmbralValue(key, e.target.value)}
+                                        placeholder="Umbral en $"
+                                        className="h-8 text-xs"
+                                      />
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </AccordionContent>
+                      </AccordionItem>
+                    )
+                  })}
+                </Accordion>
+              )}
+            </div>
+
+            {/* ── Geocerca ──────────────────────────────────────────────── */}
+            <div className="space-y-1.5 border-t pt-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm">Geocerca (cobrar solo donde está el cliente)</Label>
+                <Switch checked={fGeocercaHab} onCheckedChange={setFGeocercaHab} />
+              </div>
+              <Input
+                type="number"
+                min={20}
+                step={10}
+                disabled={!fGeocercaHab}
+                value={fGeocercaRadio}
+                onChange={(e) => setFGeocercaRadio(e.target.value)}
+                placeholder="Radio en metros (ej. 100)"
+                className="h-9 text-sm"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Por debajo de 50 m el GPS de un celular falla seguido: entre edificios o bajo techo el error puede pasar
+                de los 50 m y bloquearía cobros válidos. Empieza en 100 m y bájalo si en campo funciona. Los clientes sin
+                ubicación guardada se pueden cobrar normal — la ubicación se captura en ese primer cobro.
+              </p>
+            </div>
           </div>
-          <div className="flex justify-end gap-2 pt-1">
+
+          <div className="flex justify-end gap-2 pt-2 border-t">
             <Button variant="outline" size="sm" onClick={() => setShowForm(false)} disabled={saving}>Cancelar</Button>
             <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5">
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
               {editing ? "Guardar cambios" : "Crear ruta"}
             </Button>
           </div>
@@ -1550,439 +1962,6 @@ function ReportesBiTab() {
   )
 }
 
-// ─── Tab Control de Aprobaciones ───────────────────────────────────────────────
-
-type RutaConfigRow = {
-  ruta_id: number
-  venta_nueva_habilitado: boolean
-  venta_nueva_umbral: number | null
-  venta_renovacion_habilitado: boolean
-  venta_renovacion_umbral: number | null
-  abono_habilitado: boolean
-  abono_umbral_cuotas: number | null
-  geocerca_habilitada: boolean
-  geocerca_radio_metros: number | null
-}
-
-type CatalogItem = { id: number; nombre: string }
-
-type ItemFormRow = { habilitado: boolean; umbral: string }
-
-const ITEM_TIPOS = [
-  { tipo: "ingreso" as const, label: "Ingresos" },
-  { tipo: "gasto" as const, label: "Gastos" },
-  { tipo: "retiro" as const, label: "Retiros" },
-]
-
-function ControlAprobacionesTab() {
-  const { toast } = useToast()
-  const [rutas, setRutas] = useState<Ruta[]>([])
-  const [configs, setConfigs] = useState<Map<number, RutaConfigRow>>(new Map())
-  const [selectedRutaId, setSelectedRutaId] = useState<number | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [loadingItems, setLoadingItems] = useState(false)
-  const [saving, setSaving] = useState(false)
-
-  // Catálogos de items (una vez, no cambian por ruta)
-  const [ingresoItems, setIngresoItems] = useState<CatalogItem[]>([])
-  const [gastoItems, setGastoItems] = useState<CatalogItem[]>([])
-  const [retiroItems, setRetiroItems] = useState<CatalogItem[]>([])
-
-  // Form de la ruta seleccionada
-  const [fVentaNuevaHab, setFVentaNuevaHab] = useState(false)
-  const [fVentaNuevaUmbral, setFVentaNuevaUmbral] = useState("")
-  const [fVentaRenovacionHab, setFVentaRenovacionHab] = useState(false)
-  const [fVentaRenovacionUmbral, setFVentaRenovacionUmbral] = useState("")
-  const [fAbonoHab, setFAbonoHab] = useState(false)
-  const [fAbonoUmbralCuotas, setFAbonoUmbralCuotas] = useState("")
-  const [fGeocercaHab, setFGeocercaHab] = useState(false)
-  const [fGeocercaRadio, setFGeocercaRadio] = useState("100")
-  // Métodos de interés que usa la unidad, y cuál llega preseleccionado en la
-  // venta. Antes el formulario ofrecía siempre los dos y ninguno marcado.
-  const [fAmortizaciones, setFAmortizaciones] = useState<string[]>(["aleman", "americano"])
-  const [fAmortizacionDefault, setFAmortizacionDefault] = useState<string>("")
-  const [itemForm, setItemForm] = useState<Map<string, ItemFormRow>>(new Map())
-
-  const itemsByTipo: Record<string, CatalogItem[]> = {
-    ingreso: ingresoItems,
-    gasto: gastoItems,
-    retiro: retiroItems,
-  }
-
-  const fetchAll = useCallback(async () => {
-    setLoading(true)
-    try {
-      const supabase = createClient()
-      const [{ data: rutasData }, { data: configsData }, { data: ingresosData }, { data: gastosData }, { data: retirosData }] =
-        await Promise.all([
-          supabase.from("rutas").select("id, nombre, ciudad, pais").order("id"),
-          supabase.from("ruta_config_umbrales").select("*"),
-          supabase.from("ingresos").select("id, nombre").order("nombre"),
-          supabase.from("gastos").select("id, nombre").order("nombre"),
-          supabase.from("retiros").select("id, nombre").order("nombre"),
-        ])
-      setRutas((rutasData as Ruta[]) ?? [])
-      setConfigs(new Map(((configsData as RutaConfigRow[]) ?? []).map((c) => [c.ruta_id, c])))
-      setIngresoItems((ingresosData as CatalogItem[]) ?? [])
-      setGastoItems((gastosData as CatalogItem[]) ?? [])
-      setRetiroItems((retirosData as CatalogItem[]) ?? [])
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { fetchAll() }, [fetchAll])
-
-  const selectRuta = async (id: number) => {
-    setSelectedRutaId(id)
-    const c = configs.get(id)
-    setFVentaNuevaHab(c?.venta_nueva_habilitado ?? false)
-    setFVentaNuevaUmbral(c?.venta_nueva_umbral?.toString() ?? "")
-    setFVentaRenovacionHab(c?.venta_renovacion_habilitado ?? false)
-    setFVentaRenovacionUmbral(c?.venta_renovacion_umbral?.toString() ?? "")
-    setFAbonoHab(c?.abono_habilitado ?? false)
-    setFAbonoUmbralCuotas(c?.abono_umbral_cuotas?.toString() ?? "")
-    setFGeocercaHab(c?.geocerca_habilitada ?? false)
-    setFGeocercaRadio(c?.geocerca_radio_metros?.toString() ?? "100")
-    const amort = (c as { amortizaciones_habilitadas?: string[] } | undefined)?.amortizaciones_habilitadas
-    setFAmortizaciones(amort && amort.length > 0 ? amort : ["aleman", "americano"])
-    setFAmortizacionDefault(
-      (c as { amortizacion_default?: string | null } | undefined)?.amortizacion_default ?? "",
-    )
-
-    setLoadingItems(true)
-    try {
-      const { data } = await createClient()
-        .from("ruta_item_umbrales")
-        .select("item_tipo, item_id, habilitado, umbral")
-        .eq("ruta_id", id)
-      const map = new Map<string, ItemFormRow>()
-      for (const row of (data ?? []) as { item_tipo: string; item_id: number; habilitado: boolean; umbral: number | null }[]) {
-        map.set(`${row.item_tipo}:${row.item_id}`, { habilitado: row.habilitado, umbral: row.umbral?.toString() ?? "" })
-      }
-      setItemForm(map)
-    } finally {
-      setLoadingItems(false)
-    }
-  }
-
-  const toggleItemHabilitado = (key: string, habilitado: boolean) => {
-    setItemForm((prev) => {
-      const next = new Map(prev)
-      next.set(key, { habilitado, umbral: next.get(key)?.umbral ?? "" })
-      return next
-    })
-  }
-
-  const setItemUmbralValue = (key: string, umbral: string) => {
-    setItemForm((prev) => {
-      const next = new Map(prev)
-      next.set(key, { habilitado: next.get(key)?.habilitado ?? false, umbral })
-      return next
-    })
-  }
-
-  const handleGuardar = async () => {
-    if (selectedRutaId === null) return
-    setSaving(true)
-    try {
-      const supabase = createClient()
-
-      const configPayload = {
-        ruta_id: selectedRutaId,
-        venta_nueva_habilitado: fVentaNuevaHab,
-        venta_nueva_umbral: fVentaNuevaUmbral ? Number.parseFloat(fVentaNuevaUmbral) : null,
-        venta_renovacion_habilitado: fVentaRenovacionHab,
-        venta_renovacion_umbral: fVentaRenovacionUmbral ? Number.parseFloat(fVentaRenovacionUmbral) : null,
-        abono_habilitado: fAbonoHab,
-        abono_umbral_cuotas: fAbonoUmbralCuotas ? Number.parseInt(fAbonoUmbralCuotas, 10) : null,
-        geocerca_habilitada: fGeocercaHab,
-        // La columna es NOT NULL: si el campo queda vacio se guarda el
-        // default en vez de mandar null y romper el upsert.
-        geocerca_radio_metros: Number.parseInt(fGeocercaRadio, 10) || 100,
-        amortizaciones_habilitadas: fAmortizaciones,
-        // Si el predeterminado dejó de estar habilitado se guarda vacío: la
-        // base rechaza un predeterminado que no esté en la lista, y con esa
-        // combinación el upsert entero fallaría sin explicar por qué.
-        amortizacion_default: fAmortizaciones.includes(fAmortizacionDefault)
-          ? fAmortizacionDefault
-          : null,
-        updated_at: new Date().toISOString(),
-      }
-      const { error: configErr } = await supabase.from("ruta_config_umbrales").upsert(configPayload, { onConflict: "ruta_id" })
-      if (configErr) throw configErr
-
-      const itemRows = ITEM_TIPOS.flatMap(({ tipo }) =>
-        itemsByTipo[tipo].map((item) => {
-          const key = `${tipo}:${item.id}`
-          const f = itemForm.get(key)
-          return {
-            ruta_id: selectedRutaId,
-            item_tipo: tipo,
-            item_id: item.id,
-            habilitado: f?.habilitado ?? false,
-            umbral: f?.umbral ? Number.parseFloat(f.umbral) : null,
-            updated_at: new Date().toISOString(),
-          }
-        })
-      )
-      if (itemRows.length > 0) {
-        const { error: itemsErr } = await supabase
-          .from("ruta_item_umbrales")
-          .upsert(itemRows, { onConflict: "ruta_id,item_tipo,item_id" })
-        if (itemsErr) throw itemsErr
-      }
-
-      toast({ title: "Control de aprobaciones guardado" })
-      await fetchAll()
-    } catch (err) {
-      toast({ title: "Error", description: err instanceof Error ? err.message : "Error desconocido", variant: "destructive" })
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const selectedRuta = rutas.find((r) => r.id === selectedRutaId)
-
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-4">
-      {/* Panel selector de ruta */}
-      <div className="space-y-1">
-        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-1 mb-2">Rutas</p>
-        {loading ? (
-          <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-        ) : (
-          <div className="space-y-1 max-h-[60vh] overflow-y-auto pr-1">
-            {rutas.map((r) => (
-              <button
-                key={r.id}
-                type="button"
-                onClick={() => selectRuta(r.id)}
-                className={`w-full text-left rounded-lg border px-3 py-2 text-sm transition-all truncate ${
-                  selectedRutaId === r.id
-                    ? "border-brand bg-brand/10 font-semibold"
-                    : "border-transparent hover:border-border hover:bg-muted/50"
-                }`}
-              >
-                {r.nombre}
-              </button>
-            ))}
-            {rutas.length === 0 && <p className="text-xs text-muted-foreground px-1 py-2">Sin rutas registradas</p>}
-          </div>
-        )}
-      </div>
-
-      {/* Panel de configuración */}
-      <div className="rounded-xl border bg-card p-4 space-y-4">
-        {!selectedRuta ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground gap-2">
-            <Gauge className="h-8 w-8 opacity-30" />
-            <p className="text-sm">Selecciona una ruta para configurar<br />su control de aprobaciones</p>
-          </div>
-        ) : (
-          <>
-            <div>
-              <p className="font-semibold text-sm">Control de Aprobaciones</p>
-              <p className="text-xs text-muted-foreground">{selectedRuta.nombre}</p>
-            </div>
-
-            {/* Gastos/Ingresos/Retiros: umbral por item */}
-            {loadingItems ? (
-              <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-            ) : (
-              <Accordion type="multiple" className="rounded-lg border px-3">
-                {ITEM_TIPOS.map(({ tipo, label }) => {
-                  const items = itemsByTipo[tipo]
-                  const activos = items.filter((item) => itemForm.get(`${tipo}:${item.id}`)?.habilitado).length
-                  return (
-                    <AccordionItem key={tipo} value={tipo}>
-                      <AccordionTrigger className="text-sm">
-                        {label}
-                        {activos > 0 && (
-                          <span className="text-[10px] font-normal text-muted-foreground mr-auto ml-2">
-                            {activos} con umbral
-                          </span>
-                        )}
-                      </AccordionTrigger>
-                      <AccordionContent>
-                        {items.length === 0 ? (
-                          <p className="text-xs text-muted-foreground py-1">Sin items configurados en {label.toLowerCase()}</p>
-                        ) : (
-                          <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                            {items.map((item) => {
-                              const key = `${tipo}:${item.id}`
-                              const f = itemForm.get(key)
-                              return (
-                                <div key={item.id} className="space-y-1">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <Label className="text-xs font-normal truncate">{item.nombre}</Label>
-                                    <Switch
-                                      checked={f?.habilitado ?? false}
-                                      onCheckedChange={(v) => toggleItemHabilitado(key, v)}
-                                    />
-                                  </div>
-                                  {f?.habilitado && (
-                                    <Input
-                                      type="number"
-                                      value={f?.umbral ?? ""}
-                                      onChange={(e) => setItemUmbralValue(key, e.target.value)}
-                                      placeholder="Umbral en $"
-                                      className="h-8 text-xs"
-                                    />
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </AccordionContent>
-                    </AccordionItem>
-                  )
-                })}
-              </Accordion>
-            )}
-
-            {/* Ventas: nueva + renovación */}
-            <div className="space-y-2 pt-1 border-t">
-              <p className="text-xs font-semibold text-muted-foreground pt-2">Ventas</p>
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm">Ventas nuevas</Label>
-                  <Switch checked={fVentaNuevaHab} onCheckedChange={setFVentaNuevaHab} />
-                </div>
-                <Input
-                  type="number"
-                  disabled={!fVentaNuevaHab}
-                  value={fVentaNuevaUmbral}
-                  onChange={(e) => setFVentaNuevaUmbral(e.target.value)}
-                  placeholder="Umbral en $ (ej. 1000000)"
-                  className="h-9 text-sm"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm">Renovaciones</Label>
-                  <Switch checked={fVentaRenovacionHab} onCheckedChange={setFVentaRenovacionHab} />
-                </div>
-                <Input
-                  type="number"
-                  disabled={!fVentaRenovacionHab}
-                  value={fVentaRenovacionUmbral}
-                  onChange={(e) => setFVentaRenovacionUmbral(e.target.value)}
-                  placeholder="Umbral en $ (ej. 1000000)"
-                  className="h-9 text-sm"
-                />
-              </div>
-            </div>
-
-            {/* Abonos: umbral por cantidad de cuotas pagadas de una vez */}
-            <div className="space-y-1.5 pt-1 border-t pt-3">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm">Abonos (cuotas pagadas de una vez)</Label>
-                <Switch checked={fAbonoHab} onCheckedChange={setFAbonoHab} />
-              </div>
-              <Input
-                type="number"
-                min={1}
-                step={1}
-                disabled={!fAbonoHab}
-                value={fAbonoUmbralCuotas}
-                onChange={(e) => setFAbonoUmbralCuotas(e.target.value)}
-                placeholder="Cantidad de cuotas (ej. 3)"
-                className="h-9 text-sm"
-              />
-            </div>
-
-            {/* Geocerca: el cobro solo se puede registrar cerca del cliente */}
-            <div className="space-y-1.5 border-t pt-3">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm">Geocerca (cobrar solo donde está el cliente)</Label>
-                <Switch checked={fGeocercaHab} onCheckedChange={setFGeocercaHab} />
-              </div>
-              <Input
-                type="number"
-                min={20}
-                step={10}
-                disabled={!fGeocercaHab}
-                value={fGeocercaRadio}
-                onChange={(e) => setFGeocercaRadio(e.target.value)}
-                placeholder="Radio en metros (ej. 100)"
-                className="h-9 text-sm"
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Por debajo de 50 m el GPS de un celular falla seguido: entre edificios o bajo techo el error puede pasar
-                de los 50 m y bloquearía cobros válidos. Empieza en 100 m y bájalo si en campo funciona. Los clientes sin
-                ubicación guardada se pueden cobrar normal — la ubicación se captura en ese primer cobro.
-              </p>
-            </div>
-
-            {/* Métodos de interés de la unidad */}
-            <div className="space-y-2 border-t pt-3">
-              <Label className="text-sm">Métodos de interés que usa esta unidad</Label>
-              <p className="text-[11px] text-muted-foreground">
-                El formulario de venta solo ofrecerá los que marques aquí, y el predeterminado
-                llegará ya elegido. Si la unidad usa uno solo, el vendedor ni siquiera tiene que
-                escogerlo.
-              </p>
-              <div className="space-y-1.5">
-                {AMORTIZACIONES.map((a) => {
-                  const marcado = fAmortizaciones.includes(a.valor)
-                  // No se puede dejar la unidad sin ningún método: sin al menos
-                  // uno no se podría registrar ninguna venta.
-                  const esElUltimo = marcado && fAmortizaciones.length === 1
-                  return (
-                    <div key={a.valor} className="rounded-md border p-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium">{a.etiqueta}</p>
-                          <p className="text-[11px] text-muted-foreground">{a.ayuda}</p>
-                        </div>
-                        <Switch
-                          checked={marcado}
-                          disabled={esElUltimo}
-                          onCheckedChange={(on) =>
-                            setFAmortizaciones((prev) =>
-                              on ? [...prev, a.valor] : prev.filter((x) => x !== a.valor),
-                            )
-                          }
-                        />
-                      </div>
-                      {marcado && fAmortizaciones.length > 1 && (
-                        <label className="mt-2 flex items-center gap-1.5 text-[11px] cursor-pointer">
-                          <input
-                            type="radio"
-                            name="amortizacion-default"
-                            checked={fAmortizacionDefault === a.valor}
-                            onChange={() => setFAmortizacionDefault(a.valor)}
-                            className="h-3 w-3"
-                          />
-                          Usar como predeterminado
-                        </label>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-              {fAmortizaciones.length === 1 && (
-                <p className="text-[11px] text-muted-foreground">
-                  Con un solo método habilitado no hace falta predeterminado: ese se usa siempre.
-                </p>
-              )}
-            </div>
-
-            <div className="flex justify-end pt-1">
-              <Button size="sm" onClick={handleGuardar} disabled={saving} className="gap-1.5 h-8 text-xs">
-                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                Guardar
-              </Button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export function GestionUsuariosRutas() {
@@ -2001,7 +1980,7 @@ export function GestionUsuariosRutas() {
       </div>
 
       <Tabs defaultValue="usuarios" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-7 h-9">
+        <TabsList className="grid w-full grid-cols-6 h-9">
           <TabsTrigger value="usuarios" className="gap-1 text-xs">
             <Users className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Usuarios</span>
@@ -2026,10 +2005,6 @@ export function GestionUsuariosRutas() {
             <BarChart2 className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Power BI</span>
           </TabsTrigger>
-          <TabsTrigger value="umbrales" className="gap-1 text-xs">
-            <Gauge className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Aprobaciones</span>
-          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="usuarios">
@@ -2049,9 +2024,6 @@ export function GestionUsuariosRutas() {
         </TabsContent>
         <TabsContent value="reportes-bi">
           <ReportesBiTab />
-        </TabsContent>
-        <TabsContent value="umbrales">
-          <ControlAprobacionesTab />
         </TabsContent>
       </Tabs>
     </div>
