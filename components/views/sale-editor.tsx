@@ -88,6 +88,7 @@ import {
 import {
   AlertCircle,
   AlertTriangle,
+  ArrowLeftRight,
   ChevronLeft,
   ChevronRight,
   Edit2,
@@ -103,6 +104,7 @@ import {
   Settings2,
   Trash2,
 } from "lucide-react"
+import { MovimientosPanel } from "@/components/views/movimientos-panel"
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
@@ -240,6 +242,8 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
   // corregir no tiene por qué estar en la que uno tenga abierta.
   const [rutas, setRutas] = useState<{ id: number; nombre: string }[]>([])
   const [rutaFiltro, setRutaFiltro] = useState<number | "todas">(currentRutaId)
+  // Qué se está listando: ventas (lo de siempre) o los movimientos de caja.
+  const [modoListado, setModoListado] = useState("ventas")
 
   // Préstamo abierto
   const [loanId, setLoanId] = useState<string | null>(loanIdInicial ?? null)
@@ -831,6 +835,32 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
           </div>
         </div>
 
+        {/* Dos modos: ventas (lo de siempre) y los movimientos de caja. Estos
+            últimos no cuelgan de ningún préstamo — `gastosregistros` no tiene
+            loan_id —, así que no caben dentro del detalle de una venta y viven
+            como pestaña propia del buscador. */}
+        <Tabs value={modoListado} onValueChange={setModoListado}>
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="ventas" className="text-[11px] md:text-sm gap-1">
+              <Settings2 className="h-3.5 w-3.5" />
+              <span className="truncate">Ventas</span>
+            </TabsTrigger>
+            <TabsTrigger value="movimientos" className="text-[11px] md:text-sm gap-1">
+              <ArrowLeftRight className="h-3.5 w-3.5" />
+              <span className="truncate">Ingresos, gastos y retiros</span>
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="movimientos" className="mt-3">
+            <MovimientosPanel
+              rutaId={rutaFiltro}
+              rutas={rutas}
+              onRutaChange={setRutaFiltro}
+              editable
+            />
+          </TabsContent>
+
+          <TabsContent value="ventas" className="mt-3 space-y-4">
         <Card>
           <CardContent className="p-3 md:p-4 space-y-3">
             <div className="flex flex-col sm:flex-row gap-2">
@@ -941,6 +971,8 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
             )}
           </CardContent>
         </Card>
+          </TabsContent>
+        </Tabs>
       </div>
     )
   }
