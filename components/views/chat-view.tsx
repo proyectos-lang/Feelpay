@@ -132,6 +132,13 @@ function NewConversationDialog({ open, onClose, currentUser, onConversationSelec
   const [groupName, setGroupName] = useState("")
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<number>>(new Set())
   const [selectedPrivateId, setSelectedPrivateId] = useState<number | null>(null)
+  // Buscador de usuarios: con la lista completa había que bajar a buscar a
+  // ojo, y en una empresa con decenas de usuarios eso no escala.
+  const [busqueda, setBusqueda] = useState("")
+
+  const contactosFiltrados = contacts.filter((c) =>
+    c.nombre.toLowerCase().includes(busqueda.trim().toLowerCase()),
+  )
 
   useEffect(() => {
     if (!open) return
@@ -139,6 +146,7 @@ function NewConversationDialog({ open, onClose, currentUser, onConversationSelec
     setGroupName("")
     setSelectedGroupIds(new Set())
     setSelectedPrivateId(null)
+    setBusqueda("")
 
     const supabase = createClient()
     supabase
@@ -278,14 +286,43 @@ function NewConversationDialog({ open, onClose, currentUser, onConversationSelec
             <TabsTrigger value="grupo" className="text-xs gap-1"><Users className="h-3.5 w-3.5" />Grupo</TabsTrigger>
           </TabsList>
 
+          {/* Buscador fuera de las pestañas: sirve a las dos listas, y
+              repetirlo obligaría a escribir el nombre otra vez al cambiar
+              de pestaña. */}
+          {!loadingContacts && contacts.length > 0 && (
+            <div className="relative mb-3">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Buscar usuario..."
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                className="h-8 text-sm pl-8 pr-8"
+              />
+              {busqueda && (
+                <button
+                  type="button"
+                  onClick={() => setBusqueda("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Limpiar búsqueda"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+
           <TabsContent value="privado" className="space-y-3">
             {loadingContacts ? (
               <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
             ) : contacts.length === 0 ? (
               <p className="text-sm text-center text-muted-foreground py-4">No tienes contactos disponibles</p>
+            ) : contactosFiltrados.length === 0 ? (
+              <p className="text-sm text-center text-muted-foreground py-4">
+                Ningún usuario coincide con &quot;{busqueda}&quot;
+              </p>
             ) : (
               <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
-                {contacts.map((c) => (
+                {contactosFiltrados.map((c) => (
                   <button
                     key={c.id}
                     type="button"
@@ -321,9 +358,18 @@ function NewConversationDialog({ open, onClose, currentUser, onConversationSelec
             />
             {loadingContacts ? (
               <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+            ) : contactosFiltrados.length === 0 ? (
+              <p className="text-sm text-center text-muted-foreground py-4">
+                {contacts.length === 0
+                  ? "No tienes contactos disponibles"
+                  : `Ningún usuario coincide con "${busqueda}"`}
+              </p>
             ) : (
               <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
-                {contacts.map((c) => (
+                {/* Se filtra la lista, NO la selección: quien ya estaba
+                    marcado sigue en el grupo aunque el filtro lo oculte. El
+                    contador de abajo lo confirma. */}
+                {contactosFiltrados.map((c) => (
                   <div
                     key={c.id}
                     onClick={() => toggleGroupId(c.id)}
