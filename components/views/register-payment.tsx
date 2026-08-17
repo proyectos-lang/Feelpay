@@ -124,8 +124,9 @@ type DisplayClient = {
   nextPaymentValorCuota: number
   // True cuando la cuota objetivo del cliente es FUTURA (todas las
   // anteriores ya estan gestionadas y la proxima cuota pendiente cae
-  // despues de hoy). Se usa para mostrarlos en el listado pero
-  // bloquear las acciones de pago/no_pago hasta que llegue su dia.
+  // despues de hoy) — o sea, el cliente esta al dia. NO bloquea nada:
+  // cobrarle es un pago ADELANTADO, que es valido. Solo gobierna el
+  // badge "Prox. pago dd/mm" y el orden (van al final de la lista).
   nextPaymentEsFuturo: boolean
   // Fecha (YYYY-MM-DD) de la cuota objetivo. La usamos para mostrar
   // "Próximo pago el dd/mm" cuando `nextPaymentEsFuturo` es true.
@@ -643,7 +644,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     return c.mora > 8
   }).sort((a, b) => {
     // 1. Clientes con cuota FUTURA siempre al final, sin importar
-    //    frecuencia ni dia — son los que no se pueden procesar hoy.
+    //    frecuencia ni dia. Se pueden cobrar (adelanto), pero no son la
+    //    ruta del dia: primero lo que vence hoy o esta atrasado.
     const aFuturo = a.nextPaymentEsFuturo ? 1 : 0
     const bFuturo = b.nextPaymentEsFuturo ? 1 : 0
     if (aFuturo !== bFuturo) return aFuturo - bFuturo
@@ -667,8 +669,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const canManageClient = (client: DisplayClient) => {
     // Location must be available to register any action — no exceptions
     if (gpsStatus !== "granted") return false
-    // Cuota objetivo es FUTURA: solo se ve, no se procesa hasta que llegue su dia.
-    if (client.nextPaymentEsFuturo) return false
+    // Cuota objetivo FUTURA: NO bloquea. El cliente que esta al dia puede
+    // adelantar la cuota que vence manana, y esa es su decision, no la de la
+    // app. El servidor la acepta igual: `cuota_objetivo` es una pista y la
+    // cascada asigna la plata a la cuota mas antigua sin cubrir.
     // Daily clients: always allowed once location is confirmed
     if (client.frecuenciaPago === "daily") return true
     // In "No Diario" tab: non-daily clients can always be managed (regardless of payment day)
@@ -906,8 +910,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         // eleccion es directa:
         //   1. La cuota que vence HOY, si sigue sin cubrir.
         //   2. La vencida mas vieja sin cubrir (atraso).
-        //   3. La proxima futura — para que los semanales/quincenales sigan
-        //      visibles; `canManageClient` bloquea la accion hasta su dia.
+        //   3. La proxima futura — el cliente esta al dia. Sigue visible y
+        //      SI se puede cobrar: es un pago adelantado.
         //
         // La cuota objetivo es una PISTA que viaja con la gestion: si al
         // sincronizar ya no aplica, el servidor asigna la plata a la cuota
@@ -927,7 +931,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           continue
         }
 
-        // Cuota FUTURA: el cliente aparece pero no se puede procesar aun.
+        // Cuota FUTURA: el cliente esta al dia. Cobrarle hoy es ADELANTAR.
+        // Solo gobierna el badge y el orden en la lista, no el permiso.
         const esFuturo = !pendingToday && !oldestOverduePending && !!nextFuturePending
 
         // "Ultima cuota": la objetivo es la UNICA sin cubrir del plan —
@@ -1022,8 +1027,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         }
       }
 
-      // Sort: clientes con cuota pendiente procesable primero (ordenvisita),
-      // y los que tienen cuota FUTURA (no se pueden procesar hoy) al final.
+      // Sort: primero lo que vence hoy o esta atrasado (ordenvisita), y los
+      // que estan al dia (cuota FUTURA, cobrarlos seria adelantar) al final.
       pendingClients.sort((a, b) => {
         const aFuturo = a.nextPaymentEsFuturo ? 1 : 0
         const bFuturo = b.nextPaymentEsFuturo ? 1 : 0
@@ -2994,8 +2999,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 title={
                                   gpsStatus !== "granted"
                                     ? "Debes habilitar la ubicacion para registrar no pagos"
-                                    : client.nextPaymentEsFuturo
-                                    ? `Aun no es el dia de pago de este cliente (proxima cuota: ${client.nextPaymentFecha})`
                                     : !canManage
                                     ? "No es el dia de pago de este cliente"
                                     : "Registrar No Pago"
@@ -3017,10 +3020,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 title={
                                   gpsStatus !== "granted"
                                     ? "Debes habilitar la ubicacion para registrar pagos"
-                                    : client.nextPaymentEsFuturo
-                                    ? `Aun no es el dia de pago de este cliente (proxima cuota: ${client.nextPaymentFecha})`
                                     : !canManage
                                     ? "No es el dia de pago de este cliente"
+                                    : client.nextPaymentEsFuturo
+                                    ? `Adelantar la cuota del ${client.nextPaymentFecha.split("-").reverse().slice(0, 2).join("/")}`
                                     : "Registrar Pago"
                                 }
                                 aria-label="Registrar Pago"
@@ -3062,10 +3065,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 {/* Badge "Proximo pago": se muestra solo cuando
                                     la cuota objetivo es FUTURA (todas las
                                     anteriores ya estan gestionadas y la
-                                    siguiente cae despues de hoy). Indica
-                                    visualmente al cobrador que el cliente
-                                    esta al dia y no se puede procesar
-                                    todavia. */}
+                                    siguiente cae despues de hoy). El cliente
+                                    esta al dia; cobrarle hoy es ADELANTAR esa
+                                    cuota. El badge dice de cuando es la cuota
+                                    que se estaria adelantando — no bloquea. */}
                                 {client.nextPaymentEsFuturo && (
                                   <span className="text-[9px] md:text-xs px-1.5 py-0.5 rounded font-semibold bg-info text-info-foreground">
                                     {(() => {
