@@ -393,18 +393,14 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   // Los define secretaría por ruta. Si no hay configuración, se ofrecen los
   // dos (comportamiento de siempre).
   const [amortizacionesRuta, setAmortizacionesRuta] = useState<string[]>(["aleman", "americano"])
+  const [amortizacionDefaultRuta, setAmortizacionDefaultRuta] = useState("")
   useEffect(() => {
     let cancelado = false
     getRutaUmbrales(rutaId)
       .then((u) => {
         if (cancelado) return
         setAmortizacionesRuta(u.amortizaciones_habilitadas)
-        // El predeterminado llega elegido; si la unidad usa uno solo, ese.
-        const unico = u.amortizaciones_habilitadas.length === 1
-          ? u.amortizaciones_habilitadas[0]
-          : null
-        const elegido = u.amortizacion_default || unico
-        if (elegido) setTipoAmortizacion((prev) => prev || elegido)
+        setAmortizacionDefaultRuta(u.amortizacion_default ?? "")
       })
       .catch((err) => console.error("[v0] NewLoan umbrales error:", err))
     return () => { cancelado = true }
@@ -414,6 +410,27 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     () => AMORTIZACIONES.filter((a) => amortizacionesRuta.includes(a.valor)),
     [amortizacionesRuta],
   )
+
+  /**
+   * Con qué método arranca el formulario: el predeterminado de la unidad, o
+   * el único habilitado si solo hay uno. Vacío obliga al vendedor a elegir.
+   */
+  const amortizacionInicial = useMemo(() => {
+    if (amortizacionDefaultRuta) return amortizacionDefaultRuta
+    return amortizacionesRuta.length === 1 ? amortizacionesRuta[0] : ""
+  }, [amortizacionDefaultRuta, amortizacionesRuta])
+
+  // Se aplica al cargar la config Y despues de cada venta.
+  //
+  // Antes esto vivia dentro del fetch, que solo corre al cambiar de ruta,
+  // mientras que `resetForm` dejaba el metodo en "". Resultado: de la segunda
+  // venta en adelante el campo quedaba vacio. Con el selector a la vista se
+  // notaba; con el campo oculto (unidad de un solo metodo) seria un error de
+  // validacion sobre algo que el vendedor no puede ver ni corregir.
+  useEffect(() => {
+    if (!amortizacionInicial) return
+    setTipoAmortizacion((prev) => prev || amortizacionInicial)
+  }, [amortizacionInicial, tipoAmortizacion])
 
   // ── Cuotas que ya vencieron en una venta homologada ─────────────────────
   // Se calculan con la MISMA fórmula del servidor (lib/loan-schedule.ts es
@@ -785,7 +802,9 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     setValorCuota("")
     setTasaInteres("")
     setDias("")
-    setTipoAmortizacion("")
+    // Vuelve al metodo de la unidad, no a vacio: si la ruta usa uno solo el
+    // campo esta oculto y nadie podria volver a elegirlo.
+    setTipoAmortizacion(amortizacionInicial)
     setFrecuenciaPago("")
     setDiaSemana("")
     setAmortizacionTable([])
@@ -2326,45 +2345,38 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
             </div>
           </div>
 
-          {/* Método de Interés — oculto en préstamos de empleado.
-              Solo se ofrecen los métodos que secretaría habilitó para esta
-              unidad; si solo hay uno, se muestra fijo en vez de un selector
-              con una sola opción. */}
-          {!prestamoEmpleado && (
+          {/* Método de Interés — no se muestra en dos casos:
+              · préstamos de empleado, que no llevan interés;
+              · unidades con UN SOLO método habilitado, donde no hay nada que
+                elegir. Un campo con una sola opción solo ocupa espacio y hace
+                dudar al vendedor sobre si tiene que tocarlo. El método se
+                aplica igual: `amortizacionInicial` lo deja puesto. */}
+          {!prestamoEmpleado && amortizacionesDisponibles.length > 1 && (
           <div className="space-y-1 md:space-y-2">
             <Label htmlFor="tipoAmortizacion" className="text-[11px] md:text-sm">
               Método de Interés <span className="text-red-500">*</span>
             </Label>
-            {amortizacionesDisponibles.length === 1 ? (
-              <div className="flex h-8 md:h-10 items-center rounded-md border border-input bg-muted px-3 text-[11px] md:text-sm font-medium">
-                {etiquetaAmortizacion(amortizacionesDisponibles[0].valor)}
-                <span className="ml-2 font-normal text-muted-foreground">
-                  (el único que usa esta unidad)
-                </span>
-              </div>
-            ) : (
-              <Select
-                value={tipoAmortizacion}
-                onValueChange={(v) => {
-                  setTipoAmortizacion(v)
-                  clearFieldError("tipoAmortizacion")
-                }}
+            <Select
+              value={tipoAmortizacion}
+              onValueChange={(v) => {
+                setTipoAmortizacion(v)
+                clearFieldError("tipoAmortizacion")
+              }}
+            >
+              <SelectTrigger
+                id="tipoAmortizacion"
+                className={`h-8 md:h-10 text-[11px] md:text-sm ${errCls("tipoAmortizacion")}`}
               >
-                <SelectTrigger
-                  id="tipoAmortizacion"
-                  className={`h-8 md:h-10 text-[11px] md:text-sm ${errCls("tipoAmortizacion")}`}
-                >
-                  <SelectValue placeholder="Seleccione método" />
-                </SelectTrigger>
-                <SelectContent>
-                  {amortizacionesDisponibles.map((a) => (
-                    <SelectItem key={a.valor} value={a.valor} className="text-[11px] md:text-sm">
-                      {a.etiqueta}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
+                <SelectValue placeholder="Seleccione método" />
+              </SelectTrigger>
+              <SelectContent>
+                {amortizacionesDisponibles.map((a) => (
+                  <SelectItem key={a.valor} value={a.valor} className="text-[11px] md:text-sm">
+                    {a.etiqueta}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {tipoAmortizacion && (
               <p className="text-[10px] md:text-xs text-muted-foreground">
                 {AMORTIZACIONES.find((a) => a.valor === tipoAmortizacion)?.ayuda}
