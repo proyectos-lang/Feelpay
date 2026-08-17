@@ -565,6 +565,26 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                         return (
                           <div key={item.label} className="flex items-center gap-1.5">
                             <item.icon className={`h-3.5 w-3.5 ${item.textColor} shrink-0`} />
+                            {/* El ojo va a la IZQUIERDA del nombre y no al final
+                                de la fila. Estaba pegado despues del monto, que
+                                tenia ancho fijo: en movil una cifra grande se
+                                desbordaba de su caja y se montaba encima del
+                                ojo, tapandolo. Las filas sin detalle llevan un
+                                hueco del mismo tamano para que los nombres
+                                sigan alineados entre si. */}
+                            {item.detailType ? (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-4 w-4 p-0 shrink-0"
+                                title={`Ver el detalle de ${item.label.toLowerCase()}`}
+                                onClick={() => fetchDetailRecords(item.detailType!)}
+                              >
+                                <Eye className="h-3 w-3 text-muted-foreground" />
+                              </Button>
+                            ) : (
+                              <span className="h-4 w-4 shrink-0" aria-hidden="true" />
+                            )}
                             <span className="text-sm text-muted-foreground w-20 truncate">{item.label}</span>
                             <div className="flex-1 h-3.5 bg-muted rounded-full overflow-hidden">
                               <div
@@ -572,19 +592,12 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                                 style={{ width: `${barPercent}%` }}
                               />
                             </div>
-                            <span className="text-sm font-bold text-foreground w-16 text-right">
+                            {/* min-w en vez de w: la cifra puede crecer sin
+                                desbordarse, y con shrink-0 no la comprime la
+                                barra. */}
+                            <span className="text-sm font-bold text-foreground min-w-16 text-right tabular-nums whitespace-nowrap shrink-0">
                               ${item.value.toLocaleString()}
                             </span>
-                            {item.detailType && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-4 w-4 p-0 shrink-0"
-                                onClick={() => fetchDetailRecords(item.detailType!)}
-                              >
-                                <Eye className="h-3 w-3 text-muted-foreground" />
-                              </Button>
-                            )}
                           </div>
                         )
                       })}
