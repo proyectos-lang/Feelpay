@@ -366,6 +366,14 @@ function RutasTab() {
   const [saving, setSaving] = useState(false)
 
   // Datos de la ruta
+  //
+  // `fUnidad` es el ID de la ruta, y se escribe a mano a proposito. En esta
+  // base el id ES el numero de unidad: 112 es "112 JP", 168 es "Unid 168".
+  // Dejarselo a la secuencia del BIGSERIAL no funciona, porque esas filas se
+  // cargaron con el id explicito y eso NO hace avanzar la secuencia: la ruta
+  // de la unidad 196 salio con id 3. Y peor, cuando la secuencia llegue a 112
+  // el INSERT fallaria por llave duplicada contra una unidad que ya existe.
+  const [fUnidad, setFUnidad] = useState("")
   const [fNombre, setFNombre] = useState("")
   const [fCiudad, setFCiudad] = useState("")
   const [fPais, setFPais] = useState("")
@@ -440,14 +448,14 @@ function RutasTab() {
   }
 
   const openCreate = () => {
-    setEditing(null); setFNombre(""); setFCiudad(""); setFPais("")
+    setEditing(null); setFUnidad(""); setFNombre(""); setFCiudad(""); setFPais("")
     cargarConfig(undefined)
     setItemForm(new Map())
     setShowForm(true)
   }
 
   const openEdit = async (r: Ruta) => {
-    setEditing(r); setFNombre(r.nombre); setFCiudad(r.ciudad ?? ""); setFPais(r.pais ?? "")
+    setEditing(r); setFUnidad(String(r.id)); setFNombre(r.nombre); setFCiudad(r.ciudad ?? ""); setFPais(r.pais ?? "")
     cargarConfig(configs.get(r.id))
     setItemForm(new Map())
     setShowForm(true)
@@ -491,6 +499,30 @@ function RutasTab() {
       toast({ title: "Campo requerido", description: "El nombre de la ruta es obligatorio", variant: "destructive" })
       return
     }
+
+    // El número de unidad solo se valida al CREAR: al editar es la llave
+    // primaria y ni siquiera se deja escribir.
+    const unidadNum = Number.parseInt(fUnidad, 10)
+    if (!editing) {
+      if (!Number.isInteger(unidadNum) || unidadNum <= 0) {
+        toast({
+          title: "Número de unidad inválido",
+          description: "Escribe el número de la unidad: es el ID con el que la ruta va a quedar registrada.",
+          variant: "destructive",
+        })
+        return
+      }
+      if (rutas.some((r) => r.id === unidadNum)) {
+        const ocupada = rutas.find((r) => r.id === unidadNum)!
+        toast({
+          title: "Ese número ya está en uso",
+          description: `La unidad ${unidadNum} ya existe: "${ocupada.nombre}". Elige otro número.`,
+          variant: "destructive",
+        })
+        return
+      }
+    }
+
     setSaving(true)
     try {
       const supabase = createClient()
@@ -504,11 +536,20 @@ function RutasTab() {
       // guardarle la configuración.
       let rutaId: number
       if (editing) {
+        // El número de unidad NO se toca al editar: es la llave primaria, y
+        // cambiarla dejaría huérfanos a los clientes, préstamos y gestiones
+        // que la referencian.
         const { error } = await supabase.from("rutas").update(payload).eq("id", editing.id)
         if (error) throw error
         rutaId = editing.id
       } else {
-        const { data, error } = await supabase.from("rutas").insert(payload).select("id").single()
+        // El id se manda EXPLÍCITO, no se deja a la secuencia (ver el
+        // comentario de `fUnidad`).
+        const { data, error } = await supabase
+          .from("rutas")
+          .insert({ ...payload, id: unidadNum })
+          .select("id")
+          .single()
         if (error) throw error
         rutaId = (data as { id: number }).id
       }
@@ -715,9 +756,33 @@ function RutasTab() {
           {/* El cuerpo scrollea y los botones quedan fijos abajo: la
               configuración completa no cabe en una pantalla de celular. */}
           <div className="flex-1 overflow-y-auto space-y-4 py-1 pr-1">
+            {/* El numero de unidad ES el id de la ruta. Se escribe al crear y
+                queda bloqueado al editar: cambiarlo dejaria huerfanos a los
+                clientes, prestamos y gestiones que apuntan a esta ruta. */}
+            <div className="space-y-1">
+              <Label className="text-xs">
+                Número de unidad <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                type="number"
+                min="1"
+                step="1"
+                inputMode="numeric"
+                value={fUnidad}
+                onChange={(e) => setFUnidad(e.target.value)}
+                placeholder="196"
+                disabled={!!editing}
+                className="h-9 text-sm disabled:opacity-70"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                {editing
+                  ? "El número de unidad no se puede cambiar: es el identificador con el que quedaron registrados sus clientes y préstamos."
+                  : "Es el identificador de la ruta y tiene que coincidir con la unidad. Aparecerá como \"Ruta #\" en el listado."}
+              </p>
+            </div>
             <div className="space-y-1">
               <Label className="text-xs">Nombre de la ruta <span className="text-destructive">*</span></Label>
-              <Input value={fNombre} onChange={(e) => setFNombre(e.target.value)} placeholder="Ruta Norte" className="h-9 text-sm" />
+              <Input value={fNombre} onChange={(e) => setFNombre(e.target.value)} placeholder="Unid 196" className="h-9 text-sm" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
