@@ -46,7 +46,6 @@ import {
   resumenDelDia,
   colorMora,
   etiquetaMora,
-  etiquetaAmortizacion,
   montoEfectivo,
   type Gestion,
 } from "@/lib/gestion-core"
@@ -180,17 +179,6 @@ const frecuenciaLabel = (freq: string) => {
     case "monthly": return "Mensual"
     default: return freq
   }
-}
-
-// Badge del método de interés en la tarjeta del cliente. El nombre sale de
-// lib/gestion-core.ts; aquí solo se decide si se muestra o no (un valor raro
-// o vacío no pinta badge).
-const tipoAmortizacionLabel = (tipo: string | null | undefined): string | null => {
-  if (!tipo) return null
-  const t = tipo.toLowerCase().trim()
-  if (t === "aleman" || t === "alemán") return etiquetaAmortizacion("aleman")
-  if (t === "americano") return etiquetaAmortizacion("americano")
-  return null
 }
 
 // Get current day of week in Spanish (Colombia timezone)
@@ -816,8 +804,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       // cobrador debe saber que puede haber gestiones de otros que aún no ve.
       setDatosDesdeCache(dashboard.source === "cache" ? (dashboard.cacheGuardadoEn ?? null) : null)
 
-      // El helper ya filtro activos + cancelados y armo los mapas. Alias
-      // `activeLoans` para no tocar el resto del componente.
+      // El helper ya devolvio el conjunto correcto: los activos de la ruta MAS
+      // los que se movieron desde ayer, aunque hayan quedado cancelados. Esos
+      // ultimos se filtran mas abajo de Pendientes por su estado, asi que solo
+      // pueden salir en Gestionados — que es donde tienen que estar el dia que
+      // se cancelan. Alias para no tocar el resto del componente.
       const activeLoans = loans
       const pendingClients: DisplayClient[] = []
       const managedClientsFromDB: ManagedClient[] = []
@@ -2895,16 +2886,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                     {client.diaSemana.charAt(0).toUpperCase() + client.diaSemana.slice(1)}
                                   </span>
                                 )}
-                                {/* Badge de tipo_amortizacion: "Capital" para
-                                    aleman, "Intereses" para americano. Solo se
-                                    renderiza si la venta tiene tipo definido
-                                    (los prestamos de cuotas tradicionales
-                                    quedan sin badge). */}
-                                {tipoAmortizacionLabel(client.tipoAmortizacion) && (
-                                  <span className="text-[9px] md:text-xs px-1.5 py-0.5 rounded font-semibold bg-secondary text-secondary-foreground">
-                                    {tipoAmortizacionLabel(client.tipoAmortizacion)}
-                                  </span>
-                                )}
+                                {/* El badge del tipo de cuota ("Cuota fija" /
+                                    "Cuota interes") ya no se pinta: al cobrador
+                                    en la calle no le cambia nada — cobra el
+                                    mismo valor de cualquier forma — y ocupaba
+                                    espacio en una fila que ya va apretada.
+                                    `tipoAmortizacion` sigue en el modelo porque
+                                    de el dependen el valor de la venta y el
+                                    calculo de la cancelacion total. */}
                                 {/* Badge "Proximo pago": se muestra solo cuando
                                     la cuota objetivo es FUTURA (todas las
                                     anteriores ya estan gestionadas y la
