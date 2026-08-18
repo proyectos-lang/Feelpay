@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TrendingDown, TrendingUp, Wallet, Camera, X, AlertCircle } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
+import { getResumenDia } from "@/lib/resumen-dia"
 import { getSessionIdentity } from "@/lib/api-helper"
 import { enviarOEncolar } from "@/lib/offline-queue"
 import { guardarCache, leerCache } from "@/lib/offline-cache"
@@ -134,13 +135,12 @@ export function RegisterTransaction({
     const cargar = async () => {
       if (typeof navigator !== "undefined" && !navigator.onLine) return
       try {
-        const { data } = await createClient()
-          .from("resumen_diario_v2")
-          .select("efectivo")
-          .eq("ruta", ruta)
-          .eq("fecha_pago", todayColombia())
-          .maybeSingle()
-        if (!cancelado) setEfectivo((data as { efectivo?: number | null } | null)?.efectivo ?? null)
+        // Se usa el helper y no una consulta directa porque un dia sin fila
+        // —un domingo— devolvia null y ESTE AVISO SE APAGABA: justo el dia en
+        // que el cobrador tiene toda la semana recaudada encima, el control de
+        // "no retires mas de lo que tienes" dejaba de funcionar.
+        const { fila } = await getResumenDia(createClient(), ruta, todayColombia())
+        if (!cancelado) setEfectivo(fila.efectivo)
       } catch (err) {
         console.error("[v0] No se pudo leer el efectivo de la ruta:", err)
       }

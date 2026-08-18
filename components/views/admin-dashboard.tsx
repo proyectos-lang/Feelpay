@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { getResumenDiaRutas } from "@/lib/resumen-dia"
 import { todayColombia } from "@/lib/gestion-core"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -105,34 +106,20 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
       const rutaIds = rutasDisponibles.map((r) => r.id)
       const rutaInfoMap = new Map(rutasDisponibles.map((r) => [r.id, r]))
 
-      const fullSelect =
-        "ruta, efectivo, valor_pago, meta_pagos, cantidad_pagos, cantidad_no_pagos, cantidad_canceladas, valor_gastos, valor_retiros, valor_ingresos, hora_ultimo_movimiento"
-
-      let data: any[] | null = null
-
-      const res1 = await supabase
-        .from("resumen_diario_v2")
-        .select(fullSelect)
-        .eq("fecha_pago", fecha)
-        .in("ruta", rutaIds)
-        .order("ruta", { ascending: true })
-
-      if (!res1.error) {
-        data = res1.data
-      } else {
-        console.warn("[v0] AdminDashboard full select failed, retrying base:", res1.error.message)
-        const res2 = await supabase
-          .from("resumen_diario_v2")
-          .select("ruta, efectivo, valor_pago, meta_pagos, valor_gastos, valor_retiros, valor_ingresos")
-          .eq("fecha_pago", fecha)
-          .in("ruta", rutaIds)
-          .order("ruta", { ascending: true })
-        if (res2.error) throw res2.error
-        data = res2.data
-      }
+      // `getResumenDiaRutas` resuelve el arrastre de la caja. Antes, una ruta
+      // sin movimiento ese dia NO traia fila y simplemente desaparecia del
+      // tablero: un domingo el admin veia la lista vacia, sin forma de saber
+      // si es que nadie trabajo o si algo se habia roto. Ahora todas las rutas
+      // aparecen siempre, con su efectivo acumulado y los conteos del dia en
+      // cero.
+      const porRuta = await getResumenDiaRutas(supabase, rutaIds, fecha)
+      const data = rutaIds.map((id) => {
+        const r = porRuta.get(id)
+        return { ...(r?.fila ?? {}), ruta: id, sin_movimiento: r?.sinMovimiento ?? true }
+      })
 
       setRows(
-        (data ?? []).map((d: any) => {
+        data.map((d: any) => {
           const info = rutaInfoMap.get(d.ruta)
           return {
             ruta: d.ruta,

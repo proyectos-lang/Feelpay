@@ -109,3 +109,51 @@ export async function getResumenDia(
   const acumulado = Number((previo as { efectivo?: number } | null)?.efectivo ?? 0)
   return { fila: filaVacia(rutaId, fecha, acumulado), sinMovimiento: true }
 }
+
+/**
+ * Lo mismo que `getResumenDia` pero para varias rutas de un solo día — lo que
+ * necesita el dashboard del admin.
+ *
+ * Sin esto, las rutas que no tuvieron movimiento ese día simplemente NO
+ * aparecían en el tablero: un domingo el admin veía la lista vacía y no había
+ * forma de saber si era que nadie trabajó o que algo se rompió.
+ */
+export async function getResumenDiaRutas(
+  supabase: SupabaseClient,
+  rutaIds: number[],
+  fecha: string,
+): Promise<Map<number, ResumenDiaResult>> {
+  const out = new Map<number, ResumenDiaResult>()
+  if (rutaIds.length === 0) return out
+
+  const { data, error } = await supabase
+    .from("resumen_diario_v2")
+    .select("*")
+    .eq("fecha_pago", fecha)
+    .in("ruta", rutaIds)
+  if (error) throw new Error(error.message)
+
+  for (const f of (data ?? []) as unknown as ResumenDiaRow[]) {
+    out.set(Number(f.ruta), { fila: f, sinMovimiento: false })
+  }
+
+  // Las que no tuvieron fila conservan su efectivo acumulado. Son pocas
+  // rutas, así que se resuelven en paralelo.
+  const faltantes = rutaIds.filter((id) => !out.has(id))
+  await Promise.all(
+    faltantes.map(async (id) => {
+      const { data: previo } = await supabase
+        .from("resumen_diario_v2")
+        .select("efectivo")
+        .eq("ruta", id)
+        .lt("fecha_pago", fecha)
+        .order("fecha_pago", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      const acumulado = Number((previo as { efectivo?: number } | null)?.efectivo ?? 0)
+      out.set(id, { fila: filaVacia(id, fecha, acumulado), sinMovimiento: true })
+    }),
+  )
+
+  return out
+}
