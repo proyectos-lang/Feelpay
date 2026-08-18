@@ -97,6 +97,9 @@ type FinancialMovement = {
 type SaleRow = {
   id: string
   created_at: string | null
+  /** Capital prestado: es lo que vale la VENTA. */
+  valor: number | null
+  /** Total del contrato (capital + interes). No es el valor de la venta. */
   valor_a_pagar: number | null
   numero_cuotas: number | null
   clients?: {
@@ -298,7 +301,7 @@ export function AdminRouteMonitor() {
           supabase
             .from("loans")
             .select(
-              "id, created_at, valor_a_pagar, numero_cuotas, clients:clients(nombre_completo, apodo)",
+              "id, created_at, valor, valor_a_pagar, numero_cuotas, clients:clients(nombre_completo, apodo)",
             )
             .eq("ruta", ruta.ruta_id)
             .gte("created_at", startUtc)
@@ -1012,7 +1015,10 @@ function FinancialTable({
 }
 
 function SalesTable({ rows }: { rows: SaleRow[] }) {
-  const total = rows.reduce((acc, r) => acc + (Number(r.valor_a_pagar) || 0), 0)
+  // El valor de una venta es el CAPITAL prestado. Antes se sumaba
+  // `valor_a_pagar` (capital + interes), asi que este listado no cuadraba con
+  // el total de ventas de la tarjeta de arriba ni con "Ventas del dia".
+  const total = rows.reduce((acc, r) => acc + (Number(r.valor) || 0), 0)
 
   if (rows.length === 0) {
     return (
@@ -1046,7 +1052,7 @@ function SalesTable({ rows }: { rows: SaleRow[] }) {
                 </TableCell>
                 <TableCell className="text-sm font-medium">{cliente}</TableCell>
                 <TableCell className="text-right text-sm font-semibold tabular-nums">
-                  {formatCurrency(r.valor_a_pagar)}
+                  {formatCurrency(r.valor)}
                 </TableCell>
                 <TableCell className="text-center text-xs font-bold tabular-nums text-brand">
                   {r.numero_cuotas ?? "—"}

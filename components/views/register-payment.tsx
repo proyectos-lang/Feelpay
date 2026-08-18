@@ -979,9 +979,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           clientId: loan.client_id,
           nombre: loan.clients?.apodo || loan.clients?.nombre_completo || "Sin nombre",
           documento: loan.clients?.documento || "",
-          valorVenta: loan.tipo_amortizacion?.toLowerCase().trim() === "americano"
-            ? loan.valor
-            : (loan.valor_a_pagar || loan.valor),
+          // VALOR DE LA VENTA = el capital prestado, sin intereses.
+          //
+          // Antes dependia del tipo de credito: en americano mostraba el
+          // capital y en los demas `valor_a_pagar`, que es capital + interes.
+          // O sea que dos ventas del mismo monto se veian distinto segun el
+          // metodo, y la que decia "Monto Venta" en realidad mostraba lo que
+          // el cliente iba a terminar pagando.
+          valorVenta: loan.valor,
           valorPrestamo: loan.valor,
           // Fecha en que se hizo la venta — se imprime en el recibo.
           fechaVenta: (loan.fecha_creacion || loan.created_at || "").split("T")[0],

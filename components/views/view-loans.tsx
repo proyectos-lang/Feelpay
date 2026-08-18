@@ -170,7 +170,10 @@ export function ViewLoans({ currentRutaId }: ViewLoansProps) {
   })
 
   const totalVentas = filtered.length
-  const totalValor = filtered.reduce((acc, l) => acc + Number(l.valor_a_pagar), 0)
+  // "Valor Venta" es el CAPITAL prestado. Antes se sumaba `valor_a_pagar`
+  // (capital + interes), que es lo que el cliente terminara pagando — otra
+  // cosa, y ademas distinta de lo que muestran el Resumen y el Monitoreo.
+  const totalValor = filtered.reduce((acc, l) => acc + Number(l.valor), 0)
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -288,9 +291,9 @@ export function ViewLoans({ currentRutaId }: ViewLoansProps) {
                           </div>
                         </TableCell>
 
-                        {/* Valor venta */}
+                        {/* Valor venta = capital prestado */}
                         <TableCell className="text-right font-semibold tabular-nums">
-                          {formatCurrency(loan.valor_a_pagar)}
+                          {formatCurrency(loan.valor)}
                         </TableCell>
 
                         {/* Valor cuota */}
@@ -384,7 +387,10 @@ export function ViewLoans({ currentRutaId }: ViewLoansProps) {
                   "este cliente"}
               </strong>{" "}
               por{" "}
-              <strong>{formatCurrency(deleteTarget?.valor_a_pagar)}</strong>?
+              {/* El monto de la venta es el capital, igual que en el listado:
+                  si aqui saliera el total con intereses, el usuario creeria
+                  que esta borrando una venta distinta a la que eligio. */}
+              <strong>{formatCurrency(deleteTarget?.valor)}</strong>?
               Esta acción no se puede deshacer.
             </DialogDescription>
           </DialogHeader>
