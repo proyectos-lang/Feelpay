@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, PiggyBank, Users, PieChart, ChartColumnBig, LockKeyhole, Eye, X, Play, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
  import { createClient } from "@/lib/supabase/client"
+import { getResumenDia } from "@/lib/resumen-dia"
 import { todayColombia, bandaCartera, etiquetaFrecuencia } from "@/lib/gestion-core"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -61,6 +62,10 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
   // `caja_anterior` ese mismo acumulado sin el neto del dia.
   const [efectivo, setEfectivo] = useState(0)
   const [cajaAnterior, setCajaAnterior] = useState(0)
+  // El dia no tuvo NINGUN movimiento y la caja viene arrastrada del ultimo
+  // dia con registro. Se avisa en pantalla para que un $0 en las tarjetas
+  // de movimiento no se lea como "se perdio la plata".
+  const [diaSinMovimiento, setDiaSinMovimiento] = useState(false)
   // Sumas de capital e intereses del recaudo del dia (aleman vs americano),
   // calculadas por la vista sobre las gestiones del dia.
   const [pagoCapital, setPagoCapital] = useState(0)
@@ -86,48 +91,30 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         // `gestiones`), los conteos y la caja anterior. Antes habia que pegar
         // tres consultas mas (el dia anterior para la caja y dos conteos
         // sobre payment_plan) y cada una traia su propia definicion.
-        const { data, error } = await supabase
-          .from("resumen_diario_v2")
-          .select("valor_pago, meta_pagos, cantidad_pagos, cantidad_no_pagos, valor_ingresos, valor_gastos, valor_retiros, valor_canceladas, valor_ventas, efectivo, caja_anterior, pago_capital, pago_intereses")
-          .eq("fecha_pago", fechaHoy)
-          .eq("ruta", rutaId)
-          .maybeSingle()
+        // `getResumenDia` trae TODO el dia en una fila: la plata (desde
+        // `gestiones`), los conteos y la caja anterior.
+        //
+        // Y resuelve el arrastre: un dia sin NINGUN movimiento —un domingo,
+        // sin cuotas venciendo ni caja— no tiene fila en la vista, y esta
+        // pantalla mostraba entonces Caja Anterior $0 y Efectivo $0. La plata
+        // de la ruta desaparecia cada domingo y volvia el lunes.
+        const { fila: d, sinMovimiento } = await getResumenDia(supabase, rutaId, fechaHoy)
+        setDiaSinMovimiento(sinMovimiento)
 
-        if (error) {
-          console.error("[v0] resumen_diario_v2 error:", error.message)
-        }
-        if (data) {
-          const d = data as Record<string, number | null>
-          setCollectedAmount(d.valor_pago ?? 0)
-          setMetaAmount(d.meta_pagos ?? 0)
-          // Pagos / No Pagos salen de la MISMA fuente que la plata.
-          // POR QUE se quito el recuento propio sobre payment_plan: el
-          // predicado del cliente (estado `pagado|parcial|cancelada` con
-          // monto_pagado > 0) no coincidia con el de la vista (`pagado`), asi
-          // que el mismo numero salia distinto segun donde se mirara.
-          setCantidadPagos(d.cantidad_pagos ?? 0)
-          setCantidadNoPagos(d.cantidad_no_pagos ?? 0)
-          setValorIngresos(d.valor_ingresos ?? 0)
-          setValorGastos(d.valor_gastos ?? 0)
-          setValorRetiros(d.valor_retiros ?? 0)
-          setValorCanceladas(d.valor_canceladas ?? 0)
-          setValorVentas(d.valor_ventas ?? 0)
-          setEfectivo(d.efectivo ?? 0)
-          // Caja Anterior: ya viene calculada por la vista. Antes se consultaba
-          // el ultimo dia con resumen anterior a hoy, formula que divergia de
-          // la que usaba el cierre de caja para el MISMO numero.
-          setCajaAnterior(d.caja_anterior ?? 0)
-          setPagoCapital(d.pago_capital ?? 0)
-          setPagoIntereses(d.pago_intereses ?? 0)
-        } else {
-          // No hay resumen para hoy: dejamos todos los valores en 0.
-          setCantidadPagos(0)
-          setCantidadNoPagos(0)
-          setEfectivo(0)
-          setCajaAnterior(0)
-          setPagoCapital(0)
-          setPagoIntereses(0)
-        }
+        setCollectedAmount(d.valor_pago ?? 0)
+        setMetaAmount(d.meta_pagos ?? 0)
+        // Pagos / No Pagos salen de la MISMA fuente que la plata.
+        setCantidadPagos(d.cantidad_pagos ?? 0)
+        setCantidadNoPagos(d.cantidad_no_pagos ?? 0)
+        setValorIngresos(d.valor_ingresos ?? 0)
+        setValorGastos(d.valor_gastos ?? 0)
+        setValorRetiros(d.valor_retiros ?? 0)
+        setValorCanceladas(d.valor_canceladas ?? 0)
+        setValorVentas(d.valor_ventas ?? 0)
+        setEfectivo(d.efectivo ?? 0)
+        setCajaAnterior(d.caja_anterior ?? 0)
+        setPagoCapital(d.pago_capital ?? 0)
+        setPagoIntereses(d.pago_intereses ?? 0)
       } catch (err) {
         console.error("[v0] Unexpected error fetching resumen:", err)
       } finally {
@@ -531,6 +518,14 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
 
           {/* Content area - compact spacing */}
           <div className="flex-1 px-3 py-2 space-y-2 overflow-auto">
+            {/* Dia sin movimiento: la caja viene del ultimo dia con registro */}
+            {diaSinMovimiento && (
+              <p className="text-[10px] text-muted-foreground px-0.5">
+                Hoy no hay movimientos registrados. El efectivo es el que quedó el último día
+                con registro.
+              </p>
+            )}
+
             {/* Caja Anterior & Efectivo */}
             <div className="grid grid-cols-2 gap-1.5">
               <Card className="bg-card shadow-sm border-0">

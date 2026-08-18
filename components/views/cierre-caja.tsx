@@ -10,6 +10,7 @@ import {
   FileDown, Lock, AlertTriangle, CheckCircle2, Loader2,
 } from "lucide-react"
  import { createClient } from "@/lib/supabase/client"
+import { getResumenDia } from "@/lib/resumen-dia"
 import { todayColombia, bandaCartera, etiquetaFrecuencia } from "@/lib/gestion-core"
 import { contarPendientes, suscribirCola } from "@/lib/offline-queue"
 
@@ -120,15 +121,12 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
         const supabase = createClient()
         const fechaHoy = todayColombia()
 
-        const [resumenRes, rowsHoyRes, loansRes] = await Promise.all([
-          supabase
-            .from("resumen_diario_v2")
-            .select(
-              "valor_pago, meta_pagos, valor_ingresos, cantidad_ingresos, valor_gastos, cantidad_gastos, valor_retiros, cantidad_retiros, valor_canceladas, cantidad_canceladas, valor_ventas, cantidad_ventas, efectivo, caja_anterior",
-            )
-            .eq("fecha_pago", fechaHoy)
-            .eq("ruta", rutaId)
-            .maybeSingle(),
+        // `getResumenDia` resuelve el arrastre de la caja: un dia sin ninguna
+        // fila —tipico de un domingo— dejaba este cierre en $0 aunque la ruta
+        // tuviera plata. Es el mismo helper que usa el Resumen del Dia, para
+        // que las dos pantallas no puedan discrepar.
+        const [resumen, rowsHoyRes, loansRes] = await Promise.all([
+          getResumenDia(supabase, rutaId, fechaHoy),
           supabase
             .from("payment_plan")
             .select("estado, monto_pagado, loans(frecuencia_pago)")
@@ -137,7 +135,7 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
           supabase.from("loans").select("id").eq("ruta", rutaId).eq("estado", "activo"),
         ])
 
-        const r = (resumenRes.data ?? {}) as Record<string, number | null>
+        const r = resumen.fila
         const valorPago = Number(r.valor_pago ?? 0)
         const valorIngresos = Number(r.valor_ingresos ?? 0)
         const valorGastos = Number(r.valor_gastos ?? 0)
