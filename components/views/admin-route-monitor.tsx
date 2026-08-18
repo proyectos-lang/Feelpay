@@ -78,6 +78,10 @@ type MonitoreoRuta = {
   total_retiros: number | null
   total_ventas: number | null
   cantidad_ventas: number | null
+  /** Parte de `total_ventas` que son ventas homologadas (script 057). Esa
+   *  plata no salio de la caja de hoy: entro en el sistema anterior. */
+  total_ventas_homologadas: number | null
+  cantidad_ventas_homologadas: number | null
   fecha: string | null
 }
 
@@ -681,11 +685,26 @@ export function AdminRouteMonitor() {
                         <ShoppingCart className="h-3 w-3 text-brand" />
                         Ventas
                       </span>
-                      <span className="inline-flex items-center gap-1 font-semibold tabular-nums text-foreground">
+                      <span
+                        className="inline-flex items-center gap-1 font-semibold tabular-nums text-foreground"
+                        title={
+                          (r.cantidad_ventas_homologadas ?? 0) > 0
+                            ? `Incluye ${r.cantidad_ventas_homologadas} homologada(s) por ${formatCurrency(r.total_ventas_homologadas)}: esa plata no salio de la caja de hoy.`
+                            : undefined
+                        }
+                      >
                         {formatCurrency(r.total_ventas)}
                         {(r.cantidad_ventas ?? 0) > 0 && (
                           <span className="inline-flex min-w-[16px] items-center justify-center rounded-full bg-brand/10 px-1 text-[9px] font-bold text-brand">
                             {r.cantidad_ventas}
+                          </span>
+                        )}
+                        {/* Las homologadas suman al total de ventas pero NO
+                            salieron de la caja: se marcan para que la
+                            diferencia con el efectivo se pueda explicar. */}
+                        {(r.cantidad_ventas_homologadas ?? 0) > 0 && (
+                          <span className="rounded-full bg-violet-100 px-1 text-[9px] font-bold text-violet-700">
+                            {r.cantidad_ventas_homologadas} hom.
                           </span>
                         )}
                       </span>
