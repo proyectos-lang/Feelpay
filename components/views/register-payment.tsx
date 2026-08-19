@@ -2760,11 +2760,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 placeholder="Buscar cliente por nombre o documento..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                // El buscador se esconde solo si esta VACIO. Con una busqueda
-                // puesta, esconderlo dejaria una lista recortada sin nada a la
-                // vista que explique por que — y el cobrador creeria que le
-                // faltan clientes.
-                className={`${searchTerm === "" ? ocultoEnMovil() : ""} mt-2 h-8 md:h-10 text-[12px] md:text-sm md:max-w-sm`}
+                // El buscador NO se pliega. Es lo unico del encabezado que se
+                // usa MIENTRAS se cobra —encontrar al que toco la puerta sin
+                // bajar por toda la ruta— y cuesta un renglon, no un tercio de
+                // la pantalla como el resto.
+                className="mt-2 h-8 md:h-10 text-[12px] md:text-sm md:max-w-sm"
               />
             )}
 
