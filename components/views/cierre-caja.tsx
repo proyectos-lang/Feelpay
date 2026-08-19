@@ -7,12 +7,15 @@ import {
   ArrowLeft, Calendar, Clock, Wallet, Banknote, Target, ShoppingCart,
   CheckCircle, Receipt, ArrowDownCircle, TrendingUp, CreditCard,
   CalendarDays, CalendarClock, PiggyBank, Coins, Users, AlertCircle, XCircle,
-  FileDown, Lock, AlertTriangle, CheckCircle2, Loader2,
+  FileDown, Lock, AlertTriangle, CheckCircle2, Loader2, Share2,
 } from "lucide-react"
  import { createClient } from "@/lib/supabase/client"
 import { getResumenDia } from "@/lib/resumen-dia"
 import { todayColombia, bandaCartera, etiquetaFrecuencia } from "@/lib/gestion-core"
 import { contarPendientes, suscribirCola } from "@/lib/offline-queue"
+import { getRutaUmbrales } from "@/lib/ruta-umbrales"
+import { renderComprobanteImagen, type SeccionComprobante } from "@/lib/imagen-comprobante"
+import { CompartirComprobanteDialog } from "@/components/compartir-comprobante-dialog"
 
 interface CierreCajaProps {
   onBack: () => void
@@ -25,9 +28,12 @@ interface CierreCajaProps {
    * hasta que cerraba y volvía a abrir la app.
    */
   onRouteStateChange?: (estado: "abierta" | "cerrada" | null) => void
+  /** Hace falta para poder mandar el cierre al chat de la app. */
+  currentUser?: { id: number | string; nombre: string }
 }
 
-export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateChange }: CierreCajaProps) {
+export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateChange, currentUser }: CierreCajaProps) {
+  const [compartirAbierto, setCompartirAbierto] = useState(false)
   const _now = new Date()
   const fecha = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "2-digit", month: "2-digit", year: "numeric" }).format(_now)
   const hora = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", hour: "numeric", minute: "2-digit", hour12: true }).format(_now)
@@ -419,8 +425,39 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
     { type: "row", icon: XCircle,         iconColor: "text-status-vencido",  label: "Clientes Vencidos",      value: `${data.cartera.vencidos}` },
   ]
 
+  /**
+   * Las MISMAS filas de la pantalla, agrupadas por sección, para la imagen.
+   *
+   * Antes el PDF repetía las 25 filas escritas a mano en su propio HTML:
+   * agregar un dato al cierre obligaba a acordarse de tocarlo en dos lados, y
+   * cualquier olvido dejaba el papel diciendo algo distinto de la pantalla.
+   */
+  const seccionesComprobante = (): SeccionComprobante[] => {
+    const out: SeccionComprobante[] = []
+    for (const r of rows) {
+      if (r.type === "section") out.push({ titulo: r.label, filas: [] })
+      else if (out.length > 0) out[out.length - 1].filas.push({ label: r.label, valor: r.value })
+    }
+    return out.filter((s) => s.filas.length > 0)
+  }
+
+  const construirImagenCierre = async () => {
+    // El logo de la RUTA, con el de la app como respaldo. El PDF usaba
+    // siempre el de la app, a diferencia del recibo de pago.
+    const umbrales = await getRutaUmbrales(rutaId).catch(() => null)
+    return renderComprobanteImagen({
+      titulo: "Cierre de Caja",
+      subtitulo: rutaLabel,
+      meta: `${fecha}  ·  ${hora}  ·  ${cajaCerrada ? "Cerrada" : "Abierta"}`,
+      secciones: seccionesComprobante(),
+      logoUrl: umbrales?.logo_url || `${window.location.origin}/opad-logo.png`,
+      nombreArchivo: `cierre-ruta-${rutaId}-${fecha.replace(/\//g, "-")}.png`,
+      pie: "Generado por Feelpay",
+    })
+  }
+
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex flex-col h-full min-h-0 bg-background">
       {/* Header */}
       <div className="bg-brand-gradient text-brand-foreground px-4 pt-4 pb-3 rounded-b-2xl shadow-lg shrink-0">
         <div className="flex items-center justify-between mb-2">
@@ -445,6 +482,15 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
             <Button
               size="sm"
               className="h-8 gap-1.5 rounded-full bg-white px-3 text-brand hover:bg-white/90 shadow-sm font-semibold"
+              title="Compartir el cierre como imagen"
+              onClick={() => setCompartirAbierto(true)}
+            >
+              <Share2 className="h-4 w-4" />
+              <span className="text-xs">Compartir</span>
+            </Button>
+            <Button
+              size="sm"
+              className="h-8 gap-1.5 rounded-full bg-white px-3 text-brand hover:bg-white/90 shadow-sm font-semibold"
               title="Descargar el PDF del cierre"
               onClick={handlePDF}
             >
@@ -466,7 +512,7 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto px-3 py-2">
+      <div className="flex-1 min-h-0 overflow-auto px-3 py-2">
         <div className="bg-card rounded-xl shadow-sm overflow-hidden">
           {rows.map((row, i) => {
             if (row.type === "section") {
@@ -496,10 +542,15 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
         </div>
       </div>
 
-      {/* Footer — Cerrar Caja + PDF */}
-      <div className="px-3 py-3 shrink-0 space-y-2">
+      {/* Footer — Cerrar Caja + comprobante
+          `sticky bottom-0` para que el boton no se vaya con el scroll. Y con
+          padding de safe-area porque la barra inferior del movil se le montaba
+          encima: el layout reservaba 64px para una nav que mide unos 90. */}
+      <div className="sticky bottom-0 z-10 shrink-0 space-y-2 border-t border-border bg-background px-3 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
         {cajaCerrada ? (
-          <div className="flex items-center justify-center gap-2 bg-muted rounded-xl py-3">
+          /* Misma altura que el boton: si no, al cerrar la caja el pie se
+             encoge y todo lo de abajo salta de sitio. */
+          <div className="flex min-h-[52px] items-center justify-center gap-2 bg-muted rounded-xl py-3">
             <Lock className="h-4 w-4 text-muted-foreground" />
             <span className="text-sm font-medium text-muted-foreground">Caja cerrada</span>
           </div>
@@ -518,6 +569,15 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
             queda —el comprobante de la jornada— asi que se muestra solido; con
             la caja abierta va en secundario para no competir con el boton de
             cerrar. */}
+        <div className="grid grid-cols-2 gap-2">
+        <Button
+          variant="outline"
+          className="w-full rounded-xl py-5 text-sm font-semibold flex items-center gap-2"
+          onClick={() => setCompartirAbierto(true)}
+        >
+          <Share2 className="h-4 w-4" />
+          Compartir
+        </Button>
         <Button
           variant={cajaCerrada ? "default" : "outline"}
           className={`w-full rounded-xl py-5 text-sm font-semibold flex items-center gap-2 ${
@@ -526,9 +586,22 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
           onClick={handlePDF}
         >
           <FileDown className="h-4 w-4" />
-          Descargar PDF del cierre
+          PDF
         </Button>
+        </div>
       </div>
+
+      {/* Compartir el cierre: como imagen por fuera, o al chat de la app */}
+      {currentUser && (
+        <CompartirComprobanteDialog
+          open={compartirAbierto}
+          onOpenChange={setCompartirAbierto}
+          construirImagen={construirImagenCierre}
+          mensajeChat={`Cierre de caja — ${rutaLabel} — ${fecha}`}
+          currentUser={currentUser}
+          titulo="Compartir el cierre"
+        />
+      )}
 
       {/* Modal — Requisitos no cumplidos */}
       {showModal && (

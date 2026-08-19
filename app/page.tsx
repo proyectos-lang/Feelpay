@@ -861,6 +861,7 @@ export default function Page() {
             rutaId={rutaId}
             rutaNombre={rutaPais}
             onRouteStateChange={handleRutaActivaEstadoChange}
+            currentUser={currentUser ?? undefined}
           />
         )
       case "view-clients":

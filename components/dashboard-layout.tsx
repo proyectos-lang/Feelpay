@@ -80,8 +80,12 @@ export function DashboardLayout({
     setIsMobileSidebarOpen(false)
   }
 
+  // `h-[100dvh]` con `h-screen` de respaldo: en un navegador móvil, 100vh
+  // INCLUYE la barra de URL, así que el fondo del layout cae por debajo de lo
+  // que se ve y todo lo anclado abajo parece moverse al hacer scroll. `dvh`
+  // mide el alto realmente visible.
   return (
-    <div className="flex h-screen bg-transparent">
+    <div className="flex h-screen h-[100dvh] bg-transparent">
       <div className={`hidden md:block transition-all duration-300 ${isDesktopSidebarOpen ? "w-60" : "w-16"}`}>
         <Sidebar
           currentView={currentView}
@@ -127,7 +131,13 @@ export function DashboardLayout({
           onViewChange={onViewChange}
           moduleBadgeCounts={moduleBadgeCounts}
         />
-        <main className="flex-1 overflow-y-auto p-3 md:p-6 pb-16 md:pb-6">{children}</main>
+        {/* `min-h-0` para que el contenido pueda encogerse dentro del flex;
+            sin eso un hijo alto empuja el pie fuera del contenedor.
+            El padding inferior reserva el alto REAL de la barra de navegacion:
+            eran 64px (`pb-16`) para una barra que mide unos 90 con sus botones
+            y el area segura del telefono, asi que le tapaba el ultimo boton a
+            cualquier pantalla con pie. */}
+        <main className="flex-1 min-h-0 overflow-y-auto p-3 md:p-6 pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-6">{children}</main>
         <MobileBottomNav currentView={currentView} onViewChange={onViewChange} currentUser={currentUser} userPermissions={userPermissions} moduleBadgeCounts={moduleBadgeCounts} />
       </div>
       {currentUser && <PushPermissionPrompt currentUser={currentUser} />}
