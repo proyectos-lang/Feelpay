@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { getResumenDia } from "@/lib/resumen-dia"
 import { todayColombia, bandaCartera, etiquetaFrecuencia } from "@/lib/gestion-core"
 import { getRutaUmbrales } from "@/lib/ruta-umbrales"
+import { DetalleClientesDialog } from "@/components/detalle-clientes-dialog"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
@@ -284,6 +285,110 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
     portfolioStatus: { alDia: 0, mora: 0, vencidos: 0 },
   })
 
+  // Los préstamos que componen cada contador de la cara trasera, para poder
+  // abrir "quiénes son". Se llenan en el MISMO recorrido que calcula los
+  // números (ver `loadBackCard`).
+  const [backIds, setBackIds] = useState<{
+    freq: Record<string, string[]>
+    pagaronHoy: Set<string>
+    cuotas: { small: string[]; large: string[] }
+    ventas: { nuevas: string[]; renovaciones: string[]; total: string[] }
+    cartera: { alDia: string[]; mora: string[]; vencidos: string[] }
+  }>({
+    freq: { diario: [], semanal: [], quincenal: [], mensual: [], intereses: [] },
+    pagaronHoy: new Set(),
+    cuotas: { small: [], large: [] },
+    ventas: { nuevas: [], renovaciones: [], total: [] },
+    cartera: { alDia: [], mora: [], vencidos: [] },
+  })
+
+  // El detalle de personas que está abierto. `null` = ninguno.
+  const [detalleClientes, setDetalleClientes] = useState<{
+    titulo: string
+    subtitulo?: string
+    ids: string[]
+    marcados?: Set<string>
+    mostrarValorVenta?: boolean
+  } | null>(null)
+
+  const abrirDetalle = (
+    titulo: string,
+    ids: string[],
+    extra?: { subtitulo?: string; marcados?: Set<string>; mostrarValorVenta?: boolean },
+  ) => setDetalleClientes({ titulo, ids, ...extra })
+
+  /**
+   * Los dos ítems del Resumen Financiero que son personas —Canceladas y
+   * Ventas— no se calculan en esta pantalla: vienen ya sumados de
+   * `resumen_diario_v2`. Así que sus préstamos se resuelven al abrir el
+   * ojito, repitiendo el MISMO criterio de la vista para que la lista
+   * coincida con el monto.
+   */
+  const abrirDetalleFinanciero = async (cual: "canceladas" | "ventas") => {
+    try {
+      const supabase = createClient()
+      const hoy = todayColombia()
+
+      if (cual === "ventas") {
+        const { data } = await supabase
+          .from("loans")
+          .select("id")
+          .eq("ruta", rutaId)
+          .gte("fecha_creacion", `${hoy}T00:00:00-05:00`)
+          .lte("fecha_creacion", `${hoy}T23:59:59-05:00`)
+        const ids = ((data ?? []) as { id: string }[]).map((l) => l.id)
+        abrirDetalle("Ventas de hoy", ids, {
+          subtitulo: `${ids.length} ${ids.length === 1 ? "venta" : "ventas"}`,
+          mostrarValorVenta: true,
+        })
+        return
+      }
+
+      // Canceladas = préstamos cuyo ÚLTIMO movimiento de plata fue hoy y que
+      // quedaron en cero. Es la definición de la vista (script 054).
+      const { data: movs } = await supabase
+        .from("gestiones")
+        .select("loan_id")
+        .eq("ruta", rutaId)
+        .eq("fecha_gestion", hoy)
+        .eq("estado", "aplicada")
+        .neq("origen", "homologacion")
+        .in("tipo", ["pago", "cancelacion", "abono_venta", "reversa"])
+      const candidatos = [...new Set(((movs ?? []) as { loan_id: string }[]).map((g) => g.loan_id))]
+      if (candidatos.length === 0) {
+        abrirDetalle("Créditos cancelados hoy", [], { subtitulo: "Ninguno" })
+        return
+      }
+      const { data: fin } = await supabase
+        .from("v_loan_financiero")
+        .select("loan_id, saldo")
+        .in("loan_id", candidatos)
+      const ids = ((fin ?? []) as { loan_id: string; saldo: number | null }[])
+        .filter((f) => Number(f.saldo ?? 0) <= 0)
+        .map((f) => f.loan_id)
+      abrirDetalle("Créditos cancelados hoy", ids, {
+        subtitulo: `${ids.length} ${ids.length === 1 ? "crédito quedó" : "créditos quedaron"} en cero`,
+      })
+    } catch (err) {
+      console.error("[v0] abrirDetalleFinanciero:", err)
+    }
+  }
+
+  /** El ojito. Se apaga solo cuando el grupo está vacío. */
+  const Ojito = ({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) => (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-4 w-4 p-0 shrink-0"
+      title="Ver quiénes son"
+      aria-label="Ver quiénes son"
+      onClick={onClick}
+      disabled={disabled}
+    >
+      <Eye className={`h-3 w-3 ${disabled ? "text-muted-foreground/30" : "text-muted-foreground"}`} />
+    </Button>
+  )
+
   useEffect(() => {
     const loadBackCard = async () => {
       try {
@@ -293,7 +398,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         const [rowsHoyRes, activosRes, ventasHoyRes] = await Promise.all([
           supabase
             .from("payment_plan")
-            .select("estado, monto_pagado, loans(frecuencia_pago, tipo_amortizacion)")
+            .select("loan_id, estado, monto_pagado, loans(frecuencia_pago, tipo_amortizacion)")
             .eq("ruta", rutaId)
             .eq("fecha_pago", fechaHoy),
           supabase.from("loans").select("id").eq("ruta", rutaId).eq("estado", "activo"),
@@ -306,6 +411,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         ])
 
         const rowsHoy = (rowsHoyRes.data ?? []) as {
+          loan_id: string
           estado: string
           monto_pagado: number | null
           loans: { frecuencia_pago: string | null; tipo_amortizacion: string | null } | null
@@ -324,14 +430,23 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
           mensual: { pagos: 0, total: 0 },
           intereses: { pagos: 0, total: 0 },
         }
+        // Los préstamos que componen cada número, recogidos en el MISMO
+        // recorrido que lo calcula: así el ojito no puede mostrar una lista
+        // distinta del contador que abrió.
+        const idsFreq: Record<string, string[]> = {
+          diario: [], semanal: [], quincenal: [], mensual: [], intereses: [],
+        }
+        const idsPagaronHoy = new Set<string>()
         for (const row of rowsHoy) {
           // El mapeo frecuencia -> etiqueta vive en gestion-core (FRECUENCIAS).
           const key = etiquetaFrecuencia(row.loans?.frecuencia_pago).toLowerCase() as
             "diario" | "semanal" | "quincenal" | "mensual"
           frequency[key].total += 1
-          if (cuotaConPago(row)) frequency[key].pagos += 1
+          idsFreq[key].push(row.loan_id)
+          if (cuotaConPago(row)) { frequency[key].pagos += 1; idsPagaronHoy.add(row.loan_id) }
           if (row.loans?.tipo_amortizacion?.toLowerCase().trim() === "americano") {
             frequency.intereses.total += 1
+            idsFreq.intereses.push(row.loan_id)
             if (cuotaConPago(row)) frequency.intereses.pagos += 1
           }
         }
@@ -340,6 +455,8 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         const loanIds = ((activosRes.data ?? []) as { id: string }[]).map((l) => l.id)
         const installmentsByClient = { small: 0, large: 0 }
         const portfolioStatus = { alDia: 0, mora: 0, vencidos: 0 }
+        const idsCuotas = { small: [] as string[], large: [] as string[] }
+        const idsCartera = { alDia: [] as string[], mora: [] as string[], vencidos: [] as string[] }
         if (loanIds.length > 0) {
           const [vencidasRes, moraRes] = await Promise.all([
             // Cuotas vencidas: `fecha_pago` es el VENCIMIENTO inmutable del
@@ -362,13 +479,13 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
             moraPorLoan.set(m.loan_id, Number(m.cuotas_mora ?? 0))
           }
           for (const id of loanIds) {
-            if ((vencidasPorLoan.get(id) ?? 0) > 3) installmentsByClient.large += 1
-            else installmentsByClient.small += 1
+            if ((vencidasPorLoan.get(id) ?? 0) > 3) { installmentsByClient.large += 1; idsCuotas.large.push(id) }
+            else { installmentsByClient.small += 1; idsCuotas.small.push(id) }
             // Las bandas las decide `bandaCartera()`, no una escalera local.
             const banda = bandaCartera(moraPorLoan.get(id) ?? 0)
-            if (banda === "al_dia") portfolioStatus.alDia += 1
-            else if (banda === "mora") portfolioStatus.mora += 1
-            else portfolioStatus.vencidos += 1
+            if (banda === "al_dia") { portfolioStatus.alDia += 1; idsCartera.alDia.push(id) }
+            else if (banda === "mora") { portfolioStatus.mora += 1; idsCartera.mora.push(id) }
+            else { portfolioStatus.vencidos += 1; idsCartera.vencidos.push(id) }
           }
         }
 
@@ -376,6 +493,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         const ventasHoy = (ventasHoyRes.data ?? []) as { id: string; client_id: string }[]
         let nuevas = 0
         let renovaciones = 0
+        const idsVentas = { nuevas: [] as string[], renovaciones: [] as string[] }
         if (ventasHoy.length > 0) {
           const clientIds = [...new Set(ventasHoy.map((v) => v.client_id))]
           const { data: prevLoans } = await supabase
@@ -387,8 +505,8 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
             loansPorCliente.set(l.client_id, (loansPorCliente.get(l.client_id) ?? 0) + 1)
           }
           for (const v of ventasHoy) {
-            if ((loansPorCliente.get(v.client_id) ?? 1) > 1) renovaciones += 1
-            else nuevas += 1
+            if ((loansPorCliente.get(v.client_id) ?? 1) > 1) { renovaciones += 1; idsVentas.renovaciones.push(v.id) }
+            else { nuevas += 1; idsVentas.nuevas.push(v.id) }
           }
         }
 
@@ -397,6 +515,13 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
           installmentsByClient,
           salesReport: { nuevas, renovaciones, total: ventasHoy.length },
           portfolioStatus,
+        })
+        setBackIds({
+          freq: idsFreq,
+          pagaronHoy: idsPagaronHoy,
+          cuotas: idsCuotas,
+          ventas: { ...idsVentas, total: ventasHoy.map((v) => v.id) },
+          cartera: idsCartera,
         })
       } catch (err) {
         console.error("[v0] Error cargando informe recaudo:", err)
@@ -579,9 +704,9 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                 <p className="text-sm font-semibold text-foreground mb-1.5">Resumen Financiero</p>
                 
                 {(() => {
-                  const items: { label: string; value: number; color: string; textColor: string; icon: React.ElementType; detailType?: "Ingreso" | "Gasto" | "Retiro"; maxOverride?: number }[] = [
-                    { label: "Canceladas", value: valorCanceladas, color: "bg-warning", textColor: "text-icon-check", icon: CheckCircle, maxOverride: collectedAmount },
-                    { label: "Ventas", value: valorVentas, color: "bg-info", textColor: "text-icon-sales", icon: ShoppingCart },
+                  const items: { label: string; value: number; color: string; textColor: string; icon: React.ElementType; detailType?: "Ingreso" | "Gasto" | "Retiro"; detalleClientes?: "canceladas" | "ventas"; maxOverride?: number }[] = [
+                    { label: "Canceladas", value: valorCanceladas, color: "bg-warning", textColor: "text-icon-check", icon: CheckCircle, detalleClientes: "canceladas", maxOverride: collectedAmount },
+                    { label: "Ventas", value: valorVentas, color: "bg-info", textColor: "text-icon-sales", icon: ShoppingCart, detalleClientes: "ventas" },
                     { label: "Ingresos", value: valorIngresos, color: "bg-success", textColor: "text-icon-income", icon: TrendingUp, detailType: "Ingreso" },
                     { label: "Gastos", value: valorGastos, color: "bg-destructive", textColor: "text-icon-expense", icon: Receipt, detailType: "Gasto" },
                     { label: "Retiros", value: valorRetiros, color: "bg-icon-withdrawal", textColor: "text-icon-withdrawal", icon: ArrowDownCircle, detailType: "Retiro" },
@@ -603,13 +728,17 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                                 ojo, tapandolo. Las filas sin detalle llevan un
                                 hueco del mismo tamano para que los nombres
                                 sigan alineados entre si. */}
-                            {item.detailType ? (
+                            {item.detailType || item.detalleClientes ? (
                               <Button
                                 variant="ghost"
                                 size="icon"
                                 className="h-4 w-4 p-0 shrink-0"
                                 title={`Ver el detalle de ${item.label.toLowerCase()}`}
-                                onClick={() => fetchDetailRecords(item.detailType!)}
+                                onClick={() =>
+                                  item.detailType
+                                    ? fetchDetailRecords(item.detailType)
+                                    : void abrirDetalleFinanciero(item.detalleClientes!)
+                                }
                               >
                                 <Eye className="h-3 w-3 text-muted-foreground" />
                               </Button>
@@ -856,57 +985,40 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     </div>
                     <span className="text-xs font-semibold text-foreground">Frecuencia de Pago</span>
                   </div>
+                  {/* Las cinco filas son iguales salvo el ícono, así que se
+                      recorren: el ojito se define una vez y no cinco. */}
                   <div className="space-y-0.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1">
-                        <CheckCircle className="h-2.5 w-2.5 text-success" />
-                        <span className="text-xs text-muted-foreground">Diario:</span>
-                      </div>
-                      <span className="text-xs font-bold text-foreground">
-                        {reportData.frequency.diario.pagos}
-                        <span className="text-muted-foreground font-normal">/{reportData.frequency.diario.total}</span>
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1">
-                        <CalendarDays className="h-2.5 w-2.5 text-icon-calendar" />
-                        <span className="text-xs text-muted-foreground">Semanal:</span>
-                      </div>
-                      <span className="text-xs font-bold text-foreground">
-                        {reportData.frequency.semanal.pagos}
-                        <span className="text-muted-foreground font-normal">/{reportData.frequency.semanal.total}</span>
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1">
-                        <CalendarClock className="h-2.5 w-2.5 text-icon-clock" />
-                        <span className="text-xs text-muted-foreground">Quincenal:</span>
-                      </div>
-                      <span className="text-xs font-bold text-foreground">
-                        {reportData.frequency.quincenal.pagos}
-                        <span className="text-muted-foreground font-normal">/{reportData.frequency.quincenal.total}</span>
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1">
-                        <CalendarRange className="h-2.5 w-2.5 text-icon-withdrawal" />
-                        <span className="text-xs text-muted-foreground">Mensual:</span>
-                      </div>
-                      <span className="text-xs font-bold text-foreground">
-                        {reportData.frequency.mensual.pagos}
-                        <span className="text-muted-foreground font-normal">/{reportData.frequency.mensual.total}</span>
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1">
-                        <Coins className="h-2.5 w-2.5 text-icon-wallet" />
-                        <span className="text-xs text-muted-foreground">Intereses:</span>
-                      </div>
-                      <span className="text-xs font-bold text-foreground">
-                        {reportData.frequency.intereses.pagos}
-                        <span className="text-muted-foreground font-normal">/{reportData.frequency.intereses.total}</span>
-                      </span>
-                    </div>
+                    {([
+                      { key: "diario",    label: "Diario",    Icono: CheckCircle,   tono: "text-success" },
+                      { key: "semanal",   label: "Semanal",   Icono: CalendarDays,  tono: "text-icon-calendar" },
+                      { key: "quincenal", label: "Quincenal", Icono: CalendarClock, tono: "text-icon-clock" },
+                      { key: "mensual",   label: "Mensual",   Icono: CalendarRange, tono: "text-icon-withdrawal" },
+                      { key: "intereses", label: "Intereses", Icono: Coins,         tono: "text-icon-wallet" },
+                    ] as const).map(({ key, label, Icono, tono }) => {
+                      const f = reportData.frequency[key]
+                      const ids = backIds.freq[key] ?? []
+                      return (
+                        <div key={key} className="flex items-center justify-between">
+                          <div className="flex items-center gap-1">
+                            <Ojito
+                              disabled={ids.length === 0}
+                              onClick={() =>
+                                abrirDetalle(`Frecuencia ${label.toLowerCase()}`, ids, {
+                                  subtitulo: `${f.pagos} de ${f.total} ya pagaron hoy`,
+                                  marcados: backIds.pagaronHoy,
+                                })
+                              }
+                            />
+                            <Icono className={`h-2.5 w-2.5 ${tono}`} />
+                            <span className="text-xs text-muted-foreground">{label}:</span>
+                          </div>
+                          <span className="text-xs font-bold text-foreground">
+                            {f.pagos}
+                            <span className="text-muted-foreground font-normal">/{f.total}</span>
+                          </span>
+                        </div>
+                      )
+                    })}
                   </div>
                 </CardContent>
               </Card>
@@ -921,20 +1033,28 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     <span className="text-xs font-semibold text-foreground">Cuotas por Clientes</span>
                   </div>
                   <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1">
-                        <PiggyBank className="h-2.5 w-2.5 text-icon-sales" />
-                        <span className="text-xs text-muted-foreground">De 0.1 - 3:</span>
+                    {([
+                      { key: "small", label: "De 0.1 - 3", Icono: PiggyBank, tono: "text-icon-sales",
+                        n: reportData.installmentsByClient.small, ids: backIds.cuotas.small },
+                      { key: "large", label: "Mayor a 3",  Icono: Coins,     tono: "text-icon-wallet",
+                        n: reportData.installmentsByClient.large, ids: backIds.cuotas.large },
+                    ] as const).map(({ key, label, Icono, tono, n, ids }) => (
+                      <div key={key} className="flex items-center justify-between">
+                        <div className="flex items-center gap-1">
+                          <Ojito
+                            disabled={ids.length === 0}
+                            onClick={() =>
+                              abrirDetalle(`Cuotas vencidas: ${label.toLowerCase()}`, [...ids], {
+                                subtitulo: `${n} ${n === 1 ? "cliente" : "clientes"}`,
+                              })
+                            }
+                          />
+                          <Icono className={`h-2.5 w-2.5 ${tono}`} />
+                          <span className="text-xs text-muted-foreground">{label}:</span>
+                        </div>
+                        <span className="text-xs font-bold text-foreground">{n}</span>
                       </div>
-                      <span className="text-xs font-bold text-foreground">{reportData.installmentsByClient.small}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1">
-                        <Coins className="h-2.5 w-2.5 text-icon-wallet" />
-                        <span className="text-xs text-muted-foreground">Mayor a 3:</span>
-                      </div>
-                      <span className="text-xs font-bold text-foreground">{reportData.installmentsByClient.large}</span>
-                    </div>
+                    ))}
                   </div>
                 </CardContent>
               </Card>
@@ -975,8 +1095,39 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                         <span className="text-[10px] text-muted-foreground mt-1">Renov.</span>
                       </div>
                     </div>
+                    {/* Los ojitos van al lado de las barras y no encima: ahí
+                        arriba pelearían con el número por el mismo espacio. */}
+                    <div className="flex flex-col gap-0.5 pb-4">
+                      <div className="flex items-center gap-1">
+                        <Ojito
+                          disabled={nuevas === 0}
+                          onClick={() => abrirDetalle("Ventas nuevas de hoy", backIds.ventas.nuevas, {
+                            subtitulo: `${nuevas} ${nuevas === 1 ? "venta" : "ventas"}`,
+                            mostrarValorVenta: true,
+                          })}
+                        />
+                        <span className="text-[9px] text-muted-foreground">Nuevas</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Ojito
+                          disabled={renovaciones === 0}
+                          onClick={() => abrirDetalle("Renovaciones de hoy", backIds.ventas.renovaciones, {
+                            subtitulo: `${renovaciones} ${renovaciones === 1 ? "renovación" : "renovaciones"}`,
+                            mostrarValorVenta: true,
+                          })}
+                        />
+                        <span className="text-[9px] text-muted-foreground">Renov.</span>
+                      </div>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2 border border-border rounded-lg p-2">
+                    <Ojito
+                      disabled={reportData.salesReport.total === 0}
+                      onClick={() => abrirDetalle("Ventas de hoy", backIds.ventas.total, {
+                        subtitulo: `${reportData.salesReport.total} en total`,
+                        mostrarValorVenta: true,
+                      })}
+                    />
                     <CalendarDays className="h-5 w-5 text-icon-calendar" />
                     <span className="text-xl font-bold text-foreground">{reportData.salesReport.total}</span>
                   </div>
@@ -1034,20 +1185,44 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                   </div>
                   {/* Legend */}
                   <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <div className="h-3 w-3 rounded-full bg-status-al-dia" />
-                      <span className="text-xs text-muted-foreground">Al Día</span>
-                      <span className="text-xs font-bold text-status-al-dia">{reportData.portfolioStatus.alDia}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="h-3 w-3 rounded-full bg-status-mora" />
-                      <span className="text-xs text-muted-foreground">Mora</span>
-                      <span className="text-xs font-bold text-status-mora">{reportData.portfolioStatus.mora}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="h-3 w-3 rounded-full bg-status-vencido" />
-                      <span className="text-xs text-muted-foreground">Vencidos</span>
-                      <span className="text-xs font-bold text-status-vencido">{reportData.portfolioStatus.vencidos}</span>
+                    {([
+                      { key: "alDia",    label: "Al Día",   punto: "bg-status-al-dia",  texto: "text-status-al-dia",
+                        n: reportData.portfolioStatus.alDia,    ids: backIds.cartera.alDia },
+                      { key: "mora",     label: "Mora",     punto: "bg-status-mora",    texto: "text-status-mora",
+                        n: reportData.portfolioStatus.mora,     ids: backIds.cartera.mora },
+                      { key: "vencidos", label: "Vencidos", punto: "bg-status-vencido", texto: "text-status-vencido",
+                        n: reportData.portfolioStatus.vencidos, ids: backIds.cartera.vencidos },
+                    ] as const).map(({ key, label, punto, texto, n, ids }) => (
+                      <div key={key} className="flex items-center gap-2">
+                        <Ojito
+                          disabled={n === 0}
+                          onClick={() =>
+                            abrirDetalle(`Cartera — ${label.toLowerCase()}`, [...ids], {
+                              subtitulo: `${n} de ${totalPortfolio} ${totalPortfolio === 1 ? "cliente" : "clientes"}`,
+                            })
+                          }
+                        />
+                        <div className={`h-3 w-3 rounded-full ${punto}`} />
+                        <span className="text-xs text-muted-foreground">{label}</span>
+                        <span className={`text-xs font-bold ${texto}`}>{n}</span>
+                      </div>
+                    ))}
+                    {/* Total de la cartera: sin denominador, "12 en mora" no
+                        dice si la ruta está mal o si tiene 300 clientes. */}
+                    <div className="flex items-center gap-2 border-t pt-1.5">
+                      <Ojito
+                        disabled={totalPortfolio === 0}
+                        onClick={() =>
+                          abrirDetalle("Cartera completa", [
+                            ...backIds.cartera.alDia,
+                            ...backIds.cartera.mora,
+                            ...backIds.cartera.vencidos,
+                          ], { subtitulo: `${totalPortfolio} ${totalPortfolio === 1 ? "cliente" : "clientes"} con crédito activo` })
+                        }
+                      />
+                      <div className="h-3 w-3" />
+                      <span className="text-xs font-medium text-muted-foreground">Total</span>
+                      <span className="text-xs font-bold text-foreground">{totalPortfolio}</span>
                     </div>
                   </div>
                 </div>
@@ -1056,6 +1231,20 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
           </div>
         </div>
       </div>
+
+      {/* Quiénes son las personas detrás de cada número.
+          Va ACÁ, fuera del contenedor con `perspective`/`preserve-3d`: dentro
+          de una cara de la tarjeta quedaría sometido a la rotación 3D y se
+          vería espejado. */}
+      <DetalleClientesDialog
+        open={detalleClientes !== null}
+        onOpenChange={(v) => { if (!v) setDetalleClientes(null) }}
+        titulo={detalleClientes?.titulo ?? ""}
+        subtitulo={detalleClientes?.subtitulo}
+        loanIds={detalleClientes?.ids ?? []}
+        marcados={detalleClientes?.marcados}
+        mostrarValorVenta={detalleClientes?.mostrarValorVenta}
+      />
 
       {/* Dialog para detalle de Ingresos/Gastos/Retiros */}
       <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
