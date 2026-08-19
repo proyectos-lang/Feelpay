@@ -33,6 +33,9 @@ export interface ResumenDiaRow {
   valor_canceladas: number
   pago_capital: number
   pago_intereses: number
+  /** El mismo recaudo, partido por forma de pago (script 059). */
+  pago_efectivo: number
+  pago_transferencia: number
   hora_ultimo_movimiento: string | null
   valor_ingresos: number
   cantidad_ingresos: number
@@ -63,7 +66,9 @@ function filaVacia(rutaId: number, fecha: string, acumulado: number): ResumenDia
     fecha_pago: fecha, ruta: rutaId,
     meta_pagos: 0, valor_pago: 0, cantidad_pagos: 0, cantidad_no_pagos: 0,
     cantidad_canceladas: 0, valor_canceladas: 0,
-    pago_capital: 0, pago_intereses: 0, hora_ultimo_movimiento: null,
+    pago_capital: 0, pago_intereses: 0,
+    pago_efectivo: 0, pago_transferencia: 0,
+    hora_ultimo_movimiento: null,
     valor_ingresos: 0, cantidad_ingresos: 0,
     valor_gastos: 0, cantidad_gastos: 0,
     valor_retiros: 0, cantidad_retiros: 0,

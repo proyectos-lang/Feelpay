@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
  import { createClient } from "@/lib/supabase/client"
 import { getResumenDia } from "@/lib/resumen-dia"
 import { todayColombia, bandaCartera, etiquetaFrecuencia } from "@/lib/gestion-core"
+import { getRutaUmbrales } from "@/lib/ruta-umbrales"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
@@ -66,6 +67,23 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
   // dia con registro. Se avisa en pantalla para que un $0 en las tarjetas
   // de movimiento no se lea como "se perdio la plata".
   const [diaSinMovimiento, setDiaSinMovimiento] = useState(false)
+  // Recaudo del día partido por forma de pago (script 059).
+  const [pagoEfectivo, setPagoEfectivo] = useState(0)
+  const [pagoTransferencia, setPagoTransferencia] = useState(0)
+  // La unidad trabaja con un solo método de interés. Mientras la config no
+  // responde queda en false, o sea se muestra Capital/Intereses — el
+  // comportamiento de siempre — en vez de un hueco.
+  const [unidadDeUnSoloMetodo, setUnidadDeUnSoloMetodo] = useState(false)
+
+  useEffect(() => {
+    let cancelado = false
+    getRutaUmbrales(rutaId)
+      .then((u) => {
+        if (!cancelado) setUnidadDeUnSoloMetodo(u.amortizaciones_habilitadas.length === 1)
+      })
+      .catch((err) => console.error("[v0] DailySummary umbrales:", err))
+    return () => { cancelado = true }
+  }, [rutaId])
   // Sumas de capital e intereses del recaudo del dia (aleman vs americano),
   // calculadas por la vista sobre las gestiones del dia.
   const [pagoCapital, setPagoCapital] = useState(0)
@@ -115,6 +133,8 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         setCajaAnterior(d.caja_anterior ?? 0)
         setPagoCapital(d.pago_capital ?? 0)
         setPagoIntereses(d.pago_intereses ?? 0)
+        setPagoEfectivo(d.pago_efectivo ?? 0)
+        setPagoTransferencia(d.pago_transferencia ?? 0)
       } catch (err) {
         console.error("[v0] Unexpected error fetching resumen:", err)
       } finally {
@@ -677,13 +697,20 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                   </div>
                 </div>
                 
-                {collectedAmount >= metaAmount && metaAmount > 0 ? (
+                {/* Tres casos, no dos. Sin meta (`metaAmount === 0`) caía en
+                    la rama de "Faltan" y mostraba un número sin sentido:
+                    no se puede incumplir una meta que no existe. */}
+                {metaAmount <= 0 ? (
+                  <p className="text-center text-base text-muted-foreground mt-0.5">
+                    Sin meta para hoy
+                  </p>
+                ) : collectedAmount >= metaAmount ? (
                   <p className="text-center text-base font-bold text-success mt-0.5">
                     Superaste la meta del día
                   </p>
                 ) : (
-                  <p className="text-center text-base text-muted-foreground mt-0.5">
-                    Faltan <span className="font-bold text-destructive">${remaining.toLocaleString()}</span> para cumplir la meta
+                  <p className="text-center text-base font-bold text-destructive mt-0.5">
+                    Meta no superada por ${remaining.toLocaleString()}
                   </p>
                 )}
 
@@ -701,39 +728,44 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                   </div>
                 </div>
 
-                {/* ── Desglose Capital / Intereses ─────────────────────
-                    Dos mini-tarjetas que muestran la composicion del
-                    recaudo del dia: cuanto fue a capital y cuanto a
-                    intereses. Cada tarjeta indica el porcentaje sobre
-                    el recaudo total (collectedAmount). */}
+                {/* ── Composición del recaudo del día ──────────────────
+                    Dos mini-tarjetas con el porcentaje sobre el recaudo.
+                    QUÉ muestran depende de cómo trabaje la unidad:
+
+                    · Con UN SOLO método de interés, el desglose
+                      Capital/Intereses es degenerado por construcción —
+                      sale del `tipo_amortizacion` del préstamo, así que
+                      una caja siempre marca $0 y la otra el total. En su
+                      lugar se muestra la FORMA DE PAGO, que sí dice algo:
+                      cuánto entró en efectivo y cuánto por transferencia.
+                    · Con los dos métodos habilitados, el desglose de
+                      siempre sí informa y se conserva. */}
                 {(() => {
                   const totalRecaudo = collectedAmount
-                  const pctCapital = totalRecaudo > 0 ? (pagoCapital / totalRecaudo) * 100 : 0
-                  const pctIntereses = totalRecaudo > 0 ? (pagoIntereses / totalRecaudo) * 100 : 0
+                  const par = unidadDeUnSoloMetodo
+                    ? [
+                        { label: "Efectivo", valor: pagoEfectivo },
+                        { label: "Transferencia", valor: pagoTransferencia },
+                      ]
+                    : [
+                        { label: "Capital", valor: pagoCapital },
+                        { label: "Intereses", valor: pagoIntereses },
+                      ]
                   return (
                     <div className="grid grid-cols-2 gap-2 mt-2">
-                      <div className="rounded-lg border border-border bg-card px-3 py-2">
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="text-xs font-medium text-muted-foreground">Capital</span>
-                          <span className="text-[10px] font-bold text-primary">
-                            {pctCapital.toFixed(1)}%
-                          </span>
+                      {par.map((c) => (
+                        <div key={c.label} className="rounded-lg border border-border bg-card px-3 py-2">
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-xs font-medium text-muted-foreground">{c.label}</span>
+                            <span className="text-[10px] font-bold text-primary">
+                              {(totalRecaudo > 0 ? (c.valor / totalRecaudo) * 100 : 0).toFixed(1)}%
+                            </span>
+                          </div>
+                          <p className="text-base font-bold text-foreground mt-0.5 leading-tight">
+                            ${c.valor.toLocaleString()}
+                          </p>
                         </div>
-                        <p className="text-base font-bold text-foreground mt-0.5 leading-tight">
-                          ${pagoCapital.toLocaleString()}
-                        </p>
-                      </div>
-                      <div className="rounded-lg border border-border bg-card px-3 py-2">
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="text-xs font-medium text-muted-foreground">Intereses</span>
-                          <span className="text-[10px] font-bold text-primary">
-                            {pctIntereses.toFixed(1)}%
-                          </span>
-                        </div>
-                        <p className="text-base font-bold text-foreground mt-0.5 leading-tight">
-                          ${pagoIntereses.toLocaleString()}
-                        </p>
-                      </div>
+                      ))}
                     </div>
                   )
                 })()}
@@ -915,24 +947,31 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                   <ShoppingCart className="h-3 w-3 text-brand-foreground" />
                   <span className="text-xs font-semibold text-brand-foreground">Informe Ventas</span>
                 </div>
+                {/* Las barras se escalan contra la más alta, igual que en el
+                    Resumen Financiero. Antes eran `n * 20px` SIN TECHO dentro
+                    de un contenedor de 56px: con 3 ventas la barra ya medía
+                    60px y, como el contenedor alinea al fondo y no recortaba,
+                    el excedente crecía hacia arriba y se montaba sobre el
+                    título "Informe Ventas". */}
+                {(() => {
+                  const { nuevas, renovaciones } = reportData.salesReport
+                  const tope = Math.max(nuevas, renovaciones, 1)
+                  // 44px de los 56 del contenedor: los 12 restantes son el
+                  // número que va encima de cada barra.
+                  const alto = (n: number) => `${Math.max((n / tope) * 44, 6)}px`
+                  return (
                 <div className="flex items-center justify-between">
                   <div className="flex items-end gap-3">
                     {/* Bar chart */}
-                    <div className="flex items-end gap-2 h-14">
+                    <div className="flex items-end gap-2 h-14 overflow-hidden">
                       <div className="flex flex-col items-center">
-                        <span className="text-xs font-bold text-info mb-1">{reportData.salesReport.nuevas}</span>
-                        <div
-                          className="w-8 bg-info rounded-t"
-                          style={{ height: `${Math.max(reportData.salesReport.nuevas * 20, 8)}px` }}
-                        />
+                        <span className="text-xs font-bold text-info mb-1">{nuevas}</span>
+                        <div className="w-8 bg-info rounded-t" style={{ height: alto(nuevas) }} />
                         <span className="text-[10px] text-muted-foreground mt-1">Nuevas</span>
                       </div>
                       <div className="flex flex-col items-center">
-                        <span className="text-xs font-bold text-warning mb-1">{reportData.salesReport.renovaciones}</span>
-                        <div
-                          className="w-8 bg-warning rounded-t"
-                          style={{ height: `${Math.max(reportData.salesReport.renovaciones * 20, 8)}px` }}
-                        />
+                        <span className="text-xs font-bold text-warning mb-1">{renovaciones}</span>
+                        <div className="w-8 bg-warning rounded-t" style={{ height: alto(renovaciones) }} />
                         <span className="text-[10px] text-muted-foreground mt-1">Renov.</span>
                       </div>
                     </div>
@@ -942,6 +981,8 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     <span className="text-xl font-bold text-foreground">{reportData.salesReport.total}</span>
                   </div>
                 </div>
+                  )
+                })()}
               </CardContent>
             </Card>
 

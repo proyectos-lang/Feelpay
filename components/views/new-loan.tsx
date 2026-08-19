@@ -1274,6 +1274,25 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       // y si la unidad solo tenía configurado el de renovación, no pasaba por
       // revisión.
       const esRenovacion = !!preSelectedClientId || !isNewClient
+
+      // Nombre del cliente para etiquetar la venta.
+      //
+      // Se calcula ACÁ y no más abajo porque también lo necesita la solicitud
+      // de revisión: `apodo`/`nombreCompleto` son los campos del formulario de
+      // cliente NUEVO, y en una renovación llegan vacíos. Por eso las
+      // solicitudes de venta decían "Venta nueva — " sin nombre, justo lo que
+      // el aprobador necesita para saber qué está aprobando.
+      //
+      // Se usa la etiqueta guardada al elegir y no una búsqueda dentro de
+      // `clientOptions`: esa lista se refiltra con cada tecla, así que el
+      // cliente ya seleccionado puede no estar en ella.
+      const nombreParaEtiqueta = isNewClient
+        ? (apodo || nombreCompleto || "Cliente")
+        : (selectedClientLabel
+            || clientOptions.find((c) => c.id === selectedClient)?.apodo
+            || clientOptions.find((c) => c.id === selectedClient)?.nombre_completo
+            || "Cliente")
+
       const umbrales = await getRutaUmbrales(p_ruta_id)
       const ventaHabilitada = esRenovacion ? umbrales.venta_renovacion_habilitado : umbrales.venta_nueva_habilitado
       const ventaUmbral = esRenovacion ? umbrales.venta_renovacion_umbral : umbrales.venta_nueva_umbral
@@ -1289,7 +1308,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
           solicitado_por: p_user_id,
           solicitado_por_nombre: getSolicitanteNombre(),
           monto: valorNum,
-          descripcion: `${esRenovacion ? "Renovación" : "Venta nueva"} — ${apodo || nombreCompleto}`,
+          descripcion: `${esRenovacion ? "Renovación" : "Venta nueva"} — ${nombreParaEtiqueta}`,
           payload: { p_cliente, p_loan, p_payment_plan },
         })
 
@@ -1302,9 +1321,9 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         // teléfono con la app cerrada; el badge y el toast solo funcionan si
         // la persona la tiene abierta en ese momento.
         void avisarSolicitudPendiente({
-          etiqueta: "Venta",
+          etiqueta: esRenovacion ? "Renovación" : "Venta",
           monto: valorNum,
-          cliente: apodo || nombreCompleto,
+          cliente: nombreParaEtiqueta,
           rutaId: p_ruta_id,
         })
 
@@ -1325,16 +1344,6 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       // Sin conexion la venta queda en la cola del dispositivo y se envia sola
       // despues. Las fechas del plan NO se recalculan al sincronizar: son las
       // que se pactaron con el cliente al hacer la venta.
-      // Se usa la etiqueta guardada al elegir y no una busqueda dentro de
-      // `clientOptions`: esa lista se refiltra con cada tecla, asi que el
-      // cliente ya seleccionado puede no estar en ella.
-      const nombreParaEtiqueta = isNewClient
-        ? (apodo || nombreCompleto || "Cliente")
-        : (selectedClientLabel
-            || clientOptions.find((c) => c.id === selectedClient)?.apodo
-            || clientOptions.find((c) => c.id === selectedClient)?.nombre_completo
-            || "Cliente")
-
       let ventaEncolada = false
       let resultadoVenta: unknown = null
       try {
