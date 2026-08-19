@@ -83,7 +83,14 @@ type PaymentPlanEntry = DashboardPaymentPlanEntry
 type DisplayClient = {
   loanId: string
   clientId: string
+  /** Como lo llama el cobrador: el apodo si lo tiene, si no el nombre real.
+   *  Es lo que va en el recibo, los dialogos y el buscador — NO se le pega el
+   *  otro dato encima, o se propagaria a todos esos sitios. */
   nombre: string
+  /** El apodo, ya limpio. null si no tiene o si es igual al nombre real. */
+  apodo: string | null
+  /** El nombre real, SIN el apodo incrustado. Ver `sinApodo`. */
+  nombreCompleto: string
   documento: string
   valorVenta: number
   valorCuota: number
@@ -169,6 +176,34 @@ type RegisterPaymentProps = {
   // recarga; en su lugar mostramos un spinner discreto.
   rutaActivaResolved?: boolean
   onRouteStateChange?: (estado: "abierta" | "cerrada" | null) => void
+}
+
+/**
+ * Quita el apodo de adentro del nombre completo.
+ *
+ * En muchos registros el apodo (el oficio o el negocio) quedó guardado TAMBIÉN
+ * dentro de `nombre_completo`: "EDUARDO MECANICO RODRIGUEZ" con apodo
+ * "MECANICO". Mostrar los dos tal cual daría "MECANICO · EDUARDO MECANICO
+ * RODRIGUEZ", que es justo el ruido que hace ilegible la lista al sol.
+ *
+ * Dos salvaguardas para no dejar a nadie sin nombre: si el apodo ES el nombre
+ * completo no hay nada que quitar, y si al quitarlo queda una sola palabra se
+ * prefiere el original. Ver scripts/diagnostico-nombres-clientes.sql para
+ * limpiar el dato de raíz.
+ *
+ * Vivía dentro de `handleGenerarRecibo`. Salió acá cuando la lista de cobro
+ * empezó a mostrar los dos nombres: si el recibo y la lista limpiaran distinto,
+ * el papel y la pantalla dirían cosas distintas del mismo cliente.
+ */
+const sinApodo = (completo: string, apodo: string | null | undefined): string => {
+  const a = (apodo ?? "").trim()
+  if (!a || a.toLowerCase() === completo.trim().toLowerCase()) return completo
+  const escapado = a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const limpio = completo
+    .replace(new RegExp(escapado, "gi"), " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  return limpio.split(" ").filter(Boolean).length >= 2 ? limpio : completo
 }
 
 const frecuenciaLabel = (freq: string) => {
@@ -634,10 +669,18 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // Un solo predicado de busqueda para las dos pestanas: si Gestionados
   // buscara distinto que Pendientes, el mismo cliente aparece en una y se
   // esconde en la otra.
-  const coincideBusqueda = (c: { nombre: string; documento: string }) =>
-    searchTerm === "" ||
-    c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.documento.includes(searchTerm)
+  // Busca por apodo Y por nombre real. Antes solo miraba `nombre`, que es el
+  // apodo cuando lo hay: buscar a alguien por su nombre de cedula no lo
+  // encontraba, aunque ahora ese nombre este a la vista en la lista.
+  const coincideBusqueda = (c: { nombre: string; nombreCompleto?: string; documento: string }) => {
+    if (searchTerm === "") return true
+    const q = searchTerm.toLowerCase()
+    return (
+      c.nombre.toLowerCase().includes(q) ||
+      (c.nombreCompleto ?? "").toLowerCase().includes(q) ||
+      c.documento.includes(searchTerm)
+    )
+  }
 
   // Gestionados tambien se busca. Al final del dia esta lista tiene tantos
   // clientes como la otra, y encontrar a alguien para corregirle un cobro
@@ -993,6 +1036,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           loanId: loan.id,
           clientId: loan.client_id,
           nombre: loan.clients?.apodo || loan.clients?.nombre_completo || "Sin nombre",
+          // Los dos por separado para poder pintarlos en dos lineas. El apodo
+          // se descarta cuando es identico al nombre real: repetirlo no agrega
+          // nada y ocupa una linea entera.
+          apodo: (() => {
+            const a = (loan.clients?.apodo ?? "").trim()
+            const n = (loan.clients?.nombre_completo ?? "").trim()
+            return a && a.toLowerCase() !== n.toLowerCase() ? a : null
+          })(),
+          nombreCompleto: loan.clients?.nombre_completo
+            ? sinApodo(loan.clients.nombre_completo, loan.clients.apodo)
+            : (loan.clients?.apodo || "Sin nombre"),
           documento: loan.clients?.documento || "",
           // VALOR DE LA VENTA = el capital prestado, sin intereses.
           //
@@ -1951,28 +2005,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       total_recaudado: finRow.total_pagado,
       saldo_pendiente: finRow.saldo_hoy,
     }
-    // El recibo lleva el nombre del cliente, sin el apodo.
-    //
-    // En muchos registros el apodo (el oficio o el negocio) quedo guardado
-    // DENTRO de `nombre_completo`, y salia impreso en la mitad del nombre:
-    // "EDUARDO MECANICO RODRIGUEZ". Aca se le quita si esta como palabra
-    // aparte, sin tocar la base.
-    //
-    // Dos salvaguardas para no dejar a nadie sin nombre: si el apodo ES el
-    // nombre completo no hay nada que quitar, y si al quitarlo queda una
-    // sola palabra se prefiere el original. Ver
-    // scripts/diagnostico-nombres-clientes.sql para limpiar el dato de raiz.
-    const sinApodo = (completo: string, apodo: string | null | undefined): string => {
-      const a = (apodo ?? "").trim()
-      if (!a || a.toLowerCase() === completo.trim().toLowerCase()) return completo
-      const escapado = a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-      const limpio = completo
-        .replace(new RegExp(escapado, "gi"), " ")
-        .replace(/\s+/g, " ")
-        .trim()
-      return limpio.split(" ").filter(Boolean).length >= 2 ? limpio : completo
-    }
-
+    // El recibo lleva el nombre REAL del cliente, sin el apodo. `sinApodo`
+    // vive a nivel de modulo: la lista de cobro usa el mismo, para que el
+    // papel y la pantalla no digan cosas distintas del mismo cliente.
     const datosCliente = clientRes.data as { nombre_completo?: string | null; apodo?: string | null } | null
     const nombreCompleto = datosCliente?.nombre_completo
       ? sinApodo(datosCliente.nombre_completo, datosCliente.apodo)
@@ -2397,6 +2432,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         loanId: m.loanId,
         clientId: m.clientId,
         nombre: m.nombre,
+        apodo: m.apodo,
+        nombreCompleto: m.nombreCompleto,
         documento: m.documento,
         fechaVenta: m.fechaVenta,
         valorVenta: m.valorVenta,
@@ -2957,7 +2994,24 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 derecha. Con min-w-0 + table-fixed el span
                                 respeta el ancho de la columna y envuelve. */}
                             <div className="flex flex-col gap-0.5 min-w-0">
-                              <span className="font-medium text-[12px] md:text-base leading-tight break-words [overflow-wrap:anywhere] min-w-0">{client.nombre}</span>
+                              {/* Apodo arriba y nombre real debajo, en dos
+                                  lineas. El apodo va primero porque es como el
+                                  cobrador ubica la casa; el nombre de cedula es
+                                  el que necesita para el recibo y para no
+                                  confundir dos clientes del mismo apellido.
+
+                                  Los dos ENVUELVEN, no se cortan: con
+                                  `truncate` un nombre largo terminaba en "..."
+                                  y quedaban indistinguibles. `min-w-0` es
+                                  CRITICO — sin eso el span impone su ancho
+                                  intrinseco al flex item, desborda la celda y
+                                  se solapa con la columna de la derecha. */}
+                              <span className="font-semibold text-[12px] md:text-base leading-tight break-words [overflow-wrap:anywhere] min-w-0">{client.nombre}</span>
+                              {client.apodo && client.nombreCompleto && (
+                                <span className="text-[11px] md:text-sm text-muted-foreground leading-tight break-words [overflow-wrap:anywhere] min-w-0">
+                                  {client.nombreCompleto}
+                                </span>
+                              )}
                               <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                                 <span className="text-[11px] md:text-sm text-muted-foreground">{frecuenciaLabel(client.frecuenciaPago)}</span>
                                 {client.frecuenciaPago !== "daily" && client.diaSemana && (
@@ -3110,8 +3164,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                           m.gestionTipo === "pago" ? "border-l-green-500" : "border-l-red-500"
                         } ${index % 2 === 0 ? "bg-card" : "bg-muted"}`}
                       >
-                        {/* Línea 1: nombre · estado con el valor · hora */}
-                        <div className="flex items-center gap-1.5">
+                        {/* Línea 1: nombre + apodo · estado con el valor · hora */}
+                        <div className="flex items-start gap-1.5">
                           {/* El nombre ENVUELVE, no se corta. Con `truncate` un
                               nombre largo terminaba en "..." y el cobrador no
                               podia distinguir dos clientes del mismo apellido.
@@ -3121,8 +3175,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               `min-w-0` es CRITICO: sin eso el span impone su
                               ancho intrinseco al flex item, desborda la fila y
                               se solapa con el badge de estado. */}
-                          <span className="flex-1 min-w-0 font-medium text-[13px] md:text-sm leading-tight break-words [overflow-wrap:anywhere]">
-                            {m.nombre}
+                          <span className="flex-1 min-w-0 flex flex-col gap-0.5">
+                            <span className="font-semibold text-[13px] md:text-sm leading-tight break-words [overflow-wrap:anywhere]">
+                              {m.nombre}
+                            </span>
+                            {m.apodo && m.nombreCompleto && (
+                              <span className="text-[11px] md:text-xs text-muted-foreground leading-tight break-words [overflow-wrap:anywhere]">
+                                {m.nombreCompleto}
+                              </span>
+                            )}
                           </span>
                           {/* El valor abonado va DENTRO de la insignia, pegado
                               a "Pago": es el par que el cobrador busca de un
