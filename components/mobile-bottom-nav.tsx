@@ -134,7 +134,11 @@ export function MobileBottomNav({ currentView, onViewChange, currentUser, userPe
                   : "0 5px 14px rgba(58, 124, 165, 0.55), 0 2px 4px rgba(58, 124, 165, 0.4), inset 0 1px 0 rgba(255,255,255,0.2)",
               }}
             >
-              <Icon className="h-8 w-8" />
+              {/* 28px. Estaban en 32, bastante por encima de lo que usan
+                  iOS y Android para una barra inferior (24-28). El alto del
+                  boton no se toca: lo que se busca es un icono mas discreto,
+                  no un area de toque mas chica. */}
+              <Icon className="h-7 w-7" />
               <span className="text-xs font-semibold">{item.label}</span>
               {unread > 0 && (
                 // El circulo pasa de 16 a 20px: con la letra mas grande (ver
