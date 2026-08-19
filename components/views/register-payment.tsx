@@ -2634,9 +2634,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             >
               <span className="text-[12px] font-semibold">
                 {encabezadoPlegado
-                  ? `${isDiario ? "Diario" : "No Diario"} · ${displayClients.length} por visitar${
-                      moraFilter ? " · filtrado por mora" : ""
-                    }`
+                  ? (() => {
+                      // Plegado tambien se va la barra de pestanas, asi que
+                      // esta linea tiene que decir DONDE esta parado: sin eso,
+                      // Pendientes vacio y Gestionados vacio se ven igual.
+                      if (activeTab === "gestionados") return `Gestionados · ${filteredManaged.length}`
+                      if (activeTab === "ventas") return `Ventas del día · ${salesTodayCount}`
+                      return `Pendientes · ${isDiario ? "Diario" : "No Diario"} · ${displayClients.length}${
+                        moraFilter ? " · filtrado por mora" : ""
+                      }`
+                    })()
                   : "Ocultar encabezado"}
               </span>
               {encabezadoPlegado
@@ -2775,7 +2782,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 que los tres quepan exactamente en cualquier móvil sin
                 desbordarse ni necesitar scroll. El texto largo se acorta
                 en móvil con versiones compactas visibles solo en <md. */}
-            <div className="grid grid-cols-3 mt-2 border-b border-border w-full">
+            <div className={`${ocultoEnMovil()} grid grid-cols-3 mt-2 border-b border-border w-full`}>
               <button
                 onClick={() => setActiveTab("pendientes")}
                 className={`flex items-center justify-center gap-1 px-1 py-1.5 text-[11px] md:text-sm font-medium border-b-2 transition-colors ${
@@ -2827,28 +2834,45 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 </span>
               </button>
             </div>
-            {/* Dots de navegación — visibles solo en móvil como indicador de swipe */}
-            <div className="flex md:hidden justify-center gap-1.5 pt-1.5 pb-0.5">
+            {/* Puntos de navegación — solo móvil.
+                NO se pliegan: con la barra de pestañas oculta son la ÚNICA
+                forma de cambiar de vista. El comentario de abajo decía que
+                también se podía deslizar el dedo, pero no hay ni un
+                `onTouchStart` en el archivo: nunca se implementó.
+
+                El punto se ve chiquito pero el área de toque es de 32px
+                (`p-2` alrededor). Antes el botón medía lo mismo que el punto
+                —6px— y había que apuntarle. */}
+            <div className="flex md:hidden justify-center gap-0.5 pt-0.5">
               {TAB_ORDER.map((tab) => (
                 <button
                   key={tab}
                   aria-label={`Ir a ${tab}`}
+                  aria-current={activeTab === tab ? "true" : undefined}
                   onClick={() => setActiveTab(tab)}
-                  className={`rounded-full transition-all duration-200 ${
-                    activeTab === tab
-                      ? "w-4 h-1.5 bg-primary"
-                      : "w-1.5 h-1.5 bg-muted-foreground/30"
-                  }`}
-                />
+                  className="p-2 flex items-center justify-center"
+                >
+                  <span
+                    className={`block rounded-full transition-all duration-200 ${
+                      activeTab === tab
+                        ? "w-5 h-1.5 bg-primary"
+                        : "w-1.5 h-1.5 bg-muted-foreground/40"
+                    }`}
+                  />
+                </button>
               ))}
             </div>
           </CardHeader>
 
           {/* ── Contenedor deslizable ──────────────────────────────────────
-               En desktop el overflow está oculto y la transición es
-               instantánea. En móvil permite swipe horizontal con
-               touchstart/touchend; el `translateX` mueve los 3 paneles
-               (100 % de ancho cada uno) según el índice activo.
+               Los 3 paneles van en fila (100 % de ancho cada uno) y el
+               `translateX` los corre según el índice activo.
+
+               OJO: acá decía que en móvil se podía deslizar el dedo. NO se
+               puede — no hay ni un `onTouchStart` en el archivo, nunca se
+               implementó. Se cambia de panel con la barra de pestañas o con
+               los puntos de abajo, y con el encabezado plegado quedan solo los
+               puntos.
                Se usa `will-change: transform` para que el GPU compuesto
                no repinte el contenido de las otras pestañas durante el
                deslizamiento. ─────────────────────────────────────────── */}
