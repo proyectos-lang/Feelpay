@@ -46,6 +46,18 @@ export interface DetalleClientesDialogProps {
   etiquetaMarcado?: string
   /** Agrega la columna del capital prestado (detalle de ventas). */
   mostrarValorVenta?: boolean
+  /**
+   * Esconde la "ficha" del crédito: documento, fecha de venta y % de interés.
+   *
+   * En las listas del día esos tres no dicen nada. En "Ventas de hoy" la fecha
+   * es HOY en todas las filas — una columna entera repitiendo el mismo dato —
+   * y en "Canceladas" es peor: muestra cuándo EMPEZÓ el crédito, que se lee
+   * como si fuera la fecha en que se canceló. El % de interés es un dato de la
+   * configuración del préstamo, no algo que se revise en una lista.
+   *
+   * Se sigue pudiendo buscar por documento aunque no se vea.
+   */
+  ocultarFicha?: boolean
 }
 
 const TONO_MORA: Record<string, string> = {
@@ -63,6 +75,7 @@ export function DetalleClientesDialog({
   marcados,
   etiquetaMarcado = "Pagó",
   mostrarValorVenta = false,
+  ocultarFicha = false,
 }: DetalleClientesDialogProps) {
   const [filas, setFilas] = useState<ClienteDetalleRow[]>([])
   const [cargando, setCargando] = useState(false)
@@ -148,8 +161,8 @@ export function DetalleClientesDialog({
                 <thead className="sticky top-0 bg-background">
                   <tr className="border-b text-left text-xs text-muted-foreground">
                     <th className="py-1.5 pr-2 font-medium">Cliente</th>
-                    <th className="py-1.5 px-2 font-medium">Venta</th>
-                    <th className="py-1.5 px-2 font-medium text-right">%</th>
+                    {!ocultarFicha && <th className="py-1.5 px-2 font-medium">Venta</th>}
+                    {!ocultarFicha && <th className="py-1.5 px-2 font-medium text-right">%</th>}
                     {mostrarValorVenta && <th className="py-1.5 px-2 font-medium text-right">Prestado</th>}
                     <th className="py-1.5 px-2 font-medium text-center">Cuotas</th>
                     <th className="py-1.5 px-2 font-medium text-right">Saldo</th>
@@ -174,10 +187,12 @@ export function DetalleClientesDialog({
                             </Badge>
                           )}
                         </div>
-                        <span className="text-[10px] text-muted-foreground">{f.documento}</span>
+                        {!ocultarFicha && (
+                          <span className="text-[10px] text-muted-foreground">{f.documento}</span>
+                        )}
                       </td>
-                      <td className="py-1.5 px-2 text-xs">{fmtFecha(f.fechaVenta)}</td>
-                      <td className="py-1.5 px-2 text-right text-xs">{f.tasaInteres}%</td>
+                      {!ocultarFicha && <td className="py-1.5 px-2 text-xs">{fmtFecha(f.fechaVenta)}</td>}
+                      {!ocultarFicha && <td className="py-1.5 px-2 text-right text-xs">{f.tasaInteres}%</td>}
                       {mostrarValorVenta && (
                         <td className="py-1.5 px-2 text-right tabular-nums">{fmtMoneda(f.valorVenta)}</td>
                       )}
@@ -209,9 +224,11 @@ export function DetalleClientesDialog({
                             </Badge>
                           )}
                         </div>
-                        <p className="text-[10px] text-muted-foreground">
-                          {f.documento} · venta {fmtFecha(f.fechaVenta)} · {f.tasaInteres}%
-                        </p>
+                        {!ocultarFicha && (
+                          <p className="text-[10px] text-muted-foreground">
+                            {f.documento} · venta {fmtFecha(f.fechaVenta)} · {f.tasaInteres}%
+                          </p>
+                        )}
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-sm font-bold tabular-nums">{fmtMoneda(f.saldo)}</p>

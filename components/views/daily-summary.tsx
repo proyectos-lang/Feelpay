@@ -4,7 +4,7 @@ import React from "react"
 import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, PiggyBank, Users, PieChart, ChartColumnBig, LockKeyhole, Eye, X, Play, Loader2 } from "lucide-react"
+import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, PiggyBank, Users, PieChart, LockKeyhole, Eye, X, Play, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
  import { createClient } from "@/lib/supabase/client"
 import { getResumenDia } from "@/lib/resumen-dia"
@@ -29,6 +29,34 @@ interface GastoRegistro {
   valor: number
   fechahorasol: string
   observacion?: string
+}
+
+/**
+ * El icono del botón que abre el Informe de Recaudo.
+ *
+ * Se dibuja a mano en vez de usar el de la librería porque esos son de UN solo
+ * color: heredan el color del texto y no hay forma de pintar cada barra
+ * distinta. Sobre el botón blanco, tres barras del mismo azul se leían como
+ * una mancha; con tres colores se reconoce como una gráfica de un vistazo.
+ *
+ * Los colores salen de la paleta de la app (`globals.css`), no son inventados
+ * acá: si mañana cambia la marca, este icono cambia con ella.
+ */
+function IconoInformeRecaudo() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-[22px] w-[22px]"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {/* De más baja a más alta, y de ámbar a verde: se lee como algo que va
+          subiendo, que es justo de lo que habla el informe. */}
+      <rect x="3"  y="13" width="5" height="8"  rx="1.5" fill="var(--warning)" />
+      <rect x="9.5" y="8" width="5" height="13" rx="1.5" fill="var(--info)" />
+      <rect x="16" y="3"  width="5" height="18" rx="1.5" fill="var(--success)" />
+    </svg>
+  )
 }
 
 export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: DailySummaryProps) {
@@ -309,12 +337,18 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
     ids: string[]
     marcados?: Set<string>
     mostrarValorVenta?: boolean
+    ocultarFicha?: boolean
   } | null>(null)
 
   const abrirDetalle = (
     titulo: string,
     ids: string[],
-    extra?: { subtitulo?: string; marcados?: Set<string>; mostrarValorVenta?: boolean },
+    extra?: {
+      subtitulo?: string
+      marcados?: Set<string>
+      mostrarValorVenta?: boolean
+      ocultarFicha?: boolean
+    },
   ) => setDetalleClientes({ titulo, ids, ...extra })
 
   /**
@@ -340,6 +374,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         abrirDetalle("Ventas de hoy", ids, {
           subtitulo: `${ids.length} ${ids.length === 1 ? "venta" : "ventas"}`,
           mostrarValorVenta: true,
+          ocultarFicha: true,
         })
         return
       }
@@ -356,7 +391,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         .in("tipo", ["pago", "cancelacion", "abono_venta", "reversa"])
       const candidatos = [...new Set(((movs ?? []) as { loan_id: string }[]).map((g) => g.loan_id))]
       if (candidatos.length === 0) {
-        abrirDetalle("Créditos cancelados hoy", [], { subtitulo: "Ninguno" })
+        abrirDetalle("Créditos cancelados hoy", [], { subtitulo: "Ninguno", ocultarFicha: true })
         return
       }
       const { data: fin } = await supabase
@@ -368,6 +403,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         .map((f) => f.loan_id)
       abrirDetalle("Créditos cancelados hoy", ids, {
         subtitulo: `${ids.length} ${ids.length === 1 ? "crédito quedó" : "créditos quedaron"} en cero`,
+        ocultarFicha: true,
       })
     } catch (err) {
       console.error("[v0] abrirDetalleFinanciero:", err)
@@ -586,12 +622,12 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     tamaño las barras casi no se distinguen. */}
                 <Button
                   size="icon"
-                  className="h-10 w-10 rounded-full bg-white hover:bg-white/90 text-info shadow-sm shrink-0"
+                  className="h-10 w-10 rounded-full bg-white hover:bg-white/90 shadow-sm shrink-0"
                   title="Ver el Informe de Recaudo"
                   aria-label="Ver el Informe de Recaudo"
                   onClick={() => setIsFlipped(true)}
                 >
-                  <ChartColumnBig className="h-[22px] w-[22px]" />
+                  <IconoInformeRecaudo />
                 </Button>
 
                 {/* Botón Iniciar / Finalizar Ruta */}
@@ -1104,6 +1140,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                           onClick={() => abrirDetalle("Ventas nuevas de hoy", backIds.ventas.nuevas, {
                             subtitulo: `${nuevas} ${nuevas === 1 ? "venta" : "ventas"}`,
                             mostrarValorVenta: true,
+                            ocultarFicha: true,
                           })}
                         />
                         <span className="text-[9px] text-muted-foreground">Nuevas</span>
@@ -1114,6 +1151,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                           onClick={() => abrirDetalle("Renovaciones de hoy", backIds.ventas.renovaciones, {
                             subtitulo: `${renovaciones} ${renovaciones === 1 ? "renovación" : "renovaciones"}`,
                             mostrarValorVenta: true,
+                            ocultarFicha: true,
                           })}
                         />
                         <span className="text-[9px] text-muted-foreground">Renov.</span>
@@ -1126,6 +1164,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                       onClick={() => abrirDetalle("Ventas de hoy", backIds.ventas.total, {
                         subtitulo: `${reportData.salesReport.total} en total`,
                         mostrarValorVenta: true,
+                        ocultarFicha: true,
                       })}
                     />
                     <CalendarDays className="h-5 w-5 text-icon-calendar" />
@@ -1244,6 +1283,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         loanIds={detalleClientes?.ids ?? []}
         marcados={detalleClientes?.marcados}
         mostrarValorVenta={detalleClientes?.mostrarValorVenta}
+        ocultarFicha={detalleClientes?.ocultarFicha}
       />
 
       {/* Dialog para detalle de Ingresos/Gastos/Retiros */}
