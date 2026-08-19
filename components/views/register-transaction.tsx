@@ -125,6 +125,40 @@ export function RegisterTransaction({
     getRutaItemUmbrales(ruta).then(setItemUmbrales)
   }, [ruta])
 
+  /**
+   * Tope del item PARA ESTA RUTA.
+   *
+   * Había dos topes conviviendo y nadie lo había mirado:
+   *
+   *  · `gastos.limite` / `ingresos.limite` / `retiros.limite` — UNO SOLO para
+   *    todas las rutas, y sin ninguna pantalla en la app donde cambiarlo.
+   *  · `ruta_item_umbrales` — por ruta y por item, configurable desde Gestión
+   *    de Usuarios y Rutas.
+   *
+   * Las rutas están en Ecuador (dólares), Argentina y Colombia (pesos), así
+   * que un número único no puede servir: "Alimentación" tenía tope 15, que en
+   * Ecuador es una comida y en Argentina no compra nada. Resultado: en la
+   * ruta 190 CUALQUIER gasto de alimentación pedía aprobación, y no había
+   * forma de arreglarlo desde la app.
+   *
+   * Ahora manda la ruta. Si la ruta configuró ese item, ese es el tope —
+   * incluso cuando lo configuró en "deshabilitado", que significa SIN TOPE, no
+   * "usá el viejo". Si la ruta no configuró nada, sigue el global de siempre.
+   */
+  const topeDelItem = (
+    tipo: "ingreso" | "gasto" | "retiro",
+    itemId: string,
+    topeGlobal: number | null,
+  ): number | null => {
+    const cfg = itemUmbrales.get(`${tipo}:${itemId}`)
+    if (!cfg) return topeGlobal
+    return cfg.habilitado ? cfg.umbral : null
+  }
+
+  const incomeTope     = topeDelItem("ingreso", selectedIncomeItem, incomeLimite)
+  const expenseTope    = topeDelItem("gasto", selectedExpenseItem, expenseLimite)
+  const withdrawalTope = topeDelItem("retiro", selectedWithdrawalItem, withdrawalLimite)
+
   // Efectivo disponible de la ruta hoy. Se muestra al registrar un gasto o
   // un retiro para que el cobrador no saque mas de lo que tiene en la mano:
   // antes el descuadre solo aparecia al cierre de caja, cuando ya no habia
@@ -296,14 +330,14 @@ export function RegisterTransaction({
 
     setSaving(true)
     try {
-      const requiresApproval = incomeLimite && valor > incomeLimite
+      const requiresApproval = incomeTope !== null && valor > incomeTope
       // Sin conexion queda en la cola del dispositivo y se envia solo despues.
       const { encolado } = await enviarOEncolar({
         tipo: "transaccion",
         descripcion: `Ingreso — ${conceptoName} ($${valor.toLocaleString()})`,
         payload: {
           concepto: conceptoName,
-          limite: incomeLimite,
+          limite: incomeTope,
           valor,
           observacion: incomeDescription,
           foto: incomePhoto,
@@ -361,13 +395,13 @@ export function RegisterTransaction({
 
     setSaving(true)
     try {
-      const requiresApproval = expenseLimite && valor > expenseLimite
+      const requiresApproval = expenseTope !== null && valor > expenseTope
       const { encolado } = await enviarOEncolar({
         tipo: "transaccion",
         descripcion: `Gasto — ${conceptoName} ($${valor.toLocaleString()})`,
         payload: {
           concepto: conceptoName,
-          limite: expenseLimite,
+          limite: expenseTope,
           valor,
           observacion: expenseDescription,
           foto: expensePhoto,
@@ -425,13 +459,13 @@ export function RegisterTransaction({
 
     setSaving(true)
     try {
-      const requiresApproval = withdrawalLimite && valor > withdrawalLimite
+      const requiresApproval = withdrawalTope !== null && valor > withdrawalTope
       const { encolado } = await enviarOEncolar({
         tipo: "transaccion",
         descripcion: `Retiro — ${conceptoName} ($${valor.toLocaleString()})`,
         payload: {
           concepto: conceptoName,
-          limite: withdrawalLimite,
+          limite: withdrawalTope,
           valor,
           observacion: withdrawalDescription,
           foto: withdrawalPhoto,
@@ -490,7 +524,7 @@ export function RegisterTransaction({
     // el movimiento terminaba guardado con estadoadmin 'NA': el admin nunca
     // lo veia, aunque el monto tambien superara su limite. Con el limite
     // puesto, tras el visto bueno de secretaria sigue esperando al admin.
-    const limiteItem = type === "income" ? incomeLimite : type === "expense" ? expenseLimite : withdrawalLimite
+    const limiteItem = type === "income" ? incomeTope : type === "expense" ? expenseTope : withdrawalTope
 
     setConfirmingRevision(true)
     try {
@@ -623,14 +657,14 @@ export function RegisterTransaction({
                 </Select>
               </div>
 
-              {incomeLimite !== null && (
+              {incomeTope !== null && (
                 <div className="space-y-1 md:space-y-2">
                   <Label htmlFor="incomeLimite" className="text-[12px] md:text-sm">
                     Límite
                   </Label>
                   <Input
                     id="incomeLimite"
-                    value={`$${incomeLimite.toLocaleString("es-CO")}`}
+                    value={`$${incomeTope.toLocaleString("es-CO")}`}
                     readOnly
                     className="h-7 md:h-10 text-[12px] md:text-sm bg-muted cursor-not-allowed"
                   />
@@ -651,13 +685,13 @@ export function RegisterTransaction({
                     onChange={(e) => {
                       setIncomeAmount(e.target.value)
                       const valor = parseFloat(e.target.value)
-                      setShowIncomeWarning(incomeLimite != null && valor > incomeLimite)
+                      setShowIncomeWarning(incomeTope != null && valor > incomeTope)
                     }}
                     className="h-7 md:h-10 text-[12px] md:text-sm"
                   />
                   {showIncomeWarning && (
                     <p className="text-red-600 text-[11px] md:text-xs mt-1">
-                      ⚠️ El monto excede el límite permitido de ${incomeLimite?.toLocaleString("es-CO")}. Se marcará como "Por aprobar"
+                      ⚠️ El monto excede el límite permitido de ${incomeTope?.toLocaleString("es-CO")}. Se marcará como "Por aprobar"
                     </p>
                   )}
                 </div>
@@ -778,14 +812,14 @@ export function RegisterTransaction({
                 </Select>
               </div>
 
-              {expenseLimite !== null && (
+              {expenseTope !== null && (
                 <div className="space-y-1 md:space-y-2">
                   <Label htmlFor="expenseLimite" className="text-[12px] md:text-sm">
                     Límite
                   </Label>
                   <Input
                     id="expenseLimite"
-                    value={`$${expenseLimite.toLocaleString("es-CO")}`}
+                    value={`$${expenseTope.toLocaleString("es-CO")}`}
                     readOnly
                     className="h-7 md:h-10 text-[12px] md:text-sm bg-muted cursor-not-allowed"
                   />
@@ -806,13 +840,13 @@ export function RegisterTransaction({
                     onChange={(e) => {
                       setExpenseAmount(e.target.value)
                       const valor = parseFloat(e.target.value)
-                      setShowExpenseWarning(expenseLimite != null && valor > expenseLimite)
+                      setShowExpenseWarning(expenseTope != null && valor > expenseTope)
                     }}
                     className="h-7 md:h-10 text-[12px] md:text-sm"
                   />
                   {showExpenseWarning && (
                     <p className="text-red-600 text-[11px] md:text-xs mt-1">
-                      ⚠️ El monto excede el límite permitido de ${expenseLimite?.toLocaleString("es-CO")}. Se marcará como "Por aprobar"
+                      ⚠️ El monto excede el límite permitido de ${expenseTope?.toLocaleString("es-CO")}. Se marcará como "Por aprobar"
                     </p>
                   )}
                 </div>
@@ -933,14 +967,14 @@ export function RegisterTransaction({
                 </Select>
               </div>
 
-              {withdrawalLimite !== null && (
+              {withdrawalTope !== null && (
                 <div className="space-y-1 md:space-y-2">
                   <Label htmlFor="withdrawalLimite" className="text-[12px] md:text-sm">
                     Límite
                   </Label>
                   <Input
                     id="withdrawalLimite"
-                    value={`$${withdrawalLimite.toLocaleString("es-CO")}`}
+                    value={`$${withdrawalTope.toLocaleString("es-CO")}`}
                     readOnly
                     className="h-7 md:h-10 text-[12px] md:text-sm bg-muted cursor-not-allowed"
                   />
@@ -961,13 +995,13 @@ export function RegisterTransaction({
                     onChange={(e) => {
                       setWithdrawalAmount(e.target.value)
                       const valor = parseFloat(e.target.value)
-                      setShowWithdrawalWarning(withdrawalLimite != null && valor > withdrawalLimite)
+                      setShowWithdrawalWarning(withdrawalTope != null && valor > withdrawalTope)
                     }}
                     className="h-7 md:h-10 text-[12px] md:text-sm"
                   />
                   {showWithdrawalWarning && (
                     <p className="text-red-600 text-[11px] md:text-xs mt-1">
-                      ⚠️ El monto excede el límite permitido de ${withdrawalLimite?.toLocaleString("es-CO")}. Se marcará como "Por aprobar"
+                      ⚠️ El monto excede el límite permitido de ${withdrawalTope?.toLocaleString("es-CO")}. Se marcará como "Por aprobar"
                     </p>
                   )}
                 </div>

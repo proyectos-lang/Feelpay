@@ -123,7 +123,13 @@ export async function saveTransaction(params: SaveTransactionParams) {
     let estadoadmin: string = "NA"
     let estadosecre: string = "NA"
 
-    if (params.limite && params.valor > params.limite) {
+    // `!= null` y no `params.limite &&`: con `&&`, un tope de CERO se leia
+    // como "sin tope" y el movimiento pasaba directo. Un tope en cero
+    // configurado a mano significa lo contrario — que todo pase por
+    // aprobacion — y el cliente ya lo entiende asi. Con la version vieja los
+    // dos lados decidian distinto sobre el mismo dato, que es la clase de
+    // desacuerdo que no deja rastro en ningun lado.
+    if (params.limite != null && params.valor > params.limite) {
       if (params.requiresApproval) {
         estadoadmin = "por aprobar"
       } else {
