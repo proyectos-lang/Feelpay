@@ -43,7 +43,10 @@ import {
   Wallet,
   ShoppingCart,
   ReceiptText,
+  Eye,
 } from "lucide-react"
+import { useToast } from "@/hooks/use-toast"
+import { DetalleClientesDialog } from "@/components/detalle-clientes-dialog"
 import {
   todayColombia,
   horaColombia,
@@ -72,7 +75,16 @@ type MonitoreoRuta = {
   total_recaudado: number | null
   pagos_exitosos: number | null
   visitas_sin_pago: number | null
+  /** Script 060: la CARTERA de esa ruta ese día que quedó sin gestionar —
+   *  todo el que debía, no solo el que vencía. Es lo mismo que ve el cobrador
+   *  en su lista. */
   pendientes_por_visitar: number | null
+  /** Denominador: sin él, "48 pendientes" no dice si la ruta va atrasada o si
+   *  simplemente tiene 300 clientes. */
+  cartera_activa: number | null
+  /** Lo que esta tarjeta contaba ANTES: solo las cuotas que vencen ese día.
+   *  Se conserva porque explica la diferencia entre los dos números. */
+  cuotas_vencen_hoy: number | null
   total_ingresos: number | null
   total_gastos: number | null
   total_retiros: number | null
@@ -173,6 +185,7 @@ const COLUMNAS_MOVIMIENTO =
 // Component
 // ────────────────────────────────────────────────────────────────────────────
 export function AdminRouteMonitor() {
+  const { toast } = useToast()
   const [fecha, setFecha] = useState<string>(todayColombia())
   const [rutas, setRutas] = useState<MonitoreoRuta[]>([])
   const [loading, setLoading] = useState(true)
@@ -197,6 +210,10 @@ export function AdminRouteMonitor() {
   const [ingresosList, setIngresosList] = useState<FinancialMovement[]>([])
   const [retirosList, setRetirosList] = useState<FinancialMovement[]>([])
   const [ventasList, setVentasList] = useState<SaleRow[]>([])
+
+  // El ojito de Pendientes: quiénes son los que quedaron sin gestionar.
+  const [cartera, setCartera] = useState<{ titulo: string; subtitulo: string; ids: string[] } | null>(null)
+  const [cargandoCartera, setCargandoCartera] = useState<number | null>(null)
 
   // ── Load routes for the selected date ─────────────────────────────────────
   // SELECT directo sobre `vista_monitoreo_admin` filtrado por fecha. La vista
@@ -439,6 +456,45 @@ export function AdminRouteMonitor() {
     setLoadingDetalle(false)
   }, [])
 
+  // ── El ojito de Pendientes ────────────────────────────────────────────────
+  // La lista sale de `cartera_del_dia`, que repite EL MISMO predicado que
+  // cuenta la vista (script 060, paso 6 lo verifica). Se listan solo los que
+  // quedaron sin gestionar: es exactamente el número sobre el que se hizo
+  // clic, así que quien cuente las filas obtiene lo mismo que dice la tarjeta.
+  const abrirCartera = useCallback(
+    async (r: MonitoreoRuta) => {
+      const dia = r.fecha ?? fecha
+      setCargandoCartera(r.ruta_id)
+      try {
+        const { data, error } = await createClient().rpc("cartera_del_dia", {
+          p_ruta_id: r.ruta_id,
+          p_fecha: dia,
+        })
+        if (error) throw error
+        const filas = (data ?? []) as { loan_id: string; gestionado: boolean }[]
+        const pendientes = filas.filter((f) => !f.gestionado).map((f) => f.loan_id)
+        setCartera({
+          titulo: `Pendientes por visitar · Ruta #${r.ruta_id}`,
+          subtitulo: `${pendientes.length} sin gestionar de ${filas.length} en cartera · ${dia}`,
+          ids: pendientes,
+        })
+      } catch (err) {
+        // Avisar SIN tocar `error`: esa bandera reemplaza toda la grilla por
+        // una tarjeta de fallo, y que un ojito no abra no es motivo para
+        // borrarle el monitoreo de la pantalla a quien lo está mirando.
+        console.error("[v0] cartera_del_dia:", err)
+        toast({
+          title: "No se pudo cargar la lista de pendientes",
+          description: err instanceof Error ? err.message : "Intenta de nuevo.",
+          variant: "destructive",
+        })
+      } finally {
+        setCargandoCartera(null)
+      }
+    },
+    [fecha, toast],
+  )
+
   // Reintenta el fetch para la ruta actualmente abierta (boton "Reintentar"
   // que aparece cuando no hay datos GPS).
   const retryDetalle = useCallback(() => {
@@ -573,6 +629,9 @@ export function AdminRouteMonitor() {
               const pagos = r.pagos_exitosos ?? 0
               const sinPago = r.visitas_sin_pago ?? 0
               const pendientes = r.pendientes_por_visitar ?? 0
+              const carteraActiva = r.cartera_activa ?? 0
+              const vencenHoy = r.cuotas_vencen_hoy ?? 0
+              const cargandoEste = cargandoCartera === r.ruta_id
 
               return (
                 <div
@@ -647,11 +706,43 @@ export function AdminRouteMonitor() {
                       <span className="text-sm font-bold tabular-nums text-foreground">{sinPago}</span>
                       <span className="text-[11px] text-muted-foreground">Sin Pago</span>
                     </div>
-                    <div className="flex items-center gap-1.5" title="Pendientes">
-                      <Clock className="h-4 w-4 text-brand" />
-                      <span className="text-sm font-bold tabular-nums text-foreground">{pendientes}</span>
+                    {/* Pendientes = CARTERA sin gestionar, no solo las cuotas
+                        que vencen hoy. El denominador va al lado porque "48
+                        pendientes" a secas no dice si la ruta va atrasada o si
+                        simplemente tiene 300 clientes. */}
+                    <button
+                      type="button"
+                      onClick={() => void abrirCartera(r)}
+                      disabled={cargandoEste || pendientes === 0}
+                      title={
+                        pendientes === 0
+                          ? "Sin pendientes"
+                          : `Ver los ${pendientes} clientes sin gestionar (${vencenHoy} con cuota que vence hoy)`
+                      }
+                      className="flex items-center gap-1.5 rounded-md px-1 -mx-1 py-0.5 transition-colors hover:bg-brand/10 disabled:cursor-default disabled:hover:bg-transparent"
+                    >
+                      {cargandoEste ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-brand" />
+                      ) : (
+                        <Clock className="h-4 w-4 text-brand" />
+                      )}
+                      <span className="text-sm font-bold tabular-nums text-foreground">
+                        {pendientes}
+                        {carteraActiva > 0 && (
+                          <span className="font-normal text-muted-foreground"> / {carteraActiva}</span>
+                        )}
+                      </span>
                       <span className="text-[11px] text-muted-foreground">Pendientes</span>
-                    </div>
+                      {pendientes > 0 && <Eye className="h-3.5 w-3.5 text-brand/70" />}
+                    </button>
+                    {vencenHoy > 0 && (
+                      <span
+                        className="text-[11px] text-muted-foreground"
+                        title="De la cartera, cuántas cuotas tienen vencimiento justo hoy"
+                      >
+                        {vencenHoy} vencen hoy
+                      </span>
+                    )}
                   </div>
 
                   {/* Resumen Financiero */}
@@ -940,6 +1031,15 @@ export function AdminRouteMonitor() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Quiénes son los pendientes por visitar */}
+      <DetalleClientesDialog
+        open={cartera !== null}
+        onOpenChange={(v) => { if (!v) setCartera(null) }}
+        titulo={cartera?.titulo ?? ""}
+        subtitulo={cartera?.subtitulo}
+        loanIds={cartera?.ids ?? []}
+      />
     </div>
   )
 }

@@ -631,18 +631,33 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     return ordA - ordB
   })
 
+  // Un solo predicado de busqueda para las dos pestanas: si Gestionados
+  // buscara distinto que Pendientes, el mismo cliente aparece en una y se
+  // esconde en la otra.
+  const coincideBusqueda = (c: { nombre: string; documento: string }) =>
+    searchTerm === "" ||
+    c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    c.documento.includes(searchTerm)
+
+  // Gestionados tambien se busca. Al final del dia esta lista tiene tantos
+  // clientes como la otra, y encontrar a alguien para corregirle un cobro
+  // obligaba a bajar por toda la ruta a ojo.
+  const filteredManaged = sortedManaged.filter(coincideBusqueda)
+
   // Base filtered clients: all filters except mora — used for the circle counts
   // so the totals per category are always visible regardless of active mora filter.
-  const preFilteredClients = clients.filter((c) => {
+  // Los que le faltan al cobrador, SIN la busqueda: es el denominador del
+  // avance de la ruta. Antes el avance salia de la lista ya buscada, asi que
+  // escribir tres letras hacia saltar el porcentaje al 90% — el trabajo del
+  // dia no cambia porque alguien escriba en un campo de texto.
+  const pendientesDeLaRuta = clients.filter((c) => {
     if (managedIds.has(c.loanId)) return false
     if (c.saldo <= 0) return false
     const isDiarioFreq = c.frecuenciaPago === "daily"
-    const matchesFreq = isDiario ? true : !isDiarioFreq
-    const matchesSearch = searchTerm === "" ||
-      c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      c.documento.includes(searchTerm)
-    return matchesFreq && matchesSearch
+    return isDiario ? true : !isDiarioFreq
   })
+
+  const preFilteredClients = pendientesDeLaRuta.filter(coincideBusqueda)
 
   const displayClients = preFilteredClients.filter((c) => {
     if (moraFilter === null) return true
@@ -2603,7 +2618,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 volver. Esto se lo deja a la vista sin dejar la pantalla. */}
             {(() => {
               const gestionados = managedToday.length
-              const total = gestionados + displayClients.length
+              const total = gestionados + pendientesDeLaRuta.length
               if (total === 0) return null
               const recaudado = managedToday.reduce((s, m) => s + (m.valorAbonado || 0), 0)
               const pct = Math.round((gestionados / total) * 100)
@@ -2634,7 +2649,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 la cabecera se le montaba encima: el campo quedaba tapado y el
                 toque se lo comia la cabecera. Aca queda siempre a la mano,
                 que es justo para lo que sirve buscar en una lista larga. */}
-            {activeTab === "pendientes" && (
+            {(activeTab === "pendientes" || activeTab === "gestionados") && (
               <Input
                 placeholder="Buscar cliente por nombre o documento..."
                 value={searchTerm}
@@ -2682,7 +2697,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
                   activeTab === "gestionados" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
                 }`}>
-                  {managedToday.length}
+                  {filteredManaged.length}
                 </span>
               </button>
               <button
@@ -3041,15 +3056,27 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           {/* ── Panel 1: Gestionados ────────────────────────────────────── */}
           <div className="w-full shrink-0 p-2 md:p-6">
             <div className="space-y-2">
-                {managedToday.length === 0 ? (
+                {filteredManaged.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-10 text-muted-foreground gap-2">
                     <Users className="h-8 w-8 opacity-30" />
-                    <p className="text-xs md:text-sm">No hay clientes gestionados hoy</p>
+                    {/* Distinguir "no has gestionado a nadie" de "tu busqueda no
+                        encontro a nadie": con el mismo texto para los dos, el
+                        cobrador cree que perdio el trabajo del dia. */}
+                    <p className="text-xs md:text-sm">
+                      {managedToday.length === 0
+                        ? "No hay clientes gestionados hoy"
+                        : `Ningún gestionado coincide con "${searchTerm}"`}
+                    </p>
+                    {managedToday.length > 0 && (
+                      <Button variant="outline" size="sm" onClick={() => setSearchTerm("")}>
+                        Ver los {managedToday.length} gestionados
+                      </Button>
+                    )}
                   </div>
                 ) : (
                   <>
                   <div className="space-y-1.5">
-                    {sortedManaged.map((m, index) => (
+                    {filteredManaged.map((m, index) => (
                       <div
                         key={m.loanId}
                         className={`rounded-lg border px-3 py-2 ${index % 2 === 0 ? "bg-card" : "bg-muted/40"}`}
