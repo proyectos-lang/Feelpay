@@ -125,11 +125,12 @@ export function MobileBottomNav({ currentView, onViewChange, currentUser, userPe
               key={item.id}
               variant="ghost"
               onClick={() => onViewChange(item.id)}
-              // 56px de alto (antes 72). Con el icono en 28 y la etiqueta en
-              // 12 el contenido mide ~44, asi que sigue habiendo aire — y el
-              // area de toque queda muy por encima del minimo de 44px que
-              // necesita un dedo.
-              className={`relative h-14 rounded-xl flex flex-col items-center justify-center gap-1 px-1 ${item.colorClass} ${
+              // 48px de alto. Es el minimo que se puede tocar con seguridad:
+              // 44px es lo que recomiendan iOS y Android para un objetivo de
+              // dedo, asi que por debajo de esto habria que empezar a fallar
+              // toques. Adentro: icono 24 + etiqueta 12 con interlineado
+              // ajustado = 38px, o sea que todavia respira.
+              className={`relative h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 px-1 ${item.colorClass} ${
                 isActive ? "nav-item-active" : "nav-item-inactive"
               }`}
               style={{
@@ -138,12 +139,13 @@ export function MobileBottomNav({ currentView, onViewChange, currentUser, userPe
                   : "0 5px 14px rgba(58, 124, 165, 0.55), 0 2px 4px rgba(58, 124, 165, 0.4), inset 0 1px 0 rgba(255,255,255,0.2)",
               }}
             >
-              {/* 28px. Estaban en 32, bastante por encima de lo que usan
-                  iOS y Android para una barra inferior (24-28). El alto del
-                  boton no se toca: lo que se busca es un icono mas discreto,
-                  no un area de toque mas chica. */}
-              <Icon className="h-7 w-7" />
-              <span className="text-xs font-semibold">{item.label}</span>
+              {/* 24px, el estandar de una barra inferior. Empezaron en 32. */}
+              <Icon className="h-6 w-6 shrink-0" />
+              {/* `leading-none`: sin eso la linea mide 16px en vez de 12 y son
+                  4px que en un boton de 48 ya se notan. La etiqueta se queda —
+                  quitarla ahorraria 12px mas, pero el cobrador identifica los
+                  modulos por el nombre, no por el dibujo. */}
+              <span className="text-xs font-semibold leading-none">{item.label}</span>
               {unread > 0 && (
                 // El circulo pasa de 16 a 20px: con la letra mas grande (ver
                 // el piso de tamano en globals.css) un "9+" quedaba rozando el
