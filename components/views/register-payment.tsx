@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DollarSign, X, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown } from "lucide-react"
+import { DollarSign, X, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown, ChevronUp, ChevronDown } from "lucide-react"
 import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -491,6 +491,39 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const [searchTerm, setSearchTerm] = useState("")
   const [paymentPhoto, setPaymentPhoto] = useState<string | null>(null)
   const [isDiario, setIsDiario] = useState(true)
+
+  // Encabezado plegado (solo movil). En un telefono el bloque de arriba
+  // —titulo, refrescar, circulos de mora, Diario/No Diario, Nueva Venta,
+  // avance y buscador— se come casi un tercio de la pantalla, y el cobrador lo
+  // que necesita ver es la lista.
+  //
+  // Se recuerda entre sesiones: el modulo se abre y se cierra muchas veces al
+  // dia, y volver a plegarlo cada vez seria peor que no tener el boton.
+  //
+  // Arranca DESPLEGADO y se lee el guardado en un efecto, no en el estado
+  // inicial: leer localStorage al construir el estado hace que el servidor y
+  // el navegador rendericen cosas distintas.
+  const CLAVE_ENCABEZADO = "pagos_encabezado_plegado"
+  const [encabezadoPlegado, setEncabezadoPlegado] = useState(false)
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(CLAVE_ENCABEZADO) === "1") setEncabezadoPlegado(true)
+    } catch { /* modo privado */ }
+  }, [])
+  const alternarEncabezado = () => {
+    setEncabezadoPlegado((prev) => {
+      const siguiente = !prev
+      try { localStorage.setItem(CLAVE_ENCABEZADO, siguiente ? "1" : "0") } catch { /* modo privado */ }
+      return siguiente
+    })
+  }
+  // `max-md:hidden` y no `hidden md:flex`: los elementos que se ocultan ya
+  // traen su propio `display` (flex, block), y poner `hidden` al lado deja dos
+  // reglas peleando por la misma propiedad — gana el orden del CSS generado,
+  // no el orden en que se escriban las clases. Con la variante `max-md:` no
+  // hay pelea (Tailwind emite las variantes DESPUÉS) y de paso el escritorio
+  // queda exactamente como estaba, sin tener que redeclararle el display.
+  const ocultoEnMovil = () => (encabezadoPlegado ? "max-md:hidden" : "")
   const [moraFilter, setMoraFilter] = useState<"green" | "yellow" | "red" | null>(null)
 
   // No-payment dialog state
@@ -2588,7 +2621,30 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       {!selectedClient ? (
         <Card>
           <CardHeader className="p-3 md:p-6 sticky top-0 z-10 bg-card border-b border-border">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+            {/* Plegar el encabezado. Solo en móvil: en escritorio no sobra el
+                espacio. Plegado sigue diciendo en qué modo está y cuántos
+                faltan — es lo único del encabezado que el cobrador necesita
+                tener a la vista mientras cobra, y sin eso plegarlo sería
+                quedarse sin saber si está mirando Diario o No Diario. */}
+            <button
+              type="button"
+              onClick={alternarEncabezado}
+              aria-expanded={!encabezadoPlegado}
+              className="md:hidden -mx-1 -mt-1 mb-1 flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted"
+            >
+              <span className="text-[12px] font-semibold">
+                {encabezadoPlegado
+                  ? `${isDiario ? "Diario" : "No Diario"} · ${displayClients.length} por visitar${
+                      moraFilter ? " · filtrado por mora" : ""
+                    }`
+                  : "Ocultar encabezado"}
+              </span>
+              {encabezadoPlegado
+                ? <ChevronDown className="h-5 w-5 shrink-0" />
+                : <ChevronUp className="h-5 w-5 shrink-0" />}
+            </button>
+
+            <div className={`${ocultoEnMovil()} flex flex-col md:flex-row md:items-center md:justify-between gap-2`}>
               <div className="flex items-center gap-2">
                 <CardTitle className="text-base md:text-2xl">Clientes Activos</CardTitle>
                 <Button
@@ -2673,7 +2729,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               const recaudado = managedToday.reduce((s, m) => s + (m.valorAbonado || 0), 0)
               const pct = Math.round((gestionados / total) * 100)
               return (
-                <div className="px-1 pb-2 space-y-1">
+                <div className={`${ocultoEnMovil()} px-1 pb-2 space-y-1`}>
                   <div className="flex items-baseline justify-between text-[11px] md:text-xs">
                     <span className="text-muted-foreground">
                       <strong className="text-foreground">{gestionados}</strong> de {total} gestionados
@@ -2704,7 +2760,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 placeholder="Buscar cliente por nombre o documento..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="mt-2 h-8 md:h-10 text-[12px] md:text-sm md:max-w-sm"
+                // El buscador se esconde solo si esta VACIO. Con una busqueda
+                // puesta, esconderlo dejaria una lista recortada sin nada a la
+                // vista que explique por que — y el cobrador creeria que le
+                // faltan clientes.
+                className={`${searchTerm === "" ? ocultoEnMovil() : ""} mt-2 h-8 md:h-10 text-[12px] md:text-sm md:max-w-sm`}
               />
             )}
 
@@ -3031,21 +3091,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                     `tipoAmortizacion` sigue en el modelo porque
                                     de el dependen el valor de la venta y el
                                     calculo de la cancelacion total. */}
-                                {/* Badge "Proximo pago": se muestra solo cuando
-                                    la cuota objetivo es FUTURA (todas las
-                                    anteriores ya estan gestionadas y la
-                                    siguiente cae despues de hoy). El cliente
-                                    esta al dia; cobrarle hoy es ADELANTAR esa
-                                    cuota. El badge dice de cuando es la cuota
-                                    que se estaria adelantando — no bloquea. */}
-                                {client.nextPaymentEsFuturo && (
-                                  <span className="text-[9px] md:text-xs px-1.5 py-0.5 rounded font-semibold bg-info text-info-foreground">
-                                    {(() => {
-                                      const [, mm, dd] = client.nextPaymentFecha.split("-")
-                                      return `Próx. pago ${dd}/${mm}`
-                                    })()}
-                                  </span>
-                                )}
+                                {/* El badge "Próx. pago dd/mm" ya no se pinta.
+                                    Salía en todo cliente al día y sumaba una
+                                    etiqueta más a una fila que ya va apretada,
+                                    sin cambiarle nada al cobrador: igual le
+                                    puede cobrar, adelantando la cuota.
+
+                                    `nextPaymentEsFuturo` SIGUE en el modelo y
+                                    se usa: es lo que manda a esos clientes al
+                                    final de la lista, para que primero salga lo
+                                    que vence hoy o está atrasado. */}
                               </div>
                               {/* Mora en CUOTAS vencidas sin cubrir. Se venía
                                   mostrando como "3d mora", que se leía como
