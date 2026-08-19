@@ -223,15 +223,37 @@ async function enviarItem(item: ItemCola): Promise<AtomicRpcResult> {
     // se metio ahi para no cambiar la firma de la funcion, que ya tiene otros
     // callers). Las fechas del plan NO se recalculan: son las que se pactaron
     // con el cliente al hacer la venta.
+    //
+    // Va por `registrar_venta` y NO por `crear_venta_atomica`: es el servidor
+    // el que decide si la venta necesita revision de secretaria. Antes lo
+    // decidia el telefono ANTES de encolar, con la config que tuviera en
+    // cache; una venta capturada sin senal en un telefono que nunca alcanzo a
+    // leer los umbrales entraba directo sin pasar por nadie.
     const p = item.payload as { p_cliente: unknown; p_loan: Record<string, unknown>; p_payment_plan: unknown }
-    const { data, error } = await supabase.rpc("crear_venta_atomica", {
+    const args = {
       p_user_id: item.identidad.user_id,
       p_ruta_id: item.identidad.ruta_id,
       p_rol: item.identidad.rol,
       p_cliente: p.p_cliente,
       p_loan: { ...p.p_loan, idempotency_key: item.id },
       p_payment_plan: p.p_payment_plan,
-    })
+    }
+    const { data, error } = await supabase.rpc("registrar_venta", args)
+
+    // Si el script 061 todavia no se corrio, `registrar_venta` no existe.
+    // PGRST202 = PostgREST no encontro la funcion. En ese caso se vende por el
+    // camino de siempre: que a un cobrador se le caigan TODAS las ventas en la
+    // calle es mucho peor que seguir un dia mas con la decision en el telefono
+    // (que es exactamente como funcionaba hasta ahora).
+    if (error && (error as { code?: string }).code === "PGRST202") {
+      console.error(
+        "[v0] `registrar_venta` no existe — corre scripts/061. La venta se crea SIN el chequeo de umbral del servidor.",
+      )
+      const alterno = await supabase.rpc("crear_venta_atomica", args)
+      if (alterno.error) throw alterno.error
+      return (alterno.data ?? { ok: true }) as AtomicRpcResult
+    }
+
     if (error) throw error
     return (data ?? { ok: true }) as AtomicRpcResult
   }
@@ -317,8 +339,22 @@ export async function drenarCola(): Promise<ResultadoSync> {
       await marcar(item, { estado: "enviando" })
       try {
         const r = await enviarItem(item)
-        if (r.enviado_a_revision) res.enRevision += 1
-        else res.sincronizados += 1
+        if (r.enviado_a_revision) {
+          res.enRevision += 1
+          // Quien aprueba tiene que enterarse AHORA, no cuando abra la app.
+          // Antes esto no hacia falta porque la decision la tomaba el telefono
+          // antes de encolar y el aviso salia desde el formulario. Ahora la
+          // decide el servidor al recibirla, con el formulario cerrado hace
+          // horas: si el aviso no sale de aca, no sale de ningun lado.
+          const { avisarSolicitudPendiente } = await import("@/lib/avisos-revision")
+          void avisarSolicitudPendiente({
+            etiqueta: item.tipo === "venta" ? "Venta" : "Movimiento",
+            detalle: item.descripcion,
+            rutaId: item.identidad.ruta_id,
+          })
+        } else {
+          res.sincronizados += 1
+        }
         await quitar(item.id)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)

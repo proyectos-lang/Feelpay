@@ -26,6 +26,7 @@ import {
 import { buildPaymentSchedule, type Frecuencia, type TipoAmortizacion } from "@/lib/loan-schedule"
 import { useToast } from "@/hooks/use-toast"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre } from "@/lib/ruta-umbrales"
+import { avisarSolicitudPendiente } from "@/lib/avisos-revision"
 import { enviarOEncolar } from "@/lib/offline-queue"
 import { obtenerUbicacion } from "@/lib/geo"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -91,47 +92,6 @@ function mensajeDeError(err: unknown): string {
   }
   const s = String(err)
   return s === "[object Object]" ? "No se pudo completar la operación" : s
-}
-
-/**
- * Avisa por push a quien puede aprobar un movimiento que superó el umbral.
- *
- * Es el único canal que llega con la app cerrada: el badge y el toast del
- * módulo solo funcionan si la persona la tiene abierta en ese momento, y hasta
- * ahora una venta podía quedarse días esperando sin que nadie se enterara.
- *
- * De mejor esfuerzo a propósito: si el push falla, la solicitud YA quedó
- * registrada y sigue visible en la bandeja. Nunca debe romper la venta.
- */
-async function avisarSolicitudPendiente(args: {
-  etiqueta: string
-  monto: number
-  cliente: string
-  rutaId: number
-}): Promise<void> {
-  try {
-    const { data } = await createClient()
-      .from("usuarios")
-      .select("id")
-      .in("rol", ["secretaria", "secretario", "admin", "administrador"])
-      .eq("activo", true)
-    const ids = (data ?? []).map((u: { id: number }) => u.id)
-    if (ids.length === 0) return
-
-    await fetch("/api/push/notify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        user_ids: ids,
-        title: `${args.etiqueta} por aprobar`,
-        body: `${args.cliente} — $${args.monto.toLocaleString()} (ruta ${args.rutaId})`,
-        tag: "solicitudes-revision",
-        url: "/?view=movimientos-revision",
-      }),
-    })
-  } catch (err) {
-    console.error("[v0] No se pudo avisar de la solicitud pendiente:", err)
-  }
 }
 
 interface AmortizationRow {
@@ -1263,16 +1223,15 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       }
 
       // ── Umbral de aprobacion por ruta (venta nueva vs renovacion) ──────
-      // Si la venta supera el umbral configurado por secretaria para este
-      // tipo (nueva o renovacion, segun si viene de preSelectedClientId),
-      // se envia a revision en vez de llamar la RPC directamente. Nada se
-      // escribe en loans/payment_plan hasta que secretaria la apruebe.
+      // QUIEN DECIDE ES EL SERVIDOR (`registrar_venta`, script 061). Acá el
+      // umbral se lee SOLO para poder avisar antes de enviar; si la lectura
+      // falla, la venta se manda igual y el servidor decide con la config de
+      // verdad. Antes esta lectura ERA la decisión, y `getRutaUmbrales` falla
+      // abierto: un error de red al vender saltaba la revisión sin dejar
+      // rastro de que se la había saltado.
+      //
       // Renovación = el crédito va a un cliente que YA existe, se haya llegado
       // desde otra vista (`preSelectedClientId`) o eligiéndolo en el formulario.
-      // Antes solo miraba lo primero, así que una renovación hecha entrando
-      // directo a "Nueva Venta" se evaluaba contra el umbral de venta NUEVA —
-      // y si la unidad solo tenía configurado el de renovación, no pasaba por
-      // revisión.
       const esRenovacion = !!preSelectedClientId || !isNewClient
 
       // Nombre del cliente para etiquetar la venta.
@@ -1293,6 +1252,16 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
             || clientOptions.find((c) => c.id === selectedClient)?.nombre_completo
             || "Cliente")
 
+      // PRIMERA LÍNEA. Cuando la lectura del umbral sí llegó, se decide acá
+      // para poder preguntarle al vendedor ANTES de mandar nada. Si dice que
+      // no, no se envía; si dice que sí, la solicitud entra directo y la RPC
+      // nunca se llama — así que este camino y el del servidor no pueden
+      // producir dos solicitudes por la misma venta.
+      //
+      // El agujero que arregla el script 061 es el OTRO caso: cuando esta
+      // lectura falla, `getRutaUmbrales` devuelve todo deshabilitado, o sea
+      // "ninguna venta necesita revisión", y la venta entraba sin revisión sin
+      // dejar rastro. Ahora eso lo atrapa `registrar_venta` en el servidor.
       const umbrales = await getRutaUmbrales(p_ruta_id)
       const ventaHabilitada = esRenovacion ? umbrales.venta_renovacion_habilitado : umbrales.venta_nueva_habilitado
       const ventaUmbral = esRenovacion ? umbrales.venta_renovacion_umbral : umbrales.venta_nueva_umbral
@@ -1317,9 +1286,6 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
           return
         }
 
-        // Avisar a quien tiene que aprobarla. Es lo único que llega al
-        // teléfono con la app cerrada; el badge y el toast solo funcionan si
-        // la persona la tiene abierta en ese momento.
         void avisarSolicitudPendiente({
           etiqueta: esRenovacion ? "Renovación" : "Venta",
           monto: valorNum,
@@ -1376,7 +1342,10 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         showToastPill("Venta guardada sin conexión. Se enviará al volver la señal.")
         setSuccessDialog({
           open: true,
-          msg: "La venta quedó guardada en el teléfono y se enviará automáticamente cuando vuelva la señal.",
+          // Se dice que "puede quedar en revisión" porque quien decide es el
+          // servidor, y sin señal todavía no contestó. Prometer que quedó
+          // registrada sería mentir en el caso en que supere el umbral.
+          msg: "La venta quedó guardada en el teléfono y se enviará automáticamente cuando vuelva la señal. Si supera el límite de la unidad, pasará a revisión de secretaría.",
         })
         resetFormularioVenta()
         return
@@ -1388,7 +1357,32 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       // prestamo, ademas sin llave de idempotencia, asi que la proteccion
       // contra duplicados no podia detectarlo. Ese bloque se elimino.
 
-      console.log("[v0] crear_venta_atomica OK:", resultadoVenta)
+      // ── El servidor mandó la venta a revisión ──────────────────────────
+      // Nada se creó: ni cliente, ni préstamo, ni cronograma. La solicitud ya
+      // quedó en la bandeja de secretaría; acá solo falta avisarle a quien
+      // tiene que aprobarla y decírselo al vendedor.
+      const respuesta = (resultadoVenta ?? {}) as { enviado_a_revision?: boolean; motivo?: string }
+      if (respuesta.enviado_a_revision) {
+        // El push es lo único que llega al teléfono con la app cerrada; el
+        // badge y el toast solo funcionan si la persona la tiene abierta.
+        void avisarSolicitudPendiente({
+          etiqueta: esRenovacion ? "Renovación" : "Venta",
+          monto: valorNum,
+          cliente: nombreParaEtiqueta,
+          rutaId: p_ruta_id,
+        })
+
+        showToastPill(MENSAJE_REVISION)
+        setSuccessDialog({ open: true, msg: respuesta.motivo ? `${MENSAJE_REVISION}. ${respuesta.motivo}.` : MENSAJE_REVISION })
+        setSuccessAlert(MENSAJE_REVISION)
+        setFormAlert(null)
+        setTimeout(() => setSuccessAlert(null), 6000)
+
+        resetFormularioVenta()
+        return
+      }
+
+      console.log("[v0] registrar_venta OK:", resultadoVenta)
 
       const successMsg = `Se registró la venta de $${Number(valor || 0).toLocaleString()} para ${nombreParaEtiqueta}.`
       showToastPill("Venta registrada exitosamente")
