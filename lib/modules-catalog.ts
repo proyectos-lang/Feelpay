@@ -161,7 +161,15 @@ export const ALL_MODULES: ModuleDefinition[] = [
     label: "Movimientos en Revisión",
     mobileLabel: "Revisión",
     description: "Aprobar o rechazar gastos, ventas y abonos que superaron el umbral de su ruta",
-    defaultRoles: ["secretaria", "secretario"],
+    // El admin también entra: las VENTAS que superan el umbral solo viven en
+    // `solicitudes_revision`, y las dos pantallas de "Autorizaciones" leen
+    // `gastosregistros`, donde una venta nunca aparece. Sin este acceso el
+    // admin no tenía forma de ver una venta pendiente de aprobar. La RPC
+    // `aprobar_solicitud_revision` ya acepta rol admin desde el script 044.
+    defaultRoles: ["secretaria", "secretario", "admin", "administrador"],
+    // El acceso directo del móvil NO se le da al admin: la barra inferior solo
+    // tiene 5 lugares y desplazaría uno de sus atajos. Al admin le llega por
+    // el menú, con el punto rojo de la hamburguesa avisando.
     defaultMobileNavRoles: ["secretaria", "secretario"],
     iconName: "ShieldCheck",
     group: "Secretaria",

@@ -551,6 +551,22 @@ export default function Page() {
       })
       .catch((err: unknown) => console.error("[v0] no leidos iniciales:", err))
 
+    // Y lo mismo con lo que espera aprobación: sin este conteo el aviso solo
+    // aparecería si la solicitud entra con la app abierta, y las 7 ventas que
+    // ya están pendientes seguirían sin avisar a nadie.
+    if (["secretaria", "secretario", "admin", "administrador"].includes(rol)) {
+      supabase
+        .from("solicitudes_revision")
+        .select("id", { count: "exact", head: true })
+        .eq("estado", "pendiente")
+        .then(({ count }: { count: number | null }) => {
+          if (count && count > 0) {
+            setModuleBadgeCounts((prev) => ({ ...prev, "movimientos-revision": count }))
+          }
+        })
+        .catch((err: unknown) => console.error("[v0] pendientes de revision:", err))
+    }
+
     // Cargar IDs de carpetas de Documentos accesibles (mismo query shape que
     // documentos-view.tsx loadCarpetas: permisos -> raíz -> subcarpetas heredadas)
     ;(async () => {
@@ -608,6 +624,26 @@ export default function Page() {
           // Registrar nuevas conversaciones donde me agregan
           if (payload.new.user_id === currentUser.id) {
             myConvIdsRef.current.add(payload.new.conversation_id)
+          }
+        }
+      )
+      // Movimientos que superaron el umbral y esperan aprobación. Hasta ahora
+      // no avisaba NADA: la solicitud entraba a la base y solo se veía si a
+      // alguien se le ocurría abrir la bandeja y cambiar de pestaña.
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "solicitudes_revision" },
+        (payload: { new: { tipo: string; monto: number; ruta_id: number; descripcion: string | null; solicitado_por: number } }) => {
+          if (!["secretaria", "secretario", "admin", "administrador"].includes(rol)) return
+          const s = payload.new
+          if (s.solicitado_por === currentUser.id) return
+          if (currentViewRef.current !== "movimientos-revision") {
+            bumpBadge("movimientos-revision")
+            const etiqueta = s.tipo === "venta" ? "Venta" : s.tipo === "abono" ? "Abono" : "Gasto"
+            toast({
+              title: `🧾 ${etiqueta} por aprobar`,
+              description: `${s.descripcion ?? "Movimiento"} — $${Number(s.monto ?? 0).toLocaleString()} (ruta ${s.ruta_id})`,
+            })
           }
         }
       )
@@ -767,7 +803,7 @@ export default function Page() {
   // cero al entrar sería mentir — quien abre el chat pero deja otra
   // conversación sin leer debe seguir viendo el número. `markAsRead` ya lo
   // baja solo al abrir cada conversación.
-  const BADGE_VIEWS = ["documentos", "secretary-reports", "socio-admin-reportes", "secretary-admin-reportes"]
+  const BADGE_VIEWS = ["documentos", "secretary-reports", "socio-admin-reportes", "secretary-admin-reportes", "movimientos-revision"]
 
   const handleViewChange = (view: string, data?: any) => {
     setCurrentView(view)

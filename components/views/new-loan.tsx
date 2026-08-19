@@ -93,6 +93,47 @@ function mensajeDeError(err: unknown): string {
   return s === "[object Object]" ? "No se pudo completar la operación" : s
 }
 
+/**
+ * Avisa por push a quien puede aprobar un movimiento que superó el umbral.
+ *
+ * Es el único canal que llega con la app cerrada: el badge y el toast del
+ * módulo solo funcionan si la persona la tiene abierta en ese momento, y hasta
+ * ahora una venta podía quedarse días esperando sin que nadie se enterara.
+ *
+ * De mejor esfuerzo a propósito: si el push falla, la solicitud YA quedó
+ * registrada y sigue visible en la bandeja. Nunca debe romper la venta.
+ */
+async function avisarSolicitudPendiente(args: {
+  etiqueta: string
+  monto: number
+  cliente: string
+  rutaId: number
+}): Promise<void> {
+  try {
+    const { data } = await createClient()
+      .from("usuarios")
+      .select("id")
+      .in("rol", ["secretaria", "secretario", "admin", "administrador"])
+      .eq("activo", true)
+    const ids = (data ?? []).map((u: { id: number }) => u.id)
+    if (ids.length === 0) return
+
+    await fetch("/api/push/notify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_ids: ids,
+        title: `${args.etiqueta} por aprobar`,
+        body: `${args.cliente} — $${args.monto.toLocaleString()} (ruta ${args.rutaId})`,
+        tag: "solicitudes-revision",
+        url: "/?view=movimientos-revision",
+      }),
+    })
+  } catch (err) {
+    console.error("[v0] No se pudo avisar de la solicitud pendiente:", err)
+  }
+}
+
 interface AmortizationRow {
   cuota: number
   fecha: string
@@ -1226,7 +1267,13 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       // tipo (nueva o renovacion, segun si viene de preSelectedClientId),
       // se envia a revision en vez de llamar la RPC directamente. Nada se
       // escribe en loans/payment_plan hasta que secretaria la apruebe.
-      const esRenovacion = !!preSelectedClientId
+      // Renovación = el crédito va a un cliente que YA existe, se haya llegado
+      // desde otra vista (`preSelectedClientId`) o eligiéndolo en el formulario.
+      // Antes solo miraba lo primero, así que una renovación hecha entrando
+      // directo a "Nueva Venta" se evaluaba contra el umbral de venta NUEVA —
+      // y si la unidad solo tenía configurado el de renovación, no pasaba por
+      // revisión.
+      const esRenovacion = !!preSelectedClientId || !isNewClient
       const umbrales = await getRutaUmbrales(p_ruta_id)
       const ventaHabilitada = esRenovacion ? umbrales.venta_renovacion_habilitado : umbrales.venta_nueva_habilitado
       const ventaUmbral = esRenovacion ? umbrales.venta_renovacion_umbral : umbrales.venta_nueva_umbral
@@ -1250,6 +1297,16 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
           toast({ title: "Error", description: insertError.message, variant: "destructive" })
           return
         }
+
+        // Avisar a quien tiene que aprobarla. Es lo único que llega al
+        // teléfono con la app cerrada; el badge y el toast solo funcionan si
+        // la persona la tiene abierta en ese momento.
+        void avisarSolicitudPendiente({
+          etiqueta: "Venta",
+          monto: valorNum,
+          cliente: apodo || nombreCompleto,
+          rutaId: p_ruta_id,
+        })
 
         showToastPill(MENSAJE_REVISION)
         setSuccessDialog({ open: true, msg: MENSAJE_REVISION })

@@ -66,6 +66,11 @@ const navGroups: NavGroup[] = [
       { id: "admin-dashboard",        label: "Dashboard",          icon: LayoutDashboard, colorClass: "sidebar-item-summary"  },
       { id: "admin-route-detail",     label: "Detalle Rutas",      icon: ClipboardList,   colorClass: "sidebar-item-clients"  },
       { id: "pending-authorizations", label: "Autor. Admin",       icon: CheckCircle,     colorClass: "sidebar-item-auth"     },
+      // Va también en el grupo del admin porque sin permisos personalizados el
+      // menú se arma por GRUPO, no por módulo: al vivir solo en "Secretaria",
+      // el admin nunca lo veía. Y las ventas por aprobar solo están aquí —
+      // "Autor. Admin" lee `gastosregistros`, donde una venta no aparece.
+      { id: "movimientos-revision",   label: "Movim. Revisión",    icon: ShieldCheck,     colorClass: "sidebar-item-payment"  },
       { id: "admin-route-monitor",    label: "Monitoreo Rutas",    icon: Route,           colorClass: "sidebar-item-route"    },
       { id: "configure-route",        label: "Ordenar Ruta",       icon: MapPin,          colorClass: "sidebar-item-route"    },
       { id: "admin-reportes",         label: "Rep. diarios",       icon: FileText,        colorClass: "sidebar-item-secretary"},

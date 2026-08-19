@@ -17,7 +17,7 @@
  *     ventas y los abonos nunca pasan por el admin.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { callRpcAtomic, getSessionIdentity } from "@/lib/api-helper"
 import { getSolicitanteNombre } from "@/lib/ruta-umbrales"
@@ -107,6 +107,11 @@ function diasEsperando(iso: string): number {
 export function MovimientosRevision() {
   const { toast } = useToast()
   const [activeTab, setActiveTab] = useState<Tipo>("gasto")
+  // La pestaña inicial se elige UNA vez, cuando llegan los datos, hacia la
+  // primera que tenga pendientes. Antes arrancaba fija en "Gastos": con 7
+  // ventas esperando en la pestaña de al lado, quien abría la bandeja veía
+  // "Gastos" vacío y se iba creyendo que no había nada por aprobar.
+  const tabElegidaRef = useRef(false)
   const [solicitudes, setSolicitudes] = useState<Solicitud[]>([])
   const [movimientos, setMovimientos] = useState<MovimientoCaja[]>([])
   const [loading, setLoading] = useState(true)
@@ -243,6 +248,18 @@ export function MovimientosRevision() {
     venta: porEstado.filter((i) => i.tipo === "venta").length,
     abono: porEstado.filter((i) => i.tipo === "abono").length,
   }
+
+  // Al llegar los datos, abrir en la primera pestaña que tenga algo. Ventas
+  // primero: es plata prestada esperando el visto bueno, y es lo que hoy
+  // quedaba escondido.
+  useEffect(() => {
+    if (loading || tabElegidaRef.current) return
+    tabElegidaRef.current = true
+    const primera = (["venta", "abono", "gasto"] as Tipo[]).find((t) => counts[t] > 0)
+    if (primera && primera !== activeTab) setActiveTab(primera)
+    // Solo corre una vez, cuando termina la primera carga.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading])
   const rutasEnBandeja = Array.from(new Set(bandeja.map((i) => i.rutaId))).sort((a, b) => a - b)
 
   /** Un item se puede resolver desde aquí. */
