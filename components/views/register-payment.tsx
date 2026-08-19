@@ -2618,9 +2618,28 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         </div>
       )}
 
+      {/* OJO con el Card de abajo: el grueso del "contenedor grande" de arriba
+          NO era nuestro, lo ponía la librería. `py-6` mete 24px por encima del
+          encabezado y `gap-6` otros 24 entre el encabezado y el listado — 48px
+          de aire en una pantalla de teléfono. En móvil se van los dos.
+
+          Van como `max-md:` y no como `py-0`/`gap-0` a secas porque
+          competirían con `py-6`/`gap-6` por la misma propiedad, y ahí gana el
+          orden del CSS generado, no el de las clases. Las variantes se emiten
+          después, así que ganan siempre. */}
       {!selectedClient ? (
-        <Card>
-          <CardHeader className="p-3 md:p-6 sticky top-0 z-10 bg-card border-b border-border">
+        <Card className="max-md:py-0 max-md:gap-0">
+          {/* `border-b` NO se usa para la línea de abajo. El CardHeader de la
+              librería trae `[.border-b]:pb-6`: con esa clase puesta se
+              autoañade 24px de relleno inferior, y como es una variante le
+              gana a cualquier `pb-*` que pongamos. La sombra de 1px se ve
+              igual y no dispara esa regla.
+
+              El `gap-2` propio del CardHeader tambien separa CADA hijo; en
+              movil baja a 4px. */}
+          <CardHeader
+            className={`${encabezadoPlegado ? "p-2" : "p-3"} md:p-6 max-md:gap-1 sticky top-0 z-10 bg-card shadow-[0_1px_0_0_var(--border)]`}
+          >
             {/* Plegar el encabezado. Solo en móvil: en escritorio no sobra el
                 espacio. Plegado sigue diciendo en qué modo está y cuántos
                 faltan — es lo único del encabezado que el cobrador necesita
@@ -2630,7 +2649,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               type="button"
               onClick={alternarEncabezado}
               aria-expanded={!encabezadoPlegado}
-              className="md:hidden -mx-1 -mt-1 mb-1 flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted"
+              className="md:hidden flex items-center justify-between gap-2 rounded-md px-1 py-0.5 text-muted-foreground hover:bg-muted"
             >
               <span className="text-[12px] font-semibold">
                 {encabezadoPlegado
@@ -2771,7 +2790,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 // usa MIENTRAS se cobra —encontrar al que toco la puerta sin
                 // bajar por toda la ruta— y cuesta un renglon, no un tercio de
                 // la pantalla como el resto.
-                className="mt-2 h-8 md:h-10 text-[12px] md:text-sm md:max-w-sm"
+                className="max-md:mt-0 mt-2 h-8 md:h-10 text-[12px] md:text-sm md:max-w-sm"
               />
             )}
 
@@ -2834,16 +2853,18 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 </span>
               </button>
             </div>
-            {/* Puntos de navegación — solo móvil.
-                NO se pliegan: con la barra de pestañas oculta son la ÚNICA
-                forma de cambiar de vista. El comentario de abajo decía que
-                también se podía deslizar el dedo, pero no hay ni un
-                `onTouchStart` en el archivo: nunca se implementó.
+            {/* Puntos de navegación — solo móvil, y TAMBIÉN se pliegan.
+                Plegado no queda nada para cambiar de panel: hay que desplegar,
+                tocar la pestaña y volver a plegar. Es a propósito — plegado, la
+                pantalla es para cobrar, y para cobrar solo se usa Pendientes.
+
+                (No hay deslizar el dedo: el comentario de más abajo lo decía,
+                pero no hay ni un `onTouchStart` en el archivo.)
 
                 El punto se ve chiquito pero el área de toque es de 32px
                 (`p-2` alrededor). Antes el botón medía lo mismo que el punto
                 —6px— y había que apuntarle. */}
-            <div className="flex md:hidden justify-center gap-0.5 pt-0.5">
+            <div className={`${ocultoEnMovil()} flex md:hidden justify-center gap-0.5 pt-0.5`}>
               {TAB_ORDER.map((tab) => (
                 <button
                   key={tab}
