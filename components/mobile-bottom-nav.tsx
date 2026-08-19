@@ -115,7 +115,7 @@ export function MobileBottomNav({ currentView, onViewChange, currentUser, userPe
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-border md:hidden safe-area-inset-bottom">
-      <div className={`grid ${colsClass} gap-1 p-1.5`}>
+      <div className={`grid ${colsClass} gap-1 p-1`}>
         {navItems.map((item) => {
           const Icon = item.icon
           const isActive = currentView === item.id
@@ -125,7 +125,11 @@ export function MobileBottomNav({ currentView, onViewChange, currentUser, userPe
               key={item.id}
               variant="ghost"
               onClick={() => onViewChange(item.id)}
-              className={`relative h-18 rounded-xl flex flex-col items-center justify-center gap-1.5 px-1 ${item.colorClass} ${
+              // 56px de alto (antes 72). Con el icono en 28 y la etiqueta en
+              // 12 el contenido mide ~44, asi que sigue habiendo aire — y el
+              // area de toque queda muy por encima del minimo de 44px que
+              // necesita un dedo.
+              className={`relative h-14 rounded-xl flex flex-col items-center justify-center gap-1 px-1 ${item.colorClass} ${
                 isActive ? "nav-item-active" : "nav-item-inactive"
               }`}
               style={{

@@ -133,11 +133,15 @@ export function DashboardLayout({
         />
         {/* `min-h-0` para que el contenido pueda encogerse dentro del flex;
             sin eso un hijo alto empuja el pie fuera del contenedor.
-            El padding inferior reserva el alto REAL de la barra de navegacion:
-            eran 64px (`pb-16`) para una barra que mide unos 90 con sus botones
-            y el area segura del telefono, asi que le tapaba el ultimo boton a
-            cualquier pantalla con pie. */}
-        <main className="flex-1 min-h-0 overflow-y-auto p-3 md:p-6 pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-6">{children}</main>
+
+            El padding inferior reserva el alto REAL de la barra de navegacion.
+            Eran 64px (`pb-16`) para una barra que medía unos 90, asi que le
+            tapaba el ultimo boton a cualquier pantalla con pie. Hoy la barra
+            mide 64 (56 del boton + 8 de relleno), asi que 5rem deja un margen
+            comodo sin dejar un hueco al final de cada pantalla.
+
+            SI SE CAMBIA EL ALTO DE `mobile-bottom-nav`, HAY QUE MOVER ESTO. */}
+        <main className="flex-1 min-h-0 overflow-y-auto p-3 md:p-6 pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-6">{children}</main>
         <MobileBottomNav currentView={currentView} onViewChange={onViewChange} currentUser={currentUser} userPermissions={userPermissions} moduleBadgeCounts={moduleBadgeCounts} />
       </div>
       {currentUser && <PushPermissionPrompt currentUser={currentUser} />}
