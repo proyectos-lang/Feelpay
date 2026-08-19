@@ -2462,6 +2462,19 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     return "text-red-700 bg-red-100"
   }
 
+  // Franja de color al inicio de cada fila. Al sol, la lista se ve como un
+  // bloque de texto gris: el borde entre un cliente y el siguiente es lo
+  // primero que desaparece. Una barra saturada a la izquierda sobrevive al
+  // reflejo mucho mejor que una linea de 1px, y de paso dice en que anda el
+  // cliente antes de leer una sola palabra. Es la MISMA banda del badge de
+  // mora, no un codigo nuevo que haya que aprenderse.
+  const getMoraBarra = (mora: number) => {
+    const banda = colorMora(mora)
+    if (banda === "verde") return "border-l-green-500"
+    if (banda === "amarillo") return "border-l-yellow-500"
+    return "border-l-red-500"
+  }
+
   // El guard y el boton de iniciar ruta viven en <RutaNoIniciada>: los usan
   // esta pantalla y el bloqueo global de los vendedores, y dos copias de la
   // logica terminarian discrepando en cuando se considera abierta una ruta.
@@ -2799,13 +2812,23 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                           onDragOver={(e) => handleDragOver(e, index)}
                           onDragEnd={() => { setDragIndex(null); setDragOverIndex(null) }}
                           onDrop={() => handleDrop(index)}
-                          className={`${index % 2 === 0 ? "bg-card" : "bg-muted/40"} border-b border-border hover:bg-accent/30 transition-colors ${
+                          // Separacion entre clientes, pensada para leerse al
+                          // sol: franja de color a la izquierda, linea gruesa
+                          // abajo y franjeado de verdad. Antes era una linea de
+                          // 1px casi invisible sobre un franjeado al 40% de
+                          // opacidad — o sea, blanco contra blanco.
+                          className={`${index % 2 === 0 ? "bg-card" : "bg-muted"} border-b-2 border-b-border hover:bg-accent/30 transition-colors ${
                             dragIndex === index ? "opacity-50" : ""
                           } ${dragOverIndex === index ? "border-t-2 border-t-brand" : ""} ${
                             !canManage ? "opacity-60" : ""
                           }`}
                         >
-                          <TableCell className="py-1.5 md:py-3 px-0.5 md:px-1">
+                          {/* La franja va en la CELDA y no en la fila: la tabla
+                              le quita todos los bordes al ultimo `<tr>`
+                              (`[&_tr:last-child]:border-0`), asi que puesta en
+                              la fila el ultimo cliente de la lista se quedaria
+                              sin ella. */}
+                          <TableCell className={`py-1.5 md:py-3 px-0.5 md:px-1 border-l-4 ${getMoraBarra(client.mora)}`}>
                             <div className="flex flex-col items-center gap-0.5">
                               <button
                                 type="button"
@@ -3079,9 +3102,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                     {filteredManaged.map((m, index) => (
                       <div
                         key={m.loanId}
-                        className={`rounded-lg border px-3 py-2 ${index % 2 === 0 ? "bg-card" : "bg-muted/40"}`}
+                        // Mismo criterio que la lista de Pendientes: al sol,
+                        // un borde de 1px sobre franjeado al 40% es blanco
+                        // contra blanco. Borde grueso + franja de color al
+                        // inicio, verde si pagó y roja si no.
+                        className={`rounded-lg border-2 border-border border-l-4 px-3 py-2 ${
+                          m.gestionTipo === "pago" ? "border-l-green-500" : "border-l-red-500"
+                        } ${index % 2 === 0 ? "bg-card" : "bg-muted"}`}
                       >
-                        {/* Línea 1: nombre · estado · hora · acciones */}
+                        {/* Línea 1: nombre · estado con el valor · hora */}
                         <div className="flex items-center gap-1.5">
                           {/* El nombre ENVUELVE, no se corta. Con `truncate` un
                               nombre largo terminaba en "..." y el cobrador no
@@ -3095,26 +3124,47 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                           <span className="flex-1 min-w-0 font-medium text-[13px] md:text-sm leading-tight break-words [overflow-wrap:anywhere]">
                             {m.nombre}
                           </span>
+                          {/* El valor abonado va DENTRO de la insignia, pegado
+                              a "Pago": es el par que el cobrador busca de un
+                              vistazo — qué pasó y por cuánto. Abajo, entre
+                              Cuota/Préstamo/Saldo, se perdía entre tres cifras
+                              más que se parecen. */}
                           {m.gestionTipo === "pago" ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-green-600 bg-green-50 px-1.5 py-0.5 rounded-full shrink-0">
-                              <CheckCircle2 className="h-2.5 w-2.5" />Pago
+                            <span className="inline-flex items-center gap-1 text-[12px] font-bold text-green-700 bg-green-100 px-2 py-1 rounded-full shrink-0">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              Pago ${(m.valorAbonado ?? 0).toLocaleString()}
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-600 bg-red-50 px-1.5 py-0.5 rounded-full shrink-0">
-                              <XCircle className="h-2.5 w-2.5" />No pago
+                            <span className="inline-flex items-center gap-1 text-[12px] font-bold text-red-700 bg-red-100 px-2 py-1 rounded-full shrink-0">
+                              <XCircle className="h-3.5 w-3.5" />No pago
                             </span>
                           )}
-                          <span className="text-[10px] text-muted-foreground shrink-0">{m.gestionHora}</span>
-                          <div className="flex items-center gap-0.5 shrink-0">
+                          <span className="text-[11px] text-muted-foreground shrink-0">{m.gestionHora}</span>
+                        </div>
+                        {/* Línea 2: los datos a la izquierda, las acciones a la
+                            derecha. Los tres botones estaban arriba, apretando
+                            el nombre contra la insignia y midiendo 24px — por
+                            debajo del mínimo de un dedo (44px). Acá abajo hay
+                            sitio y quedan en 40px, con borde para que se vean
+                            sin tener que tocarlos a ver si están. */}
+                        <div className="flex items-end justify-between gap-2 mt-1.5">
+                          <div className="flex flex-wrap gap-x-3 gap-y-0.5 min-w-0">
+                            <span className="text-[11px] text-muted-foreground">Cuota: <span className="font-semibold text-foreground">${m.valorCuota.toLocaleString()}</span></span>
+                            <span className="text-[11px] text-muted-foreground">Préstamo: <span className="font-semibold text-info">${m.valorPrestamo.toLocaleString()}</span></span>
+                            <span className="text-[11px] text-muted-foreground">Saldo: <span className="font-semibold text-warning">${Math.round(m.saldo).toLocaleString()}</span></span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
                             {m.gestionTipo === "pago" && (
                               <Button
                                 size="icon"
-                                variant="ghost"
-                                className="h-6 w-6 text-info hover:text-info/80 hover:bg-info-light"
+                                variant="outline"
+                                title="Editar el valor abonado"
+                                aria-label="Editar el valor abonado"
+                                className="h-10 w-10 border-info/40 text-info hover:text-info hover:bg-info-light"
                                 onClick={() => { setEditingManaged(m); setEditMonto((m.valorAbonado ?? 0).toString()) }}
                                 disabled={savingManaged}
                               >
-                                <Pencil className="h-3 w-3" />
+                                <Pencil className="h-5 w-5" />
                               </Button>
                             )}
                             {/* El icono es un basurero rojo porque es lo que el
@@ -3127,19 +3177,19 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 y el diálogo de confirmación lo repite. */}
                             <Button
                               size="icon"
-                              variant="ghost"
+                              variant="outline"
                               title="Anular esta gestión"
                               aria-label="Anular esta gestión"
-                              className="h-6 w-6 text-destructive hover:text-destructive/80 hover:bg-destructive-light"
+                              className="h-10 w-10 border-destructive/40 text-destructive hover:text-destructive hover:bg-destructive-light"
                               onClick={() => setAnularManaged(m)}
                               disabled={savingManaged}
                             >
-                              <Trash2 className="h-3 w-3" />
+                              <Trash2 className="h-5 w-5" />
                             </Button>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
-                                <Button size="icon" variant="ghost" className="h-6 w-6">
-                                  <MoreVertical className="h-3 w-3" />
+                                <Button size="icon" variant="outline" className="h-10 w-10" aria-label="Más opciones">
+                                  <MoreVertical className="h-5 w-5" />
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="w-48">
@@ -3174,13 +3224,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </div>
-                        </div>
-                        {/* Línea 2: cuota · préstamo · abonado · saldo */}
-                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
-                          <span className="text-[11px] text-muted-foreground">Cuota: <span className="font-semibold text-foreground">${m.valorCuota.toLocaleString()}</span></span>
-                          <span className="text-[11px] text-muted-foreground">Préstamo: <span className="font-semibold text-info">${m.valorPrestamo.toLocaleString()}</span></span>
-                          <span className="text-[11px] text-muted-foreground">Abonado: <span className="font-semibold text-success">${(m.valorAbonado ?? 0).toLocaleString()}</span></span>
-                          <span className="text-[11px] text-muted-foreground">Saldo: <span className="font-semibold text-warning">${Math.round(m.saldo).toLocaleString()}</span></span>
                         </div>
                       </div>
                     ))}

@@ -137,7 +137,10 @@ export function MobileBottomNav({ currentView, onViewChange, currentUser, userPe
               <Icon className="h-8 w-8" />
               <span className="text-xs font-semibold">{item.label}</span>
               {unread > 0 && (
-                <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-white text-[9px] font-bold leading-none shadow">
+                // El circulo pasa de 16 a 20px: con la letra mas grande (ver
+                // el piso de tamano en globals.css) un "9+" quedaba rozando el
+                // borde.
+                <span className="absolute top-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white text-[9px] font-bold leading-none shadow">
                   {unread > 9 ? "9+" : unread}
                 </span>
               )}

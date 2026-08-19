@@ -46,8 +46,16 @@ input[type="number"] {
   --popover:            oklch(1.00 0 0);
   --popover-foreground: oklch(0.25 0.10 260);
   --muted:              oklch(0.95 0.012 230);   /* gris-azul claro */
-  --muted-foreground:   oklch(0.50 0.06 245);    /* azul medio suave */
-  --border:             oklch(0.90 0.018 230);   /* borde sutil azulado */
+  /* Texto secundario. Estaba en 0.50, que sobre el fondo (0.98) da un
+     contraste de 4.3:1 — POR DEBAJO del mínimo legible (4.5:1) para texto
+     normal. En una oficina se lee; al sol, en la calle, se desvanece, y es
+     justo el color de casi todos los datos de la lista de cobro. En 0.40 da
+     6.1:1 y sigue leyéndose como secundario frente al navy del texto
+     principal (11.4:1). */
+  --muted-foreground:   oklch(0.40 0.06 245);    /* azul medio legible al sol */
+  /* El borde estaba en 0.90: sobre tarjeta blanca es prácticamente invisible
+     con luz directa, y es lo único que separa un cliente del siguiente. */
+  --border:             oklch(0.86 0.022 230);   /* borde visible al sol */
   --input:              oklch(0.98 0.008 230);   /* blanco azulado */
   --input-foreground:   oklch(0.25 0.10 260);    /* Navy texto */
   --input-border:       oklch(0.88 0.02 230);    /* borde input azulado */
@@ -483,3 +491,47 @@ input[type="number"] {
 .nav-item-active          { opacity: 1; background-color: var(--muted); }
 .nav-item-inactive        { opacity: 0.65; }
 .nav-item-inactive:hover  { opacity: 1; background-color: var(--muted); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PISO DE TAMAÑO DE LETRA — legibilidad en la calle
+   ═══════════════════════════════════════════════════════════════════════════
+   QUÉ HACE
+   Sube de golpe todos los tamaños de letra fijos en píxeles que hay repartidos
+   por la app. `text-[11px]` pasa a medir 13px, `text-[10px]` a 12px, etc.
+
+   POR QUÉ ACÁ Y NO EN CADA ARCHIVO
+   Son 649 apariciones en más de 40 archivos. Cambiarlas una por una es mucho
+   riesgo de romper algo por muy poca ganancia, y además dejaría el problema
+   abierto: la próxima pantalla volvería a escribir `text-[10px]`.
+
+   POR QUÉ NO SIRVE SUBIR EL TAMAÑO DE LA RAÍZ
+   Porque estos valores están en PÍXELES, así que no escalan con nada. Y subir
+   la raíz movería también todos los espaciados y altos de Tailwind (que sí van
+   en rem), o sea que reacomodaría cada pantalla de la app.
+
+   PARA SUBIRLO O BAJARLO
+   Es este bloque y nada más. Cada línea es un escalón. Si algo queda apretado
+   o se desborda, se baja un punto acá y listo — no hay que tocar ninguna
+   pantalla.
+
+   POR QUÉ SOLO HASTA 768px
+   No es que el escritorio no importe: es que estas reglas van FUERA de las
+   capas de Tailwind, y en CSS lo que está fuera de una capa le gana a todo lo
+   que está dentro. Sin el límite de ancho, `text-[11px]` también le ganaría al
+   `md:text-sm` que muchos sitios ya usan para agrandar en pantalla grande, y
+   el escritorio terminaría MÁS chico que antes. Debajo de 768px las variantes
+   `md:` no aplican, así que ahí no hay con qué pelear.
+
+   Y es justo donde está el problema: el cobrador con el teléfono al sol.
+
+   OJO: en el navegador la letra se ve del tamaño de aquí abajo, NO del que
+   dice la clase. Es a propósito.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 47.99rem) {
+  .text-\[8px\]  { font-size: 10px; }
+  .text-\[9px\]  { font-size: 11px; }
+  .text-\[10px\] { font-size: 12px; }
+  .text-\[11px\] { font-size: 13px; }
+  .text-\[12px\] { font-size: 14px; }
+  .text-\[13px\] { font-size: 15px; }
+}
