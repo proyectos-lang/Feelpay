@@ -538,6 +538,19 @@ export default function Page() {
       })
       .catch(() => {})
 
+    // Sembrar el badge del chat con el no leído REAL al arrancar.
+    //
+    // Antes `moduleBadgeCounts` nacía vacío en cada recarga y solo subía si el
+    // mensaje llegaba con la app abierta: quien abría la app por la mañana con
+    // mensajes de la noche no veía ninguna burbuja.
+    supabase
+      .rpc("get_my_conversations", { p_user_id: currentUser.id })
+      .then(({ data }: { data: { unread_count: number }[] | null }) => {
+        const total = (data ?? []).reduce((s, c) => s + (Number(c.unread_count) || 0), 0)
+        if (total > 0) setModuleBadgeCounts((prev) => ({ ...prev, chat: total }))
+      })
+      .catch((err: unknown) => console.error("[v0] no leidos iniciales:", err))
+
     // Cargar IDs de carpetas de Documentos accesibles (mismo query shape que
     // documentos-view.tsx loadCarpetas: permisos -> raíz -> subcarpetas heredadas)
     ;(async () => {
@@ -749,7 +762,12 @@ export default function Page() {
   const userRol = (currentUser?.rol ?? "").toLowerCase()
   const canChangeRuta = ["admin", "administrador", "secretaria", "secretario"].includes(userRol)
 
-  const BADGE_VIEWS = ["chat", "documentos", "secretary-reports", "socio-admin-reportes", "secretary-admin-reportes"]
+  // "chat" NO está aquí a propósito: su contador ahora se DERIVA del no leído
+  // real del servidor (ChatView lo reporta con onUnreadChange). Ponerlo en
+  // cero al entrar sería mentir — quien abre el chat pero deja otra
+  // conversación sin leer debe seguir viendo el número. `markAsRead` ya lo
+  // baja solo al abrir cada conversación.
+  const BADGE_VIEWS = ["documentos", "secretary-reports", "socio-admin-reportes", "secretary-admin-reportes"]
 
   const handleViewChange = (view: string, data?: any) => {
     setCurrentView(view)
@@ -894,7 +912,16 @@ export default function Page() {
       case "user-route-management":
         return <GestionUsuariosRutas />
       case "chat":
-        return <ChatView currentUser={currentUser!} />
+        return (
+          <ChatView
+            currentUser={currentUser!}
+            onUnreadChange={(total) =>
+              setModuleBadgeCounts((prev) =>
+                prev.chat === total ? prev : { ...prev, chat: total },
+              )
+            }
+          />
+        )
       case "reportes-bi":
         return <ReportesBi currentUser={currentUser!} />
       default:

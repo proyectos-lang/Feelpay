@@ -125,6 +125,7 @@ export function DashboardLayout({
           currentUser={currentUser}
           onLogout={onLogout}
           onViewChange={onViewChange}
+          moduleBadgeCounts={moduleBadgeCounts}
         />
         <main className="flex-1 overflow-y-auto p-3 md:p-6 pb-16 md:pb-6">{children}</main>
         <MobileBottomNav currentView={currentView} onViewChange={onViewChange} currentUser={currentUser} userPermissions={userPermissions} moduleBadgeCounts={moduleBadgeCounts} />

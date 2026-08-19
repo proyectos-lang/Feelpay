@@ -621,15 +621,24 @@ const UNSUPPORTED_IMAGE_TYPES = ["image/heic", "image/heif"]
 
 interface ChatViewProps {
   currentUser: AuthenticatedUser
+  /**
+   * Avisa cuántos mensajes sin leer tiene el usuario EN TOTAL. Con esto la
+   * burbuja del menú deja de ser un contador en memoria (que nacía en cero
+   * en cada recarga) y pasa a ser el no leído real del servidor.
+   */
+  onUnreadChange?: (total: number) => void
 }
 
-export function ChatView({ currentUser }: ChatViewProps) {
+export function ChatView({ currentUser, onUnreadChange }: ChatViewProps) {
   const { toast } = useToast()
 
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [loadingConvs, setLoadingConvs] = useState(true)
   const [activeConvId, setActiveConvId] = useState<string | null>(null)
   const [showThread, setShowThread] = useState(false) // móvil: panel visible
+  // El canal de tiempo real está vivo. Solo se usa para avisar en pantalla
+  // cuando NO lo está; el respaldo periódico corre igual.
+  const [canalVivo, setCanalVivo] = useState(true)
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loadingMsgs, setLoadingMsgs] = useState(false)
@@ -782,10 +791,20 @@ export function ChatView({ currentUser }: ChatViewProps) {
         { event: "INSERT", schema: "public", table: "chat_participants", filter: `user_id=eq.${currentUser.id}` },
         () => { loadConversations() }
       )
-      .subscribe()
+      .subscribe((estado: string, err?: Error) => {
+        if (estado !== "SUBSCRIBED") {
+          console.warn("[v0] canal chat-my-invites:", estado, err?.message ?? "")
+        }
+      })
 
     return () => {
-      channelInvitesRef.current?.unsubscribe()
+      // removeChannel y NO unsubscribe: el cliente de Supabase es un singleton
+      // (lib/supabase/client.ts), así que `unsubscribe` corta el flujo pero deja
+      // el canal registrado. Al remontar la vista se creaba otro canal con el
+      // MISMO nombre sobre el mismo socket, y el servidor podía seguir hablando
+      // con el zombi — parte de por qué los mensajes dejaban de llegar.
+      const ch = channelInvitesRef.current
+      if (ch) { void createClient().removeChannel(ch); channelInvitesRef.current = null }
     }
   }, [currentUser.id, loadConversations])
 
@@ -941,16 +960,111 @@ export function ChatView({ currentUser }: ChatViewProps) {
           }
         }
       )
-      .subscribe()
+      .subscribe((estado: string, err?: Error) => {
+        // Antes esto iba sin callback: un CHANNEL_ERROR, TIMED_OUT o CLOSED era
+        // completamente silencioso — ni log, ni reintento, ni forma de
+        // diagnosticarlo desde el teléfono de un cobrador.
+        setCanalVivo(estado === "SUBSCRIBED")
+        if (estado !== "SUBSCRIBED") {
+          console.warn("[v0] canal chat-global-msgs:", estado, err?.message ?? "")
+        }
+      })
 
     // Canal persistente por el ciclo de vida del componente; activeConvId
     // se lee via ref para no tener que resuscribir en cada cambio de conversación.
     return () => {
-      channelMsgsRef.current?.unsubscribe()
+      const ch = channelMsgsRef.current
+      if (ch) { void createClient().removeChannel(ch); channelMsgsRef.current = null }
     }
   // toast (de useToast) es estable entre renders; no hace falta listarlo
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser.id, markAsRead])
+
+  // ── El no leído total, hacia afuera ───────────────────────────────────────
+  // Se deriva de `unread_count`, que calcula la base comparando cada mensaje
+  // contra `chat_participants.last_read_at`. Así la burbuja sobrevive a la
+  // recarga y no depende de que la app haya estado abierta cuando llegó.
+  useEffect(() => {
+    if (!onUnreadChange) return
+    onUnreadChange(conversations.reduce((s, c) => s + (c.unread_count || 0), 0))
+  }, [conversations, onUnreadChange])
+
+  // ── Traer lo que haya entrado desde el último mensaje que tenemos ─────────
+  //
+  // Es la red de seguridad del hilo abierto. El WebSocket puede estar caído sin
+  // que nadie se entere (en un PWA, apagar la pantalla o pasar de datos a WiFi
+  // lo tumba), y hasta ahora el ÚNICO camino para ver un mensaje nuevo era
+  // salir de la conversación y volver a entrar — exactamente el síntoma que
+  // reportó el usuario.
+  const alcanzarMensajes = useCallback(async (convId: string) => {
+    try {
+      const supabase = createClient()
+      const desde = ultimoMsgAtRef.current
+      let q = supabase
+        .from("chat_messages")
+        .select("id, sender_id, sender_nombre, body, image_url, created_at")
+        .eq("conversation_id", convId)
+        .order("created_at", { ascending: true })
+        .limit(50)
+      if (desde) q = q.gt("created_at", desde)
+
+      const { data, error } = await q
+      if (error) throw error
+      const nuevos = (data ?? []) as ChatMessage[]
+      if (nuevos.length === 0) return
+
+      let entraronDeOtro = false
+      setMessages((prev) => {
+        const vistos = new Set(prev.map((m) => m.id))
+        // Mismo dedupe por id que usa el canal realtime: si los dos caminos
+        // traen el mismo mensaje, entra una sola vez.
+        const faltantes = nuevos.filter((m) => !vistos.has(m.id))
+        if (faltantes.length === 0) return prev
+        entraronDeOtro = faltantes.some((m) => m.sender_id !== currentUser.id)
+        return [...prev, ...faltantes]
+      })
+      if (entraronDeOtro) void markAsRead(convId)
+    } catch (err) {
+      console.error("[v0] alcanzarMensajes:", err)
+    }
+  }, [currentUser.id, markAsRead])
+
+  // Último mensaje conocido, para pedir solo lo posterior.
+  const ultimoMsgAtRef = useRef<string | null>(null)
+  useEffect(() => {
+    ultimoMsgAtRef.current = messages.length > 0 ? messages[messages.length - 1].created_at : null
+  }, [messages])
+
+  // ── Reconexión: volver del segundo plano, recuperar foco o red ────────────
+  useEffect(() => {
+    const revivir = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return
+      void loadConversations()
+      const conv = activeConvIdRef.current
+      if (conv) void alcanzarMensajes(conv)
+    }
+    window.addEventListener("focus", revivir)
+    window.addEventListener("online", revivir)
+    document.addEventListener("visibilitychange", revivir)
+    return () => {
+      window.removeEventListener("focus", revivir)
+      window.removeEventListener("online", revivir)
+      document.removeEventListener("visibilitychange", revivir)
+    }
+  }, [loadConversations, alcanzarMensajes])
+
+  // ── Respaldo periódico mientras el hilo está abierto ──────────────────────
+  // Corre SIEMPRE, no solo cuando el canal se reporta caído: el modo de falla
+  // observado es justamente que el canal CREE estar vivo. Son unas pocas filas
+  // cada 20 segundos, y solo con la app en primer plano.
+  useEffect(() => {
+    if (!activeConvId) return
+    const t = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return
+      void alcanzarMensajes(activeConvId)
+    }, 20_000)
+    return () => clearInterval(t)
+  }, [activeConvId, alcanzarMensajes])
 
   // ── Scroll al fondo cuando llegan mensajes ────────────────────────────────
 
@@ -1356,6 +1470,17 @@ export function ChatView({ currentUser }: ChatViewProps) {
                 <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={closeSearch} title="Cerrar búsqueda">
                   <X className="h-4 w-4" />
                 </Button>
+              </div>
+            )}
+
+            {/* Conexión en vivo caída: los mensajes igual entran, pero con
+                unos segundos de retraso. Se avisa en vez de dejar al usuario
+                creyendo que el otro no le contestó. */}
+            {!canalVivo && (
+              <div className="px-4 py-1.5 bg-amber-50 border-b border-amber-200">
+                <p className="text-[11px] text-amber-800">
+                  Conexión en vivo interrumpida. Los mensajes nuevos pueden tardar unos segundos.
+                </p>
               </div>
             )}
 

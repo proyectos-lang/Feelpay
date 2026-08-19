@@ -28,6 +28,13 @@ interface HeaderProps {
   currentUser?: AuthenticatedUser | null
   onLogout?: () => void
   onViewChange?: (view: string) => void
+  /**
+   * Pendientes por módulo. Solo se usa para poner un punto sobre el botón de
+   * menú: en móvil, módulos como el chat no caben en la barra inferior
+   * (`defaultMobileNavRoles: []`) y viven detrás de la hamburguesa, así que
+   * su burbuja no se veía nunca sin abrir el menú.
+   */
+  moduleBadgeCounts?: Record<string, number>
 }
 
 export function Header({
@@ -40,7 +47,9 @@ export function Header({
   currentUser,
   onLogout,
   onViewChange,
+  moduleBadgeCounts,
 }: HeaderProps) {
+  const hayPendientes = Object.values(moduleBadgeCounts ?? {}).some((n) => n > 0)
   const [currentDateTime, setCurrentDateTime] = useState(new Date())
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("checking")
 
@@ -99,8 +108,14 @@ export function Header({
   return (
     <header className="flex h-12 md:h-16 items-center justify-between border-b border-border bg-card/80 backdrop-blur-md px-2 md:px-6">
       <div className="flex items-center gap-1.5 md:gap-2">
-        <Button variant="ghost" size="icon" className="md:hidden h-8 w-8" onClick={onMenuClick}>
+        <Button variant="ghost" size="icon" className="md:hidden h-8 w-8 relative" onClick={onMenuClick}>
           <Menu className="h-4 w-4" />
+          {hayPendientes && (
+            <span
+              className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-card"
+              aria-label="Tienes avisos sin ver"
+            />
+          )}
         </Button>
 
         <Button variant="ghost" size="icon" className="hidden md:flex h-10 w-10" onClick={onSidebarToggle}>
