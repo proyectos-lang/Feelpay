@@ -2965,8 +2965,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                           dragOverIndex === index ? "ring-2 ring-brand" : ""
                         } ${!canManage ? "opacity-60" : ""}`}
                       >
-                        {/* Linea 1: el orden a la izquierda, el nombre con todo
-                            el resto del ancho. */}
+                        {/* Dos columnas: el control de orden (flechas +
+                            arrastre) en una franja angosta a la izquierda, y
+                            TODO lo del cliente —nombre, apodo, badges, plata y
+                            los botones— en la de al lado.
+
+                            Antes solo el nombre iba junto a las flechas y el
+                            resto arrancaba desde el borde de la tarjeta, o sea
+                            por DEBAJO de las flechas: la informacion del
+                            cliente quedaba partida en dos alineaciones
+                            distintas. */}
                         <div className="flex items-start gap-2">
                           <div className="flex flex-col items-center gap-0.5 shrink-0">
                             <button
@@ -3007,166 +3015,166 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 {client.apodo}
                               </span>
                             )}
+
+                          {/* Linea 2: frecuencia, dia de cobro y mora */}
+                          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                            <span className="text-[11px] md:text-sm text-muted-foreground">
+                              {frecuenciaLabel(client.frecuenciaPago)}
+                            </span>
+                            {client.frecuenciaPago !== "daily" && client.diaSemana && (
+                              <span className={`text-[9px] md:text-xs px-1.5 py-0.5 rounded font-semibold ${
+                                isPaymentDayToday(client.diaSemana)
+                                  ? "bg-success text-success-foreground"
+                                  : "bg-muted text-muted-foreground"
+                              }`}>
+                                {client.diaSemana.charAt(0).toUpperCase() + client.diaSemana.slice(1)}
+                              </span>
+                            )}
+                            {/* Mora en CUOTAS vencidas sin cubrir, no en dias. */}
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] md:text-sm font-semibold ${getMoraColor(client.mora)}`}>
+                              {client.mora > 0 ? `${etiquetaMora(client.mora)} en mora` : "al día"}
+                            </span>
                           </div>
-                        </div>
 
-                        {/* Linea 2: frecuencia, dia de cobro y mora */}
-                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                          <span className="text-[11px] md:text-sm text-muted-foreground">
-                            {frecuenciaLabel(client.frecuenciaPago)}
-                          </span>
-                          {client.frecuenciaPago !== "daily" && client.diaSemana && (
-                            <span className={`text-[9px] md:text-xs px-1.5 py-0.5 rounded font-semibold ${
-                              isPaymentDayToday(client.diaSemana)
-                                ? "bg-success text-success-foreground"
-                                : "bg-muted text-muted-foreground"
-                            }`}>
-                              {client.diaSemana.charAt(0).toUpperCase() + client.diaSemana.slice(1)}
-                            </span>
-                          )}
-                          {/* Mora en CUOTAS vencidas sin cubrir, no en dias. */}
-                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] md:text-sm font-semibold ${getMoraColor(client.mora)}`}>
-                            {client.mora > 0 ? `${etiquetaMora(client.mora)} en mora` : "al día"}
-                          </span>
-                        </div>
-
-                        {/* Linea 3: la plata.
-                            El "+N extra" de las cuotas no se muestra: en la
-                            lista de cobro solo importa por que cuota va el
-                            cliente. Sigue visible en Auditoria 360. */}
-                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5 text-[11px] md:text-xs text-muted-foreground">
-                          <span className="whitespace-nowrap">
-                            Venta{" "}
-                            <strong className="text-foreground tabular-nums">
-                              ${client.valorVenta.toLocaleString()}
-                            </strong>
-                          </span>
-                          <span className="whitespace-nowrap">
-                            Cta{" "}
-                            <strong className="text-foreground tabular-nums">
-                              {client.cuotasPagadas}/{client.cuotasTotales}
-                            </strong>
-                          </span>
-                          <span className="whitespace-nowrap">
-                            Vlr{" "}
-                            <strong className="text-foreground tabular-nums">
-                              ${client.valorCuota.toLocaleString()}
-                            </strong>
-                          </span>
-                          <span className="whitespace-nowrap">
-                            Saldo{" "}
-                            <strong className="text-warning tabular-nums">
-                              ${Math.round(client.saldo).toLocaleString()}
-                            </strong>
-                          </span>
-                          {client.multaPendiente && (
+                          {/* Linea 3: la plata.
+                              El "+N extra" de las cuotas no se muestra: en la
+                              lista de cobro solo importa por que cuota va el
+                              cliente. Sigue visible en Auditoria 360. */}
+                          <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5 text-[11px] md:text-xs text-muted-foreground">
                             <span className="whitespace-nowrap">
-                              Multa{" "}
-                              <strong className="text-red-600 tabular-nums">
-                                ${client.multaPendiente.valor.toLocaleString()}
-                              </strong>
-                            </span>
-                          )}
-                          {client.ultimoPagoFecha && (
-                            <span className="whitespace-nowrap">
-                              Últ. pago{" "}
+                              Venta{" "}
                               <strong className="text-foreground tabular-nums">
-                                {(() => {
-                                  const [y, m, d] = client.ultimoPagoFecha.split("-")
-                                  return `${d}/${m}/${y.slice(2)}`
-                                })()}
+                                ${client.valorVenta.toLocaleString()}
                               </strong>
                             </span>
-                          )}
-                        </div>
+                            <span className="whitespace-nowrap">
+                              Cta{" "}
+                              <strong className="text-foreground tabular-nums">
+                                {client.cuotasPagadas}/{client.cuotasTotales}
+                              </strong>
+                            </span>
+                            <span className="whitespace-nowrap">
+                              Vlr{" "}
+                              <strong className="text-foreground tabular-nums">
+                                ${client.valorCuota.toLocaleString()}
+                              </strong>
+                            </span>
+                            <span className="whitespace-nowrap">
+                              Saldo{" "}
+                              <strong className="text-warning tabular-nums">
+                                ${Math.round(client.saldo).toLocaleString()}
+                              </strong>
+                            </span>
+                            {client.multaPendiente && (
+                              <span className="whitespace-nowrap">
+                                Multa{" "}
+                                <strong className="text-red-600 tabular-nums">
+                                  ${client.multaPendiente.valor.toLocaleString()}
+                                </strong>
+                              </span>
+                            )}
+                            {client.ultimoPagoFecha && (
+                              <span className="whitespace-nowrap">
+                                Últ. pago{" "}
+                                <strong className="text-foreground tabular-nums">
+                                  {(() => {
+                                    const [y, m, d] = client.ultimoPagoFecha.split("-")
+                                    return `${d}/${m}/${y.slice(2)}`
+                                  })()}
+                                </strong>
+                              </span>
+                            )}
+                          </div>
 
-                        {/* Linea 4: las acciones, todas a 40px. En la tabla el
-                            menu media 20px en movil y habia que apuntarle. */}
-                        <div className="flex items-center justify-end gap-1.5 mt-2">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button size="icon" variant="outline" className="h-10 w-10 bg-transparent" aria-label="Más opciones">
-                                <MoreVertical className="h-5 w-5" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-48">
-                              <DropdownMenuItem
-                                className="text-xs md:text-base cursor-pointer"
-                                onClick={() => { setPaymentHistoryClient(client); setPaymentHistoryOpen(true) }}
-                              >
-                                <History className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                Historial de pagos
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="text-xs md:text-base cursor-pointer"
-                                onClick={() => { setLoanHistoryClient(client); setLoanHistoryOpen(true) }}
-                              >
-                                <FileText className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                Historial de prestamos
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="text-xs md:text-base cursor-pointer"
-                                onClick={() => { setSelectedClientInfo(client); setClientInfoDialogOpen(true) }}
-                              >
-                                <User className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                Info del cliente
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="text-xs md:text-base cursor-pointer"
-                                onClick={() => handleGenerarRecibo(client)}
-                              >
-                                <Receipt className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                Generar recibo
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                          {/* Linea 4: las acciones, todas a 40px. En la tabla el
+                              menu media 20px en movil y habia que apuntarle. */}
+                          <div className="flex items-center justify-start gap-1.5 mt-2">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button size="icon" variant="outline" className="h-10 w-10 bg-transparent" aria-label="Más opciones">
+                                  <MoreVertical className="h-5 w-5" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-48">
+                                <DropdownMenuItem
+                                  className="text-xs md:text-base cursor-pointer"
+                                  onClick={() => { setPaymentHistoryClient(client); setPaymentHistoryOpen(true) }}
+                                >
+                                  <History className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                  Historial de pagos
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-xs md:text-base cursor-pointer"
+                                  onClick={() => { setLoanHistoryClient(client); setLoanHistoryOpen(true) }}
+                                >
+                                  <FileText className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                  Historial de prestamos
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-xs md:text-base cursor-pointer"
+                                  onClick={() => { setSelectedClientInfo(client); setClientInfoDialogOpen(true) }}
+                                >
+                                  <User className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                  Info del cliente
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-xs md:text-base cursor-pointer"
+                                  onClick={() => handleGenerarRecibo(client)}
+                                >
+                                  <Receipt className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                  Generar recibo
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
 
-                          <Button
-                            size="icon"
-                            className="bg-destructive hover:bg-destructive/80 text-destructive-foreground h-10 w-10 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                            onClick={() => {
-                              if (gpsStatus !== "granted") {
-                                handleLocationRequired()
-                                return
+                            <Button
+                              size="icon"
+                              className="bg-destructive hover:bg-destructive/80 text-destructive-foreground h-10 w-10 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                              onClick={() => {
+                                if (gpsStatus !== "granted") {
+                                  handleLocationRequired()
+                                  return
+                                }
+                                setAgregarCuotaSiDebeNoPago(true)
+                                setNoPaymentClient(client)
+                              }}
+                              disabled={canManage === false && gpsStatus === "granted"}
+                              title={
+                                gpsStatus !== "granted"
+                                  ? "Debes habilitar la ubicacion para registrar no pagos"
+                                  : !canManage
+                                  ? "No es el dia de pago de este cliente"
+                                  : "Registrar No Pago"
                               }
-                              setAgregarCuotaSiDebeNoPago(true)
-                              setNoPaymentClient(client)
-                            }}
-                            disabled={canManage === false && gpsStatus === "granted"}
-                            title={
-                              gpsStatus !== "granted"
-                                ? "Debes habilitar la ubicacion para registrar no pagos"
-                                : !canManage
-                                ? "No es el dia de pago de este cliente"
-                                : "Registrar No Pago"
-                            }
-                            aria-label="Registrar No Pago"
-                          >
-                            <X className="h-5 w-5" />
-                          </Button>
+                              aria-label="Registrar No Pago"
+                            >
+                              <X className="h-5 w-5" />
+                            </Button>
 
-                          <Button
-                            size="icon"
-                            className="bg-success hover:bg-success/80 text-card h-10 w-10 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                            onClick={() =>
-                              gpsStatus !== "granted"
-                                ? handleLocationRequired()
-                                : handleSelectClient(client)
-                            }
-                            disabled={canManage === false && gpsStatus === "granted"}
-                            title={
-                              gpsStatus !== "granted"
-                                ? "Debes habilitar la ubicacion para registrar pagos"
-                                : !canManage
-                                ? "No es el dia de pago de este cliente"
-                                : client.nextPaymentEsFuturo
-                                ? `Adelantar la cuota del ${client.nextPaymentFecha.split("-").reverse().slice(0, 2).join("/")}`
-                                : "Registrar Pago"
-                            }
-                            aria-label="Registrar Pago"
-                          >
-                            <DollarSign className="h-5 w-5" />
-                          </Button>
+                            <Button
+                              size="icon"
+                              className="bg-success hover:bg-success/80 text-card h-10 w-10 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                              onClick={() =>
+                                gpsStatus !== "granted"
+                                  ? handleLocationRequired()
+                                  : handleSelectClient(client)
+                              }
+                              disabled={canManage === false && gpsStatus === "granted"}
+                              title={
+                                gpsStatus !== "granted"
+                                  ? "Debes habilitar la ubicacion para registrar pagos"
+                                  : !canManage
+                                  ? "No es el dia de pago de este cliente"
+                                  : client.nextPaymentEsFuturo
+                                  ? `Adelantar la cuota del ${client.nextPaymentFecha.split("-").reverse().slice(0, 2).join("/")}`
+                                  : "Registrar Pago"
+                              }
+                              aria-label="Registrar Pago"
+                            >
+                              <DollarSign className="h-5 w-5" />
+                            </Button>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     )
