@@ -37,7 +37,22 @@ function SelectTrigger({
       data-slot="select-trigger"
       data-size={size}
       className={cn(
-        "border-input data-[placeholder]:text-muted-foreground [&_svg:not([class*='text-'])]:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:bg-input/30 dark:hover:bg-input/50 flex w-fit items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-2 text-sm whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 data-[size=default]:h-9 data-[size=sm]:h-8 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        // `w-full min-w-0` en vez del `w-fit` que trae shadcn de fabrica.
+        //
+        // Con `w-fit` el campo se ancha segun SU CONTENIDO, no segun la
+        // columna que lo contiene. Y como ademas lleva `whitespace-nowrap`, un
+        // texto largo —"Seleccione frecuencia"— lo hacia crecer por fuera de su
+        // celda y montarse encima del campo de al lado. Se veia en Nueva Venta
+        // entre Frecuencia de Pago y Valor Cuota.
+        //
+        // No es un caso aislado: los 49 Select de la app usan el trigger sin
+        // pasar ancho, asi que todos podian desbordarse; solo se notaba donde
+        // el texto era largo y el espacio corto.
+        //
+        // Los que SI necesitan un ancho propio ya lo pasan (`w-40`,
+        // `w-full sm:w-52`, `md:w-56`) y siguen mandando: `cn` usa
+        // tailwind-merge, que ante dos clases de ancho se queda con la ultima.
+        "border-input data-[placeholder]:text-muted-foreground [&_svg:not([class*='text-'])]:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:bg-input/30 dark:hover:bg-input/50 flex w-full min-w-0 items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-2 text-sm whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 data-[size=default]:h-9 data-[size=sm]:h-8 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}

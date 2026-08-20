@@ -222,6 +222,17 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   // esto marcado arranca HOY, el mismo dia de la venta.
   const [iniciaPagosHoy, setIniciaPagosHoy] = useState(false)
 
+  // ── Condiciones especiales ───────────────────────────────────────────────
+  // "Inicia pagos hoy" y "Venta homologada" son la excepción, no lo normal:
+  // la mayoría de las ventas arrancan mañana y no vienen de otro sistema. Los
+  // dos recuadros estaban siempre a la vista, en medio del formulario, y hay
+  // que leerlos en cada venta para confirmar que NO van marcados.
+  //
+  // Al apagar esto se limpian LAS DOS opciones (ver el manejador del check).
+  // Esconderlas dejándolas activas sería lo peor de los dos mundos: la venta
+  // saldría con condiciones que ya no se ven en pantalla.
+  const [condicionesEspeciales, setCondicionesEspeciales] = useState(false)
+
   // ── Venta homologada ─────────────────────────────────────────────────────
   // Para cargar créditos que ya venían corriendo en otro sistema: se elige la
   // fecha real en que arrancó y se marca, día por día, qué pagó y qué no.
@@ -812,6 +823,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     setShowAmortization(false)
     setPagoAdelantado(false)
     setIniciaPagosHoy(false)
+    setCondicionesEspeciales(false)
     setVentaHomologada(false)
     setFechaInicioHomologada("")
     setMarcasHomologacion({})
@@ -1941,6 +1953,46 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
             </div>
           )}
 
+          {/* La llave de las dos excepciones. Apagada —que es lo normal— el
+              formulario no muestra ninguna de las dos. */}
+          <label
+            htmlFor="condicionesEspeciales"
+            className={`flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all border ${
+              condicionesEspeciales
+                ? "bg-brand/10 border-brand/40 text-foreground"
+                : "bg-muted/50 border-border hover:bg-muted"
+            }`}
+          >
+            <Checkbox
+              id="condicionesEspeciales"
+              checked={condicionesEspeciales}
+              onCheckedChange={(checked) => {
+                const v = checked as boolean
+                setCondicionesEspeciales(v)
+                // Al apagar, se limpia TODO lo que había dentro. Dejarlo
+                // activo pero escondido haría que la venta saliera con
+                // condiciones que ya no se ven en pantalla.
+                if (!v) {
+                  setIniciaPagosHoy(false)
+                  setVentaHomologada(false)
+                  setFechaInicioHomologada("")
+                  setMarcasHomologacion({})
+                  setCuotasOmitidas(new Set())
+                  setPagosManuales([])
+                }
+              }}
+              className="h-4 w-4 md:h-5 md:w-5"
+            />
+            <span className="text-[11px] md:text-sm font-medium">
+              Condiciones especiales
+              <span className="ml-1 font-normal opacity-80">
+                (arranca hoy, o ya venía corriendo)
+              </span>
+            </span>
+          </label>
+
+          {condicionesEspeciales && (
+          <>
           {/* Cuando arranca el cobro */}
           {!ventaHomologada && (
             <label
@@ -1998,6 +2050,8 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
               </span>
             </span>
           </label>
+          </>
+          )}
 
           {ventaHomologada && (
             <div className="rounded-lg border border-violet-300 bg-violet-50/60 p-3 space-y-3">
@@ -2351,8 +2405,16 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
             </div>
           )}
 
-          {/* Valor - Tasa - Saldo (calculado automáticamente) */}
-          <div className={`grid gap-2 md:gap-4 ${prestamoEmpleado ? "grid-cols-2" : "grid-cols-3"}`}>
+          {/* Valor - Tasa - Saldo (calculado automáticamente)
+              Tres columnas en un teléfono dan ~105px cada una. "Tasa de
+              Interés (%)" y "Saldo x pagar" no caben en un renglón, se partían
+              en dos y empujaban su campo por debajo del de Valor: la fila
+              quedaba escalonada. En móvil van con el nombre corto y el largo
+              vuelve en pantalla grande, donde sí cabe.
+
+              `items-end` es el seguro: si alguna etiqueta igual se parte, los
+              campos siguen alineados por abajo en vez de escalonarse. */}
+          <div className={`grid gap-2 md:gap-4 items-end ${prestamoEmpleado ? "grid-cols-2" : "grid-cols-3"}`}>
             <div className="space-y-1 md:space-y-2">
               <Label htmlFor="amount" className="text-[11px] md:text-sm">
                 Valor <span className="text-red-500">*</span>
@@ -2372,8 +2434,10 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
             </div>
             {!prestamoEmpleado && (
               <div className="space-y-1 md:space-y-2">
-                <Label htmlFor="interestRate" className="text-[11px] md:text-sm">
-                  Tasa de Interés (%) <span className="text-red-500">*</span>
+                <Label htmlFor="interestRate" className="text-[11px] md:text-sm whitespace-nowrap">
+                  <span className="md:hidden">Tasa (%)</span>
+                  <span className="hidden md:inline">Tasa de Interés (%)</span>
+                  <span className="text-red-500"> *</span>
                 </Label>
                 <Input
                   id="interestRate"
@@ -2390,8 +2454,9 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
               </div>
             )}
             <div className="space-y-1 md:space-y-2">
-              <Label htmlFor="saldo" className="text-[11px] md:text-sm">
-                Saldo x pagar
+              <Label htmlFor="saldo" className="text-[11px] md:text-sm whitespace-nowrap">
+                <span className="md:hidden">Saldo</span>
+                <span className="hidden md:inline">Saldo x pagar</span>
                 <span className="ml-1 text-[9px] text-muted-foreground font-normal">auto</span>
               </Label>
               <Input
@@ -2480,7 +2545,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                   id="frequency"
                   className={`h-8 md:h-10 text-[11px] md:text-sm ${errCls("frequency")}`}
                 >
-                  <SelectValue placeholder="Seleccione frecuencia" />
+                  <SelectValue placeholder="Seleccione" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="daily" className="text-[11px] md:text-sm">
