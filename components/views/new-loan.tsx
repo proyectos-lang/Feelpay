@@ -147,6 +147,15 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   // el filtro para garantizar que aparezca sin importar tiene_prestamo_activo.
   const [soloSinPrestamo, setSoloSinPrestamo] = useState(!preSelectedClientId)
 
+  // Contador que obliga a releer la lista de clientes.
+  //
+  // La lista se traia una sola vez por combinacion de busqueda/ruta/filtro, y
+  // registrar una venta no cambia ninguna de esas: el cliente al que se le
+  // acababa de vender seguia apareciendo como disponible, y con el filtro
+  // "solo sin prestamo" encima parecia que la venta no se habia guardado.
+  // Al terminar una venta se incrementa esto y la lista se vuelve a pedir.
+  const [recargaClientes, setRecargaClientes] = useState(0)
+
   // Fetch clients by apodo filtered by ruta and optionally by tiene_prestamo_activo.
   // Usa Supabase directamente (no /api/clients). RLS eliminado: el filtrado
   // por ruta es 100% a nivel aplicacion con `.eq('ruta', currentRutaId)`.
@@ -185,7 +194,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       }
     }, 300)
     return () => clearTimeout(timeout)
-  }, [clientSearch, rutaId, isNewClient, soloSinPrestamo])
+  }, [clientSearch, rutaId, isNewClient, soloSinPrestamo, recargaClientes])
 
   // Cuando el componente se abre desde el flujo de renovación, pre-carga el
   // cliente para que el Select muestre su nombre sin que el usuario tenga que buscarlo.
@@ -232,6 +241,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
   // Esconderlas dejándolas activas sería lo peor de los dos mundos: la venta
   // saldría con condiciones que ya no se ven en pantalla.
   const [condicionesEspeciales, setCondicionesEspeciales] = useState(false)
+
 
   // ── Venta homologada ─────────────────────────────────────────────────────
   // Para cargar créditos que ya venían corriendo en otro sistema: se elige la
@@ -837,6 +847,9 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     setClientSearch("")
     limpiarDatosCliente()
     setFormErrors(new Set())
+    // `tiene_prestamo_activo` ya cambio en la base: hay que volver a pedir la
+    // lista para que el cliente recien vendido salga de las opciones.
+    setRecargaClientes((n) => n + 1)
   }
 
   // Candado de re-entrada. `disabled={isCreating}` en el boton no alcanza:
@@ -1643,6 +1656,51 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 md:space-y-4 p-2 md:p-6">
+          {/* Va ARRIBA DE TODO, antes de los datos del cliente: es la
+              primera decision de la venta —¿esta es una venta normal?— y
+              gobierna lo que se pide mas abajo. Enterrada al final del
+              formulario, habia que llegar hasta ahi para saber que existia.
+
+              Los dos recuadros que habilita siguen en su lugar, junto al resto
+              de las condiciones del credito. */}
+          {/* La llave de las dos excepciones. Apagada —que es lo normal— el
+              formulario no muestra ninguna de las dos. */}
+          <label
+            htmlFor="condicionesEspeciales"
+            className={`flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all border ${
+              condicionesEspeciales
+                ? "bg-brand/10 border-brand/40 text-foreground"
+                : "bg-muted/50 border-border hover:bg-muted"
+            }`}
+          >
+            <Checkbox
+              id="condicionesEspeciales"
+              checked={condicionesEspeciales}
+              onCheckedChange={(checked) => {
+                const v = checked as boolean
+                setCondicionesEspeciales(v)
+                // Al apagar, se limpia TODO lo que había dentro. Dejarlo
+                // activo pero escondido haría que la venta saliera con
+                // condiciones que ya no se ven en pantalla.
+                if (!v) {
+                  setIniciaPagosHoy(false)
+                  setVentaHomologada(false)
+                  setFechaInicioHomologada("")
+                  setMarcasHomologacion({})
+                  setCuotasOmitidas(new Set())
+                  setPagosManuales([])
+                }
+              }}
+              className="h-4 w-4 md:h-5 md:w-5"
+            />
+            <span className="text-[11px] md:text-sm font-medium">
+              Condiciones especiales
+              <span className="ml-1 font-normal opacity-80">
+                (arranca hoy, o ya venía corriendo)
+              </span>
+            </span>
+          </label>
+
           {isNewClient ? (
             // New client form
             <>
@@ -1952,44 +2010,6 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
               </Popover>
             </div>
           )}
-
-          {/* La llave de las dos excepciones. Apagada —que es lo normal— el
-              formulario no muestra ninguna de las dos. */}
-          <label
-            htmlFor="condicionesEspeciales"
-            className={`flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all border ${
-              condicionesEspeciales
-                ? "bg-brand/10 border-brand/40 text-foreground"
-                : "bg-muted/50 border-border hover:bg-muted"
-            }`}
-          >
-            <Checkbox
-              id="condicionesEspeciales"
-              checked={condicionesEspeciales}
-              onCheckedChange={(checked) => {
-                const v = checked as boolean
-                setCondicionesEspeciales(v)
-                // Al apagar, se limpia TODO lo que había dentro. Dejarlo
-                // activo pero escondido haría que la venta saliera con
-                // condiciones que ya no se ven en pantalla.
-                if (!v) {
-                  setIniciaPagosHoy(false)
-                  setVentaHomologada(false)
-                  setFechaInicioHomologada("")
-                  setMarcasHomologacion({})
-                  setCuotasOmitidas(new Set())
-                  setPagosManuales([])
-                }
-              }}
-              className="h-4 w-4 md:h-5 md:w-5"
-            />
-            <span className="text-[11px] md:text-sm font-medium">
-              Condiciones especiales
-              <span className="ml-1 font-normal opacity-80">
-                (arranca hoy, o ya venía corriendo)
-              </span>
-            </span>
-          </label>
 
           {condicionesEspeciales && (
           <>

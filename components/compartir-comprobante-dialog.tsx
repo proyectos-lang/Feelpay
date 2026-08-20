@@ -25,9 +25,10 @@ import { createClient } from "@/lib/supabase/client"
 
 interface Conversacion {
   conversation_id: string
+  /** En un grupo, su nombre. En un chat de a dos, el nombre de LA OTRA
+   *  persona: la RPC `get_my_conversations` ya lo resuelve asi. */
   name: string | null
   is_group: boolean
-  other_user_nombre: string | null
 }
 
 export interface CompartirComprobanteDialogProps {
@@ -186,8 +187,11 @@ export function CompartirComprobanteDialog({
     }
   }
 
+  // Antes leia `other_user_nombre`, un campo que `get_my_conversations` NO
+  // devuelve: llegaba `undefined` y la lista mostraba "Conversación" en todas
+  // las filas, o sea que no se sabia a quien se le estaba mandando el cierre.
   const nombreDe = (c: Conversacion) =>
-    c.is_group ? (c.name ?? "Grupo") : (c.other_user_nombre ?? "Conversación")
+    c.name ?? (c.is_group ? "Grupo" : "Conversación")
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
