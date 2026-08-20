@@ -961,6 +961,104 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
 
           {/* Content area */}
           <div className="flex-1 px-3 py-2 space-y-2 overflow-auto">
+            {/* La cartera va de PRIMERO. Es la foto del negocio —cuantos
+                clientes hay y como estan— y responde la pregunta con la que se
+                abre el informe. Lo demas (pagos del dia, frecuencias, ventas)
+                es el detalle de la jornada, y estaba tapando el titular.
+
+                Estaba de ultima: habia que recorrer todo el informe para
+                llegar a ella. */}
+            <Card className="bg-card shadow-sm border-0">
+              <CardContent className="p-3">
+                <div className="flex items-center gap-2 mb-2 bg-brand rounded-lg px-2 py-1">
+                  <PieChart className="h-3 w-3 text-brand-foreground" />
+                  <span className="text-xs font-semibold text-brand-foreground">Estado de la Cartera</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  {/* Pie chart */}
+                  <div className="relative w-24 h-24">
+                    <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
+                      {/* Al Dia */}
+                      <circle
+                        cx="50" cy="50" r="40"
+                        fill="none"
+                        stroke="var(--status-al-dia)"
+                        strokeWidth="20"
+                        strokeDasharray={`${alDiaPercent * 2.51} 251`}
+                        strokeDashoffset="0"
+                      />
+                      {/* Mora */}
+                      <circle
+                        cx="50" cy="50" r="40"
+                        fill="none"
+                        stroke="var(--status-mora)"
+                        strokeWidth="20"
+                        strokeDasharray={`${moraPercent * 2.51} 251`}
+                        strokeDashoffset={`${-alDiaPercent * 2.51}`}
+                      />
+                      {/* Vencidos */}
+                      <circle
+                        cx="50" cy="50" r="40"
+                        fill="none"
+                        stroke="var(--status-vencido)"
+                        strokeWidth="20"
+                        strokeDasharray={`${(100 - alDiaPercent - moraPercent) * 2.51} 251`}
+                        strokeDashoffset={`${-(alDiaPercent + moraPercent) * 2.51}`}
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="text-center">
+                        <span className="text-[10px] text-status-al-dia font-bold">Al Día</span>
+                        <p className="text-base font-bold text-status-al-dia">{reportData.portfolioStatus.alDia}</p>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Legend */}
+                  <div className="space-y-2">
+                    {([
+                      { key: "alDia",    label: "Al Día",   punto: "bg-status-al-dia",  texto: "text-status-al-dia",
+                        n: reportData.portfolioStatus.alDia,    ids: backIds.cartera.alDia },
+                      { key: "mora",     label: "Mora",     punto: "bg-status-mora",    texto: "text-status-mora",
+                        n: reportData.portfolioStatus.mora,     ids: backIds.cartera.mora },
+                      { key: "vencidos", label: "Vencidos", punto: "bg-status-vencido", texto: "text-status-vencido",
+                        n: reportData.portfolioStatus.vencidos, ids: backIds.cartera.vencidos },
+                    ] as const).map(({ key, label, punto, texto, n, ids }) => (
+                      <div key={key} className="flex items-center gap-2">
+                        <Ojito
+                          disabled={n === 0}
+                          onClick={() =>
+                            abrirDetalle(`Cartera — ${label.toLowerCase()}`, [...ids], {
+                              subtitulo: `${n} de ${totalPortfolio} ${totalPortfolio === 1 ? "cliente" : "clientes"}`,
+                            })
+                          }
+                        />
+                        <div className={`h-3 w-3 rounded-full ${punto}`} />
+                        <span className="text-xs text-muted-foreground">{label}</span>
+                        <span className={`text-xs font-bold ${texto}`}>{n}</span>
+                      </div>
+                    ))}
+                    {/* Total de la cartera: sin denominador, "12 en mora" no
+                        dice si la ruta está mal o si tiene 300 clientes. */}
+                    <div className="flex items-center gap-2 border-t pt-1.5">
+                      <Ojito
+                        disabled={totalPortfolio === 0}
+                        onClick={() =>
+                          abrirDetalle("Cartera completa", [
+                            ...backIds.cartera.alDia,
+                            ...backIds.cartera.mora,
+                            ...backIds.cartera.vencidos,
+                          ], { subtitulo: `${totalPortfolio} ${totalPortfolio === 1 ? "cliente" : "clientes"} con crédito activo` })
+                        }
+                      />
+                      <div className="h-3 w-3" />
+                      <span className="text-xs font-medium text-muted-foreground">Total</span>
+                      <span className="text-xs font-bold text-foreground">{totalPortfolio}</span>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             {/* Pagos Realizados - Gauge Card */}
             <Card className="bg-card shadow-sm border-0">
               <CardContent className="p-3">
@@ -1176,97 +1274,6 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
               </CardContent>
             </Card>
 
-            {/* Estado de la Cartera */}
-            <Card className="bg-card shadow-sm border-0">
-              <CardContent className="p-3">
-                <div className="flex items-center gap-2 mb-2 bg-brand rounded-lg px-2 py-1">
-                  <PieChart className="h-3 w-3 text-brand-foreground" />
-                  <span className="text-xs font-semibold text-brand-foreground">Estado de la Cartera</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  {/* Pie chart */}
-                  <div className="relative w-24 h-24">
-                    <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
-                      {/* Al Dia */}
-                      <circle
-                        cx="50" cy="50" r="40"
-                        fill="none"
-                        stroke="var(--status-al-dia)"
-                        strokeWidth="20"
-                        strokeDasharray={`${alDiaPercent * 2.51} 251`}
-                        strokeDashoffset="0"
-                      />
-                      {/* Mora */}
-                      <circle
-                        cx="50" cy="50" r="40"
-                        fill="none"
-                        stroke="var(--status-mora)"
-                        strokeWidth="20"
-                        strokeDasharray={`${moraPercent * 2.51} 251`}
-                        strokeDashoffset={`${-alDiaPercent * 2.51}`}
-                      />
-                      {/* Vencidos */}
-                      <circle
-                        cx="50" cy="50" r="40"
-                        fill="none"
-                        stroke="var(--status-vencido)"
-                        strokeWidth="20"
-                        strokeDasharray={`${(100 - alDiaPercent - moraPercent) * 2.51} 251`}
-                        strokeDashoffset={`${-(alDiaPercent + moraPercent) * 2.51}`}
-                      />
-                    </svg>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="text-center">
-                        <span className="text-[10px] text-status-al-dia font-bold">Al Día</span>
-                        <p className="text-base font-bold text-status-al-dia">{reportData.portfolioStatus.alDia}</p>
-                      </div>
-                    </div>
-                  </div>
-                  {/* Legend */}
-                  <div className="space-y-2">
-                    {([
-                      { key: "alDia",    label: "Al Día",   punto: "bg-status-al-dia",  texto: "text-status-al-dia",
-                        n: reportData.portfolioStatus.alDia,    ids: backIds.cartera.alDia },
-                      { key: "mora",     label: "Mora",     punto: "bg-status-mora",    texto: "text-status-mora",
-                        n: reportData.portfolioStatus.mora,     ids: backIds.cartera.mora },
-                      { key: "vencidos", label: "Vencidos", punto: "bg-status-vencido", texto: "text-status-vencido",
-                        n: reportData.portfolioStatus.vencidos, ids: backIds.cartera.vencidos },
-                    ] as const).map(({ key, label, punto, texto, n, ids }) => (
-                      <div key={key} className="flex items-center gap-2">
-                        <Ojito
-                          disabled={n === 0}
-                          onClick={() =>
-                            abrirDetalle(`Cartera — ${label.toLowerCase()}`, [...ids], {
-                              subtitulo: `${n} de ${totalPortfolio} ${totalPortfolio === 1 ? "cliente" : "clientes"}`,
-                            })
-                          }
-                        />
-                        <div className={`h-3 w-3 rounded-full ${punto}`} />
-                        <span className="text-xs text-muted-foreground">{label}</span>
-                        <span className={`text-xs font-bold ${texto}`}>{n}</span>
-                      </div>
-                    ))}
-                    {/* Total de la cartera: sin denominador, "12 en mora" no
-                        dice si la ruta está mal o si tiene 300 clientes. */}
-                    <div className="flex items-center gap-2 border-t pt-1.5">
-                      <Ojito
-                        disabled={totalPortfolio === 0}
-                        onClick={() =>
-                          abrirDetalle("Cartera completa", [
-                            ...backIds.cartera.alDia,
-                            ...backIds.cartera.mora,
-                            ...backIds.cartera.vencidos,
-                          ], { subtitulo: `${totalPortfolio} ${totalPortfolio === 1 ? "cliente" : "clientes"} con crédito activo` })
-                        }
-                      />
-                      <div className="h-3 w-3" />
-                      <span className="text-xs font-medium text-muted-foreground">Total</span>
-                      <span className="text-xs font-bold text-foreground">{totalPortfolio}</span>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
           </div>
         </div>
       </div>
