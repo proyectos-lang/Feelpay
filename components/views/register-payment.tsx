@@ -2926,12 +2926,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                           contenido se ajuste a esos anchos sin desbordar. */}
                       {/* Orden ensanchado a 48 px para que el título "Orden"
                           no se cruce visualmente con el de "Acción". */}
-                      <TableHead className="w-[48px] md:w-[64px] text-center text-[12px] md:text-base whitespace-nowrap py-1 md:py-3 px-0.5 md:px-1">Orden</TableHead>
+                      <TableHead className="w-[40px] md:w-[64px] text-center text-[12px] md:text-base whitespace-nowrap py-1 md:py-3 px-0.5 md:px-1">Orden</TableHead>
                       {/* Acción en desktop necesita caber 3 botones de
                           36 px (h-9 w-9) + gaps en flex-row → ~130 px.
                           Antes era 100 px y los botones se montaban sobre
                           la columna Cliente. */}
-                      <TableHead className="w-[52px] md:w-[140px] text-[12px] md:text-base whitespace-nowrap py-1 md:py-3 px-0.5 md:px-2">Accion</TableHead>
+                      <TableHead className="w-[48px] md:w-[140px] text-[12px] md:text-base whitespace-nowrap py-1 md:py-3 px-0.5 md:px-2">Accion</TableHead>
                       <TableHead className="text-[12px] md:text-base whitespace-nowrap py-1 md:py-3 px-0.5 md:px-1">Cliente</TableHead>
                       <TableHead className="w-[96px] md:w-[180px] text-right text-[12px] md:text-base whitespace-nowrap py-1 md:py-3 px-1 md:px-2">Monto / Detalle</TableHead>
                     </TableRow>
@@ -3264,8 +3264,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                           m.gestionTipo === "pago" ? "border-l-green-500" : "border-l-red-500"
                         } ${index % 2 === 0 ? "bg-card" : "bg-muted"}`}
                       >
-                        {/* Línea 1: nombre + apodo · estado con el valor · hora */}
-                        <div className="flex items-start gap-1.5">
+                        {/* Línea 1: SOLO el nombre, con todo el ancho.
+                            Compartía renglón con la insignia del monto y con la
+                            hora, que juntas se llevan unos 180px de los 336 que
+                            tiene la tarjeta en un teléfono: al nombre le
+                            quedaban 150 y se partía en tres o cuatro renglones
+                            contra el monto. Solo, le sobra para dos. */}
+                        <div className="min-w-0">
                           {/* El nombre ENVUELVE, no se corta. Con `truncate` un
                               nombre largo terminaba en "..." y el cobrador no
                               podia distinguir dos clientes del mismo apellido.
@@ -3275,16 +3280,18 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               `min-w-0` es CRITICO: sin eso el span impone su
                               ancho intrinseco al flex item, desborda la fila y
                               se solapa con el badge de estado. */}
-                          <span className="flex-1 min-w-0 flex flex-col gap-0.5">
-                            <span className="font-semibold text-[13px] md:text-sm leading-tight break-words [overflow-wrap:anywhere]">
-                              {m.nombre}
-                            </span>
-                            {m.apodo && m.nombreCompleto && (
-                              <span className="text-[11px] md:text-xs text-muted-foreground leading-tight break-words [overflow-wrap:anywhere]">
-                                {m.nombreCompleto}
-                              </span>
-                            )}
+                          <span className="block font-semibold text-[13px] md:text-sm leading-tight break-words [overflow-wrap:anywhere]">
+                            {m.nombre}
                           </span>
+                          {m.apodo && m.nombreCompleto && (
+                            <span className="block text-[11px] md:text-xs text-muted-foreground leading-tight break-words [overflow-wrap:anywhere]">
+                              {m.nombreCompleto}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Línea 2: qué pasó, por cuánto y a qué hora. */}
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                           {/* El valor abonado va DENTRO de la insignia, pegado
                               a "Pago": es el par que el cobrador busca de un
                               vistazo — qué pasó y por cuánto. Abajo, entre
@@ -3302,7 +3309,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                           )}
                           <span className="text-[11px] text-muted-foreground shrink-0">{m.gestionHora}</span>
                         </div>
-                        {/* Línea 2: los datos a la izquierda, las acciones a la
+                        {/* Línea 3: los datos a la izquierda, las acciones a la
                             derecha. Los tres botones estaban arriba, apretando
                             el nombre contra la insignia y midiendo 24px — por
                             debajo del mínimo de un dedo (44px). Acá abajo hay
