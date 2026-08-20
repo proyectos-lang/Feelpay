@@ -586,7 +586,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const [loanHistoryOpen, setLoanHistoryOpen] = useState(false)
   const [loanHistoryClient, setLoanHistoryClient] = useState<DisplayClient | null>(null)
   const [loanHistoryRows, setLoanHistoryRows] = useState<{
-    id: string; valor: number; numero_cuotas: number; frecuencia_pago: string; estado: string; fecha_creacion: string
+    id: string; valor: number; numero_cuotas: number; frecuencia_pago: string; estado: string
+    fecha_creacion: string; tasa_interes: number | null
   }[]>([])
   const [loanHistoryLoading, setLoanHistoryLoading] = useState(false)
 
@@ -1929,7 +1930,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         const supabase = await getSupabaseSafe()
         const { data, error } = await supabase
           .from("loans")
-          .select("id, valor, numero_cuotas, frecuencia_pago, estado, fecha_creacion, created_at")
+          .select("id, valor, numero_cuotas, frecuencia_pago, estado, fecha_creacion, created_at, tasa_interes")
           .eq("client_id", loanHistoryClient.clientId)
           .order("created_at", { ascending: false })
         if (cancelled) return
@@ -1942,6 +1943,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             frecuencia_pago: r.frecuencia_pago,
             estado: r.estado,
             fecha_creacion: (r.fecha_creacion || r.created_at || "").split("T")[0],
+            tasa_interes: r.tasa_interes ?? null,
           }))
         )
       } catch (e) {
@@ -3099,22 +3101,20 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 derecha. Con min-w-0 + table-fixed el span
                                 respeta el ancho de la columna y envuelve. */}
                             <div className="flex flex-col gap-0.5 min-w-0">
-                              {/* Apodo arriba y nombre real debajo, en dos
-                                  lineas. El apodo va primero porque es como el
-                                  cobrador ubica la casa; el nombre de cedula es
-                                  el que necesita para el recibo y para no
-                                  confundir dos clientes del mismo apellido.
+                              {/* Nombre arriba, apodo debajo en su propio
+                                  renglon.
 
-                                  Los dos ENVUELVEN, no se cortan: con
-                                  `truncate` un nombre largo terminaba en "..."
-                                  y quedaban indistinguibles. `min-w-0` es
-                                  CRITICO — sin eso el span impone su ancho
+                                  Los dos ENVUELVEN a dos o mas lineas, no se
+                                  cortan: con `truncate` un nombre largo
+                                  terminaba en "..." y dos clientes del mismo
+                                  apellido quedaban indistinguibles. `min-w-0`
+                                  es CRITICO — sin eso el span impone su ancho
                                   intrinseco al flex item, desborda la celda y
                                   se solapa con la columna de la derecha. */}
-                              <span className="font-semibold text-[12px] md:text-base leading-tight break-words [overflow-wrap:anywhere] min-w-0">{client.nombre}</span>
-                              {client.apodo && client.nombreCompleto && (
+                              <span className="font-semibold text-[12px] md:text-base leading-tight break-words [overflow-wrap:anywhere] min-w-0">{client.nombreCompleto}</span>
+                              {client.apodo && (
                                 <span className="text-[11px] md:text-sm text-muted-foreground leading-tight break-words [overflow-wrap:anywhere] min-w-0">
-                                  {client.nombreCompleto}
+                                  {client.apodo}
                                 </span>
                               )}
                               <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
@@ -3162,9 +3162,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 <span className="text-[12px] md:text-base font-semibold text-right">
                                   ${client.valorVenta.toLocaleString()}
                                 </span>
-                                <span className="text-[10px] md:text-xs text-muted-foreground">
-                                  {client.tasaInteres}%
-                                </span>
+                                {/* El % de interes ya no va en la lista de
+                                    cobro: al cobrador no le cambia nada —cobra
+                                    el mismo valor de cualquier forma— y en una
+                                    fila apretada roba espacio al monto. Sigue
+                                    estando en Historial de prestamos, que es
+                                    donde se consulta. */}
                               </div>
                               {/* Segunda fila: Cuota · Valor Cuota · Saldo
                                   En movil cada dato queda en su propia
@@ -3281,11 +3284,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               ancho intrinseco al flex item, desborda la fila y
                               se solapa con el badge de estado. */}
                           <span className="block font-semibold text-[13px] md:text-sm leading-tight break-words [overflow-wrap:anywhere]">
-                            {m.nombre}
+                            {m.nombreCompleto}
                           </span>
-                          {m.apodo && m.nombreCompleto && (
+                          {m.apodo && (
                             <span className="block text-[11px] md:text-xs text-muted-foreground leading-tight break-words [overflow-wrap:anywhere]">
-                              {m.nombreCompleto}
+                              {m.apodo}
                             </span>
                           )}
                         </div>
@@ -4182,6 +4185,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                   <TableRow>
                     <TableHead className="text-[10px] md:text-xs px-1 md:px-3">Fecha</TableHead>
                     <TableHead className="text-[10px] md:text-xs px-1 md:px-3 text-right">Valor</TableHead>
+                    {/* El % de interes vive ACA y ya no en la lista de cobro:
+                        es un dato que se consulta, no que se recorre. */}
+                    <TableHead className="text-[10px] md:text-xs px-1 md:px-3 text-right">Interés</TableHead>
                     <TableHead className="text-[10px] md:text-xs px-1 md:px-3 text-center">Cuotas</TableHead>
                     <TableHead className="text-[10px] md:text-xs px-1 md:px-3 text-center">Frec.</TableHead>
                     <TableHead className="text-[10px] md:text-xs px-1 md:px-3 text-center">Estado</TableHead>
@@ -4201,6 +4207,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                         <TableCell className="text-[10px] md:text-xs px-1 md:px-3">{fechaFmt}</TableCell>
                         <TableCell className="text-[10px] md:text-xs px-1 md:px-3 text-right">
                           ${Math.round(row.valor).toLocaleString("es-CO")}
+                        </TableCell>
+                        <TableCell className="text-[10px] md:text-xs px-1 md:px-3 text-right tabular-nums">
+                          {row.tasa_interes != null ? `${row.tasa_interes}%` : "—"}
                         </TableCell>
                         <TableCell className="text-[10px] md:text-xs px-1 md:px-3 text-center">{row.numero_cuotas}</TableCell>
                         <TableCell className="text-[10px] md:text-xs px-1 md:px-3 text-center">{frecuenciaLabel(row.frecuencia_pago)}</TableCell>

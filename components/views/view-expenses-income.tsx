@@ -167,13 +167,25 @@ export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
   }
 
   return (
-    <div className="space-y-4 md:space-y-6">
+    // `flex flex-col gap-*` en vez de `space-y-*`: mas abajo se reordenan dos
+    // tarjetas en movil, y `space-y` reparte los margenes segun el orden del
+    // HTML, no del que se ve — quedaria el espacio del lado equivocado.
+    <div className="flex flex-col gap-4 md:gap-6">
       <div className="flex items-center justify-between">
         <h2 className="text-base md:text-2xl font-bold text-card-foreground">Ver Gastos e Ingresos</h2>
       </div>
 
-      {/* Filters Section */}
-      <Card>
+      {/* Filtros.
+          En MOVIL van DESPUES del listado (`max-md:order-2`). Ocupan casi una
+          pantalla entera, asi que abrir el modulo y encontrarse con los
+          filtros obliga a bajar cada vez solo para ver lo que se registro, que
+          es a lo que se entra. En pantalla grande caben los dos a la vez y
+          quedan como estaban.
+
+          Se reordena con CSS y no moviendo el codigo: el orden del HTML es el
+          que siguen el teclado y los lectores de pantalla, y ahi el filtro
+          antes del resultado es lo correcto. */}
+      <Card className="max-md:order-2">
         <CardHeader className="pb-3 md:pb-4">
           <CardTitle className="text-sm md:text-lg">Filtros</CardTitle>
         </CardHeader>
@@ -312,8 +324,9 @@ export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
         </CardContent>
       </Card>
 
-      {/* Transactions Table */}
-      <Card>
+      {/* El listado. En movil sube al primer lugar (`max-md:order-1`), que es
+          a lo que se entra al modulo. */}
+      <Card className="max-md:order-1">
         <CardHeader className="pb-3 md:pb-4">
           <CardTitle className="text-sm md:text-lg">
             Transacciones ({filteredTransactions.length})

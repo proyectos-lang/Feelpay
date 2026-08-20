@@ -485,6 +485,12 @@ export default function Page() {
         setShowRutaSelector(false)
         if (isSecretariaOrGerencia) setCurrentView("secretary-reports")
         else if (isSocioadmin) setCurrentView("socio-admin-reportes")
+        // Vendedores y cobradores: SIEMPRE a Registrar Pago. Se pone
+        // explicito y no se confia en el valor inicial del estado: cuando
+        // alguien cierra sesion y entra con otro usuario sin recargar la
+        // pagina, `currentView` conserva la pantalla del anterior y el
+        // vendedor entraba donde lo hubiera dejado el otro.
+        else setCurrentView("register-payment")
       } else {
         // Sin rutas asignadas: entrar al dashboard sin ruta
         try { localStorage.removeItem(RUTA_STORAGE_KEY) } catch {}
@@ -492,6 +498,7 @@ export default function Page() {
         setShowRutaSelector(false)
         if (isSecretariaOrGerencia) setCurrentView("secretary-reports")
         else if (isSocioadmin) setCurrentView("socio-admin-reportes")
+        else setCurrentView("register-payment")
       }
     } catch (err) {
       console.error("[v0] Error auto-selecting ruta:", err)
