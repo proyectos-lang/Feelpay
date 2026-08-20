@@ -540,54 +540,57 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
             )
           })}
         </div>
-      </div>
 
-      {/* Footer — Cerrar Caja + comprobante
-          `sticky bottom-0` para que el boton no se vaya con el scroll. Y con
-          padding de safe-area porque la barra inferior del movil se le montaba
-          encima: el layout reservaba 64px para una nav que mide unos 90. */}
-      <div className="sticky bottom-0 z-10 shrink-0 space-y-2 border-t border-border bg-background px-3 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
-        {cajaCerrada ? (
-          /* Misma altura que el boton: si no, al cerrar la caja el pie se
-             encoge y todo lo de abajo salta de sitio. */
-          <div className="flex min-h-[52px] items-center justify-center gap-2 bg-muted rounded-xl py-3">
-            <Lock className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium text-muted-foreground">Caja cerrada</span>
-          </div>
-        ) : (
+        {/* Las acciones van DENTRO del scroll, al final del reporte, y no en
+            una barra pegada abajo.
+
+            El pie fijo tenía sentido para llegar rápido al botón, pero cerrar
+            la caja no es una acción que se quiera a un toque de distancia
+            estando a mitad del reporte: finaliza la jornada y no se deshace.
+            Al fondo de todo, el gesto de bajar hasta él ES la lectura del
+            cierre.
+
+            Compartir y PDF quedan acá porque es el momento en que se usan
+            —terminaste de leer, lo mandás— y siguen estando arriba en el
+            encabezado para cuando se necesiten sin bajar. */}
+        <div className="mt-3 grid grid-cols-2 gap-2">
           <Button
-            className="w-full bg-brand hover:bg-brand-light text-brand-foreground font-semibold rounded-xl py-5 text-sm flex items-center gap-2"
-            onClick={handleCerrarCaja}
+            variant="outline"
+            className="w-full rounded-xl py-5 text-sm font-semibold flex items-center gap-2"
+            onClick={() => setCompartirAbierto(true)}
           >
-            <Lock className="h-4 w-4" />
-            Cerrar Caja y Finalizar Jornada
+            <Share2 className="h-4 w-4" />
+            Compartir
           </Button>
-        )}
+          <Button
+            variant={cajaCerrada ? "default" : "outline"}
+            className={`w-full rounded-xl py-5 text-sm font-semibold flex items-center gap-2 ${
+              cajaCerrada ? "bg-success hover:bg-success/90 text-success-foreground" : ""
+            }`}
+            onClick={handlePDF}
+          >
+            <FileDown className="h-4 w-4" />
+            PDF
+          </Button>
+        </div>
 
-        {/* El PDF tambien al pie, que es donde el usuario esta mirando cuando
-            termina de cerrar. Con la caja ya cerrada pasa a ser LA accion que
-            queda —el comprobante de la jornada— asi que se muestra solido; con
-            la caja abierta va en secundario para no competir con el boton de
-            cerrar. */}
-        <div className="grid grid-cols-2 gap-2">
-        <Button
-          variant="outline"
-          className="w-full rounded-xl py-5 text-sm font-semibold flex items-center gap-2"
-          onClick={() => setCompartirAbierto(true)}
-        >
-          <Share2 className="h-4 w-4" />
-          Compartir
-        </Button>
-        <Button
-          variant={cajaCerrada ? "default" : "outline"}
-          className={`w-full rounded-xl py-5 text-sm font-semibold flex items-center gap-2 ${
-            cajaCerrada ? "bg-success hover:bg-success/90 text-success-foreground" : ""
-          }`}
-          onClick={handlePDF}
-        >
-          <FileDown className="h-4 w-4" />
-          PDF
-        </Button>
+        {/* Cerrar la caja va de último y separado por una línea: es lo que
+            termina la jornada, no una acción más de la fila de arriba. */}
+        <div className="mt-4 border-t border-border pt-4 pb-2">
+          {cajaCerrada ? (
+            <div className="flex min-h-[52px] items-center justify-center gap-2 bg-muted rounded-xl py-3">
+              <Lock className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium text-muted-foreground">Caja cerrada</span>
+            </div>
+          ) : (
+            <Button
+              className="w-full bg-brand hover:bg-brand-light text-brand-foreground font-semibold rounded-xl py-5 text-sm flex items-center gap-2"
+              onClick={handleCerrarCaja}
+            >
+              <Lock className="h-4 w-4" />
+              Cerrar Caja y Finalizar Jornada
+            </Button>
+          )}
         </div>
       </div>
 
