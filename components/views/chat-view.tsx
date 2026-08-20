@@ -675,6 +675,24 @@ export function ChatView({ currentUser, onUnreadChange }: ChatViewProps) {
   const channelInvitesRef = useRef<RealtimeChannel | null>(null)
   const msgRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
+  /**
+   * El campo crece con el texto, hasta 120px.
+   *
+   * Hacia falta desde que Enter hace salto de linea en el telefono: sin esto
+   * el campo se queda en un renglon de 36px y el segundo renglon se escribe
+   * "a ciegas", con el texto desplazandose dentro de una caja que no crece.
+   *
+   * `height = "auto"` antes de medir es obligatorio: sin eso `scrollHeight`
+   * devuelve el alto que YA tiene y el campo solo sabe crecer, nunca encoger
+   * al borrar.
+   */
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = "auto"
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`
+  }, [msgText])
+
   // ── Cargar conversaciones ─────────────────────────────────────────────────
 
   const loadConversations = useCallback(async () => {
@@ -1164,11 +1182,32 @@ export function ChatView({ currentUser, onUnreadChange }: ChatViewProps) {
     }
   }
 
+  /**
+   * En el TELEFONO, Enter hace salto de linea y el mensaje se manda SOLO con
+   * el boton. En computador se mantiene Enter para enviar y Shift+Enter para
+   * el salto, que es lo que espera quien escribe con teclado fisico.
+   *
+   * POR QUE `pointer: coarse` Y NO EL ANCHO DE PANTALLA
+   * Lo que importa no es que la pantalla sea chica, sino que el teclado sea el
+   * de la pantalla: ahi la tecla de Enter es el unico salto de linea que hay,
+   * y usarla para enviar deja al cobrador sin forma de escribir dos renglones.
+   * `pointer: coarse` dice justamente eso — que se escribe con el dedo. Una
+   * tablet en horizontal pasa de 768px y seguiria teniendo el problema si se
+   * midiera por ancho.
+   *
+   * Se consulta al momento de la tecla y no se guarda en estado: si alguien le
+   * conecta un teclado al telefono, el comportamiento se acomoda solo.
+   */
+  const escribeConElDedo = () =>
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(pointer: coarse)").matches
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
-      sendMessage()
-    }
+    if (e.key !== "Enter" || e.shiftKey) return
+    if (escribeConElDedo()) return // salto de linea: no se toca el evento
+    e.preventDefault()
+    sendMessage()
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1596,6 +1635,10 @@ export function ChatView({ currentUser, onUnreadChange }: ChatViewProps) {
                 onChange={(e) => setMsgText(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="Escribe un mensaje..."
+                // `enterKeyHint="enter"` le pide al teclado del telefono que
+                // pinte la tecla como salto de linea y no como "Enviar", que
+                // es lo que muestra por defecto dentro de un formulario.
+                enterKeyHint="enter"
                 className="flex-1 min-h-[36px] max-h-[120px] resize-none rounded-xl text-sm py-2 px-3"
                 rows={1}
               />
