@@ -796,10 +796,32 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     }
   }
 
+  /**
+   * Guarda el orden de la ruta.
+   *
+   * `reordered` son SOLO los que estan en pantalla. Renumerarlos 1..N a secas
+   * —que es lo que hacia antes— pisaba los numeros de los que no se ven: si a
+   * media manana ya hay diez clientes gestionados, los treinta y uno restantes
+   * quedaban 1..31 y los diez de la manana conservaban numeros dentro de ese
+   * mismo rango. Al dia siguiente, con todos visibles otra vez, el orden tenia
+   * empates y la ruta que alguien acomodo a mano se desarmaba sola.
+   *
+   * Asi que se renumera la ruta COMPLETA: se toman todos los clientes en su
+   * orden actual y se reemplaza, en los puestos que ocupaban los visibles, la
+   * secuencia nueva. Los que no se ven no se mueven de su lugar relativo, y
+   * el resultado es 1..N sin repetidos.
+   */
   const saveNewOrder = async (reordered: DisplayClient[]) => {
     setSavingOrder(true)
     try {
-      const items = reordered.map((c, idx) => ({
+      const porOrden = (c: DisplayClient) => (c.ordenvisita > 0 ? c.ordenvisita : 99999)
+      const idsMovidos = new Set(reordered.map((c) => c.loanId))
+      const todos = [...clients].sort((a, b) => porOrden(a) - porOrden(b))
+
+      let k = 0
+      const rutaCompleta = todos.map((c) => (idsMovidos.has(c.loanId) ? reordered[k++] : c))
+
+      const items = rutaCompleta.map((c, idx) => ({
         id: c.loanId,
         ordenvisita: idx + 1,
       }))
@@ -809,14 +831,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         body: JSON.stringify({ items }),
       })
       if (!res.ok) throw new Error("Error saving order")
-      // Solo se actualiza el orden de los que vinieron en el lote.
+      // El estado local recibe los MISMOS numeros que se acaban de guardar.
       //
-      // Antes esto era `setClients(reordered...)`, que REEMPLAZABA la lista
+      // Antes esto era `setClients(reordered...)`, que reemplazaba la lista
       // completa por el subconjunto reordenado: todo cliente que no estuviera
-      // en pantalla en ese momento —otra frecuencia, filtrado por mora,
-      // escondido por la busqueda— desaparecia del estado hasta el siguiente
+      // en pantalla en ese momento desaparecia del estado hasta el siguiente
       // refresco.
-      const nuevoOrden = new Map(reordered.map((c, idx) => [c.loanId, idx + 1]))
+      const nuevoOrden = new Map(items.map((it) => [it.id, it.ordenvisita]))
       setClients((prev) =>
         prev.map((c) => {
           const orden = nuevoOrden.get(c.loanId)
@@ -2982,14 +3003,28 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               onClick={() => handleMoveUp(index)}
                               disabled={index === 0 || savingOrder}
                               aria-label="Subir en la ruta"
-                              className="text-muted-foreground hover:text-foreground disabled:opacity-30 p-0.5"
+                              className="text-muted-foreground hover:text-foreground disabled:opacity-30 p-1"
                             >
-                              <ArrowUp className="h-4 w-4" />
+                              <ArrowUp className="h-6 w-6" />
                             </button>
+                            {/* EL NUMERO ES LA POSICION EN ESTA LISTA, no el
+                                `ordenvisita` guardado.
+
+                                Mostrando el guardado, el numero y el puesto no
+                                coincidian: la lista deja fuera a los que ya se
+                                gestionaron, asi que el primero de la pantalla
+                                podia decir "5" porque los cuatro anteriores ya
+                                estaban cobrados. Y al mover un cliente de
+                                lugar, el numero tardaba en acomodarse.
+
+                                `ordenvisita` sigue siendo el que manda para
+                                ordenar y es lo que se guarda; lo unico que
+                                cambia es que arriba se pinta el puesto que de
+                                verdad ocupa. */}
                             <div className="cursor-grab active:cursor-grabbing flex items-center gap-0.5">
-                              <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
-                              <span className="text-[12px] font-bold text-muted-foreground tabular-nums">
-                                {client.ordenvisita}
+                              <GripVertical className="h-4 w-4 text-muted-foreground" />
+                              <span className="text-[13px] font-bold text-muted-foreground tabular-nums">
+                                {index + 1}
                               </span>
                             </div>
                             <button
@@ -2997,9 +3032,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               onClick={() => handleMoveDown(index)}
                               disabled={index >= displayClients.length - 1 || savingOrder}
                               aria-label="Bajar en la ruta"
-                              className="text-muted-foreground hover:text-foreground disabled:opacity-30 p-0.5"
+                              className="text-muted-foreground hover:text-foreground disabled:opacity-30 p-1"
                             >
-                              <ArrowDown className="h-4 w-4" />
+                              <ArrowDown className="h-6 w-6" />
                             </button>
                           </div>
 
