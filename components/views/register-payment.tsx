@@ -3015,35 +3015,43 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               la fila el ultimo cliente de la lista se quedaria
                               sin ella. */}
                           <TableCell className={`py-1.5 md:py-3 px-0.5 md:px-1 border-l-4 ${getMoraBarra(client.mora)}`}>
-                            <div className="flex flex-col items-center gap-0.5">
+                            <div className="flex flex-col items-center">
                               <button
                                 type="button"
                                 onClick={() => handleMoveUp(index)}
                                 disabled={index === 0 || savingOrder}
-                                className="text-muted-foreground hover:text-foreground disabled:opacity-30 p-1"
+                                className="text-muted-foreground hover:text-foreground disabled:opacity-30 p-0.5"
                               >
-                                <ArrowUp className="h-6 w-6" />
+                                <ArrowUp className="h-5 w-5" />
                               </button>
                               <div className="cursor-grab active:cursor-grabbing flex items-center gap-0.5">
-                                <GripVertical className="h-4 w-4 md:h-4 md:w-4 text-muted-foreground" />
+                                <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
                                 {/* EL NUMERO ES LA POSICION EN ESTA LISTA, no el
                                     `ordenvisita` guardado: la lista deja fuera
                                     a los ya gestionados, asi que el primero
                                     podia decir "5" porque los cuatro
                                     anteriores ya estaban cobrados. */}
-                                <span className="text-[13px] md:text-sm font-bold text-muted-foreground tabular-nums">{index + 1}</span>
+                                <span className="text-[12px] md:text-sm font-bold text-muted-foreground tabular-nums leading-none">{index + 1}</span>
                               </div>
                               <button
                                 type="button"
                                 onClick={() => handleMoveDown(index)}
                                 disabled={index >= displayClients.length - 1 || savingOrder}
-                                className="text-muted-foreground hover:text-foreground disabled:opacity-30 p-1"
+                                className="text-muted-foreground hover:text-foreground disabled:opacity-30 p-0.5"
                               >
-                                <ArrowDown className="h-6 w-6" />
+                                <ArrowDown className="h-5 w-5" />
                               </button>
 
                               {/* "Más opciones", debajo de las flechas y en su
                                   misma columna.
+
+                                  TAMAÑOS: esta columna llevaba ~124px de alto
+                                  entre flechas, número y menú, y era ella —no
+                                  los datos— la que decidía qué tan alta salía
+                                  cada fila. Ajustada a ~95 deja de mandar: el
+                                  alto lo pone el nombre del cliente, que es lo
+                                  que de verdad ocupa. Las flechas bajan de 24 a
+                                  20px y el menú de 32 a 28.
 
                                   Va acá y no junto a Pago / No pago porque es
                                   lo unico de la fila que NO mueve plata: si se
@@ -3053,11 +3061,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
                                   El `mt-1` lo despega de la flecha de bajar,
                                   que si tiene efecto inmediato. */}
-                              <div className="mt-1">
+                              <div className="mt-0.5">
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
-                                    <Button size="icon" variant="outline" className="h-8 w-8 bg-transparent">
-                                      <MoreVertical className="h-4 w-4" />
+                                    <Button size="icon" variant="outline" className="h-7 w-7 bg-transparent">
+                                      <MoreVertical className="h-3.5 w-3.5" />
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end" className="w-48">
