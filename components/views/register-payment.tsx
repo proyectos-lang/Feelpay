@@ -3059,6 +3059,29 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 ${client.valorCuota.toLocaleString()}
                               </strong>
                             </span>
+                            {client.ultimoPagoFecha && (
+                              <span className="whitespace-nowrap">
+                                Últ. pago{" "}
+                                <strong className="text-foreground tabular-nums">
+                                  {(() => {
+                                    const [y, m, d] = client.ultimoPagoFecha.split("-")
+                                    return `${d}/${m}/${y.slice(2)}`
+                                  })()}
+                                </strong>
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Lo que el cliente DEBE, en su propio renglon:
+                              saldo y multa juntos.
+
+                              Estaban en la fila de arriba, en medio de venta,
+                              cuota y valor. Ahi el saldo caia donde alcanzara
+                              —a veces al final de un renglon y la multa al
+                              principio del siguiente— y los dos numeros que se
+                              suman para saber cuanto debe quedaban separados.
+                              En su propia fila siempre estan juntos. */}
+                          <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5 text-[11px] md:text-xs text-muted-foreground">
                             <span className="whitespace-nowrap">
                               Saldo{" "}
                               <strong className="text-warning tabular-nums">
@@ -3073,61 +3096,25 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 </strong>
                               </span>
                             )}
-                            {client.ultimoPagoFecha && (
-                              <span className="whitespace-nowrap">
-                                Últ. pago{" "}
-                                <strong className="text-foreground tabular-nums">
-                                  {(() => {
-                                    const [y, m, d] = client.ultimoPagoFecha.split("-")
-                                    return `${d}/${m}/${y.slice(2)}`
-                                  })()}
-                                </strong>
-                              </span>
-                            )}
-                            </div>
+                          </div>
                           </div>
                         </div>
 
-                        {/* Las acciones, de punta a punta de la tarjeta: Pago
-                            a la izquierda, No pago a la derecha. Estaban
-                            apiladas en una columna al costado, donde los dos
-                            botones que hacen lo CONTRARIO quedaban pegados uno
-                            encima del otro — el peor sitio posible para dos
-                            acciones que no se pueden confundir.
+                        {/* Las acciones, de punta a punta de la tarjeta: el
+                            menu y No pago a la izquierda, Pago a la derecha.
 
-                            Van con su nombre al lado y no solo el icono: en
-                            las puntas de una fila ancha, dos iconos sueltos se
-                            leen como adornos. El menu queda junto a No pago
-                            porque es la parte secundaria de la tarjeta. */}
+                            Lo que importa es que los dos botones que hacen lo
+                            CONTRARIO queden lo mas lejos posible: registrar un
+                            pago donde iba un no pago le cuesta al cobrador una
+                            reversa. Cada uno lleva su color de
+                            siempre —verde el pago, rojo el no pago— que es lo
+                            que los distingue de un vistazo. */}
                         <div className="flex items-center justify-between gap-2 mt-2">
-                            <Button
-                              className="bg-success hover:bg-success/80 text-card h-10 px-4 gap-1.5 font-semibold shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                              onClick={() =>
-                                gpsStatus !== "granted"
-                                  ? handleLocationRequired()
-                                  : handleSelectClient(client)
-                              }
-                              disabled={canManage === false && gpsStatus === "granted"}
-                              title={
-                                gpsStatus !== "granted"
-                                  ? "Debes habilitar la ubicacion para registrar pagos"
-                                  : !canManage
-                                  ? "No es el dia de pago de este cliente"
-                                  : client.nextPaymentEsFuturo
-                                  ? `Adelantar la cuota del ${client.nextPaymentFecha.split("-").reverse().slice(0, 2).join("/")}`
-                                  : "Registrar Pago"
-                              }
-                              aria-label="Registrar Pago"
-                            >
-                              <DollarSign className="h-4 w-4" />
-                              Pago
-                            </Button>
-
                           <div className="flex items-center gap-1.5">
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button size="icon" variant="outline" className="h-10 w-10 bg-transparent" aria-label="Más opciones">
-                                  <MoreVertical className="h-4 w-4" />
+                                  <MoreVertical className="h-5 w-5" />
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="w-48">
@@ -3162,7 +3149,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               </DropdownMenuContent>
                             </DropdownMenu>
                             <Button
-                              className="bg-destructive hover:bg-destructive/80 text-destructive-foreground h-10 px-4 gap-1.5 font-semibold shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                              size="icon"
+                              className="bg-destructive hover:bg-destructive/80 text-destructive-foreground h-10 w-10 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
                               onClick={() => {
                                 if (gpsStatus !== "granted") {
                                   handleLocationRequired()
@@ -3181,10 +3169,32 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               }
                               aria-label="Registrar No Pago"
                             >
-                              <X className="h-4 w-4" />
-                              No pago
+                              <X className="h-5 w-5" />
                             </Button>
                           </div>
+
+                            <Button
+                              size="icon"
+                              className="bg-success hover:bg-success/80 text-card h-10 w-10 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                              onClick={() =>
+                                gpsStatus !== "granted"
+                                  ? handleLocationRequired()
+                                  : handleSelectClient(client)
+                              }
+                              disabled={canManage === false && gpsStatus === "granted"}
+                              title={
+                                gpsStatus !== "granted"
+                                  ? "Debes habilitar la ubicacion para registrar pagos"
+                                  : !canManage
+                                  ? "No es el dia de pago de este cliente"
+                                  : client.nextPaymentEsFuturo
+                                  ? `Adelantar la cuota del ${client.nextPaymentFecha.split("-").reverse().slice(0, 2).join("/")}`
+                                  : "Registrar Pago"
+                              }
+                              aria-label="Registrar Pago"
+                            >
+                              <DollarSign className="h-5 w-5" />
+                            </Button>
                         </div>
                       </div>
                     )
