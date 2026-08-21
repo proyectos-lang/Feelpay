@@ -3041,6 +3041,66 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               >
                                 <ArrowDown className="h-6 w-6" />
                               </button>
+
+                              {/* "Más opciones", debajo de las flechas y en su
+                                  misma columna.
+
+                                  Va acá y no junto a Pago / No pago porque es
+                                  lo unico de la fila que NO mueve plata: si se
+                                  toca por error no pasa nada, se abre un menu.
+                                  Los otros dos quedan solos en su columna, con
+                                  aire de sobra entre uno y otro.
+
+                                  El `mt-1` lo despega de la flecha de bajar,
+                                  que si tiene efecto inmediato. */}
+                              <div className="mt-1">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button size="icon" variant="outline" className="h-8 w-8 bg-transparent">
+                                      <MoreVertical className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end" className="w-48">
+                                    <DropdownMenuItem
+                                      className="text-xs md:text-base cursor-pointer"
+                                      onClick={() => {
+                                        setPaymentHistoryClient(client)
+                                        setPaymentHistoryOpen(true)
+                                      }}
+                                    >
+                                      <History className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                      Historial de pagos
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="text-xs md:text-base cursor-pointer"
+                                      onClick={() => {
+                                        setLoanHistoryClient(client)
+                                        setLoanHistoryOpen(true)
+                                      }}
+                                    >
+                                      <FileText className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                      Historial de prestamos
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="text-xs md:text-base cursor-pointer"
+                                      onClick={() => {
+                                        setSelectedClientInfo(client)
+                                        setClientInfoDialogOpen(true)
+                                      }}
+                                    >
+                                      <User className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                      Info del cliente
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="text-xs md:text-base cursor-pointer"
+                                      onClick={() => handleGenerarRecibo(client)}
+                                    >
+                                      <Receipt className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                      Generar recibo
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
                             </div>
                           </TableCell>
                           <TableCell className="py-1 md:py-3 px-0.5 md:px-2">
@@ -3235,58 +3295,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                   </strong>
                                 </span>
                               )}
-                            </div>
-
-                            {/* "Más opciones" al final de la fila, que es
-                                donde se busca en una tabla — y lejos de los
-                                dos botones que mueven plata. */}
-                            <div className="flex justify-end mt-1">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button size="icon" variant="outline" className="h-8 w-8 bg-transparent">
-                                  <MoreVertical className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-48">
-                                <DropdownMenuItem
-                                  className="text-xs md:text-base cursor-pointer"
-                                  onClick={() => {
-                                    setPaymentHistoryClient(client)
-                                    setPaymentHistoryOpen(true)
-                                  }}
-                                >
-                                  <History className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                  Historial de pagos
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className="text-xs md:text-base cursor-pointer"
-                                  onClick={() => {
-                                    setLoanHistoryClient(client)
-                                    setLoanHistoryOpen(true)
-                                  }}
-                                >
-                                  <FileText className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                  Historial de prestamos
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className="text-xs md:text-base cursor-pointer"
-                                  onClick={() => {
-                                    setSelectedClientInfo(client)
-                                    setClientInfoDialogOpen(true)
-                                  }}
-                                >
-                                  <User className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                  Info del cliente
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className="text-xs md:text-base cursor-pointer"
-                                  onClick={() => handleGenerarRecibo(client)}
-                                >
-                                  <Receipt className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                  Generar recibo
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
                             </div>
                           </TableCell>
                         </TableRow>
