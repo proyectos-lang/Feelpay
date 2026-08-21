@@ -3059,28 +3059,22 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 ${client.valorCuota.toLocaleString()}
                               </strong>
                             </span>
-                            {client.ultimoPagoFecha && (
-                              <span className="whitespace-nowrap">
-                                Últ. pago{" "}
-                                <strong className="text-foreground tabular-nums">
-                                  {(() => {
-                                    const [y, m, d] = client.ultimoPagoFecha.split("-")
-                                    return `${d}/${m}/${y.slice(2)}`
-                                  })()}
-                                </strong>
-                              </span>
-                            )}
                           </div>
 
-                          {/* Lo que el cliente DEBE, en su propio renglon:
-                              saldo y multa juntos.
+                          {/* El estado de la deuda, en su propio renglon:
+                              saldo, multa y ultimo pago.
 
-                              Estaban en la fila de arriba, en medio de venta,
-                              cuota y valor. Ahi el saldo caia donde alcanzara
-                              —a veces al final de un renglon y la multa al
-                              principio del siguiente— y los dos numeros que se
-                              suman para saber cuanto debe quedaban separados.
-                              En su propia fila siempre estan juntos. */}
+                              Arriba queda lo PACTADO —venta, cuota, valor—,
+                              que no cambia nunca. Aca lo que se mueve: cuanto
+                              debe, si tiene multa y cuando pago por ultima vez.
+                              Es lo que el cobrador mira antes de tocar la
+                              puerta, y estaba repartido entre los dos
+                              renglones.
+
+                              La multa va en medio a proposito: casi siempre
+                              esta vacia, asi que el renglon normal se lee
+                              "Saldo … Ult. pago", y cuando hay multa aparece
+                              pegada al saldo, que es con lo que se suma. */}
                           <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5 text-[11px] md:text-xs text-muted-foreground">
                             <span className="whitespace-nowrap">
                               Saldo{" "}
@@ -3093,6 +3087,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 Multa{" "}
                                 <strong className="text-red-600 tabular-nums">
                                   ${client.multaPendiente.valor.toLocaleString()}
+                                </strong>
+                              </span>
+                            )}
+                            {client.ultimoPagoFecha && (
+                              <span className="whitespace-nowrap">
+                                Últ. pago{" "}
+                                <strong className="text-foreground tabular-nums">
+                                  {(() => {
+                                    const [y, m, d] = client.ultimoPagoFecha.split("-")
+                                    return `${d}/${m}/${y.slice(2)}`
+                                  })()}
                                 </strong>
                               </span>
                             )}
