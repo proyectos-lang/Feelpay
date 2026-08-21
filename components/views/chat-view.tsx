@@ -660,6 +660,9 @@ export function ChatView({ currentUser, onUnreadChange }: ChatViewProps) {
   // Carpetas personales para organizar los chats (por usuario)
   const [carpetas, setCarpetas] = useState<ChatCarpeta[]>([])
   const [activeFolderFilter, setActiveFolderFilter] = useState<"all" | "sin-carpeta" | string>("all")
+  /** Buscador de la LISTA de chats. Distinto de `searchQuery`, que busca
+   *  dentro de los mensajes de la conversacion abierta. */
+  const [filtroChats, setFiltroChats] = useState("")
   const [showManageFolders, setShowManageFolders] = useState(false)
   const [newFolderName, setNewFolderName] = useState("")
   const [creatingFolder, setCreatingFolder] = useState(false)
@@ -1234,10 +1237,32 @@ export function ChatView({ currentUser, onUnreadChange }: ChatViewProps) {
 
   const activeConv = conversations.find((c) => c.conversation_id === activeConvId)
 
+  /**
+   * Sin tildes y en minuscula.
+   *
+   * Buscar "maria" tiene que encontrar a "María". Media agenda esta escrita
+   * con tildes y la otra media sin ellas, asi que comparar el texto crudo
+   * deja fuera justo a quien uno busca.
+   */
+  const sinTildes = (t: string) =>
+    t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+
+  const terminoChats = sinTildes(filtroChats.trim())
+
   const visibleConversations = conversations.filter((c) => {
-    if (activeFolderFilter === "all") return true
-    if (activeFolderFilter === "sin-carpeta") return !c.carpeta_id
-    return c.carpeta_id === activeFolderFilter
+    const enCarpeta =
+      activeFolderFilter === "all" ? true
+      : activeFolderFilter === "sin-carpeta" ? !c.carpeta_id
+      : c.carpeta_id === activeFolderFilter
+    if (!enCarpeta) return false
+    if (!terminoChats) return true
+    // Titulo, ultimo mensaje y quien lo escribio: uno se acuerda tanto del
+    // nombre del grupo como de "el que mando lo del cierre".
+    return (
+      sinTildes(c.name ?? "").includes(terminoChats) ||
+      sinTildes(c.last_body ?? "").includes(terminoChats) ||
+      sinTildes(c.last_sender ?? "").includes(terminoChats)
+    )
   })
 
   // ── Búsqueda dentro de la conversación ────────────────────────────────────
@@ -1297,6 +1322,33 @@ export function ChatView({ currentUser, onUnreadChange }: ChatViewProps) {
             <Plus className="h-4 w-4" />
           </Button>
         </div>
+
+        {/* Buscador de chats. Va ARRIBA de las carpetas: las carpetas
+            ordenan, el buscador encuentra, y encontrar es lo que uno viene a
+            hacer cuando la lista ya es larga. */}
+        {conversations.length > 0 && (
+          <div className="px-3 py-2 border-b">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <Input
+                value={filtroChats}
+                onChange={(e) => setFiltroChats(e.target.value)}
+                placeholder="Buscar chat, mensaje o persona..."
+                className="h-8 pl-8 pr-8 text-sm"
+              />
+              {filtroChats && (
+                <button
+                  type="button"
+                  onClick={() => setFiltroChats("")}
+                  aria-label="Limpiar la busqueda"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Carpetas */}
         {conversations.length > 0 && (
@@ -1358,9 +1410,26 @@ export function ChatView({ currentUser, onUnreadChange }: ChatViewProps) {
             </Button>
           </div>
         ) : visibleConversations.length === 0 ? (
+          /* El vacio dice QUE esta filtrando. Con un solo texto para los dos
+             casos, quien busca dentro de una carpeta cree que el chat no
+             existe cuando en realidad esta en otra. */
           <div className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground px-4 text-center">
             <Users className="h-8 w-8 opacity-30" />
-            <p className="text-sm">Sin chats en esta carpeta</p>
+            <p className="text-sm">
+              {terminoChats
+                ? `Ningún chat coincide con "${filtroChats.trim()}"`
+                : "Sin chats en esta carpeta"}
+            </p>
+            {(terminoChats || activeFolderFilter !== "all") && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-1"
+                onClick={() => { setFiltroChats(""); setActiveFolderFilter("all") }}
+              >
+                Ver todos los chats
+              </Button>
+            )}
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto divide-y divide-border">
