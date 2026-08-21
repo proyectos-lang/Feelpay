@@ -111,6 +111,34 @@ export function puedeEditarComoAsesor(m: Movimiento, userId: number | null): Per
 }
 
 /**
+ * ¿Se puede ELIMINAR este movimiento?
+ *
+ * Dos condiciones para todos —del día de hoy y sin resolver— y una tercera
+ * solo para el asesor: que sea suyo.
+ *
+ * SECRETARÍA TAMBIÉN QUEDA ATADA AL DÍA, y eso es distinto de lo que pasa con
+ * editar. Corregir un movimiento viejo deja la corrección a la vista, con su
+ * firma y el valor anterior; borrarlo lo hace DESAPARECER de la caja de un día
+ * que probablemente ya se cerró y se aprobó. Para eso está editar.
+ */
+export function puedeEliminar(
+  m: Movimiento,
+  userId: number | null,
+  opts: { comoAsesor: boolean },
+): PermisoEdicion {
+  if (opts.comoAsesor && (userId === null || m.adminid !== userId)) {
+    return { puede: false, motivo: "Solo puedes eliminar los movimientos que registraste tú" }
+  }
+  if (tsToColombiaDate(m.fechahorasol) !== todayColombia()) {
+    return { puede: false, motivo: "Solo se pueden eliminar los movimientos de hoy" }
+  }
+  if (!movimientoAbierto(m)) {
+    return { puede: false, motivo: "Ya fue aprobado o rechazado: corrígelo en vez de borrarlo" }
+  }
+  return { puede: true }
+}
+
+/**
  * Movimientos de una ruta en un rango de días Colombia.
  *
  * El rango se convierte a instantes UTC en vez de filtrar por el texto de la

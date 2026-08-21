@@ -21,15 +21,16 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Loader2, TrendingUp, TrendingDown, Wallet, Pencil, Search, PencilLine } from "lucide-react"
+import { Loader2, TrendingUp, TrendingDown, Wallet, Pencil, Search, PencilLine, Trash2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { fmtMoneda, fmtFechaHora } from "@/lib/gestion-core"
 import { todayColombia } from "@/lib/colombia-date"
 import {
-  getMovimientos, totalesPorTipo, movimientoEditado, movimientoAbierto,
+  getMovimientos, totalesPorTipo, movimientoEditado, movimientoAbierto, puedeEliminar, getUsuarioSesion,
   TIPOS_MOVIMIENTO, type Movimiento,
 } from "@/lib/movimientos"
 import { EditMovimientoDialog } from "@/components/views/edit-movimiento-dialog"
+import { EliminarMovimientoDialog } from "@/components/views/eliminar-movimiento-dialog"
 
 interface Props {
   /** Ruta a consultar. "todas" solo se usa desde los módulos de secretaría. */
@@ -74,6 +75,11 @@ export function MovimientosPanel({ rutaId, editable = false, rutas, onRutaChange
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [cargando, setCargando] = useState(true)
   const [editando, setEditando] = useState<Movimiento | null>(null)
+  const [eliminando, setEliminando] = useState<Movimiento | null>(null)
+  // Solo para el predicado de borrado. Se lee en un efecto y no al construir
+  // el estado: `localStorage` no existe en el servidor.
+  const [usuarioId, setUsuarioId] = useState<number | null>(null)
+  useEffect(() => { setUsuarioId(getUsuarioSesion().id) }, [])
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -248,15 +254,33 @@ export function MovimientosPanel({ rutaId, editable = false, rutas, onRutaChange
                       </td>
                       {editable && (
                         <td className="px-2 py-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            title={movimientoAbierto(m) ? "Editar" : "Editar (ya fue resuelto)"}
-                            onClick={() => setEditando(m)}
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
+                          <div className="flex items-center gap-0.5">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              title={movimientoAbierto(m) ? "Editar" : "Editar (ya fue resuelto)"}
+                              onClick={() => setEditando(m)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            {/* Borrar SI esta acotado a hoy y a lo no resuelto,
+                                aunque editar no lo este. Corregir un movimiento
+                                viejo deja la correccion a la vista, con firma y
+                                valor anterior; borrarlo lo hace DESAPARECER de
+                                la caja de un dia que ya se cerro. */}
+                            {puedeEliminar(m, usuarioId, { comoAsesor: false }).puede && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                title="Eliminar este movimiento"
+                                onClick={() => setEliminando(m)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </div>
                         </td>
                       )}
                     </tr>
@@ -275,6 +299,16 @@ export function MovimientosPanel({ rutaId, editable = false, rutas, onRutaChange
           onOpenChange={(o) => !o && setEditando(null)}
           comoAsesor={false}
           onSaved={cargar}
+        />
+      )}
+
+      {editable && (
+        <EliminarMovimientoDialog
+          movimiento={eliminando}
+          open={eliminando !== null}
+          onOpenChange={(o) => !o && setEliminando(null)}
+          comoAsesor={false}
+          onDeleted={cargar}
         />
       )}
     </div>

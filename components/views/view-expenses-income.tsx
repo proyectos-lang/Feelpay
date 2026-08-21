@@ -8,14 +8,15 @@ import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Search, TrendingDown, TrendingUp, Wallet, Pencil, PencilLine } from "lucide-react"
+import { Search, TrendingDown, TrendingUp, Wallet, Pencil, PencilLine, Trash2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { todayColombia, tsToColombiaDate } from "@/lib/colombia-date"
 import { fmtMoneda, fmtFechaHora } from "@/lib/gestion-core"
 import {
-  getUsuarioSesion, puedeEditarComoAsesor, movimientoEditado, type Movimiento,
+  getUsuarioSesion, puedeEditarComoAsesor, puedeEliminar, movimientoEditado, type Movimiento,
 } from "@/lib/movimientos"
 import { EditMovimientoDialog } from "@/components/views/edit-movimiento-dialog"
+import { EliminarMovimientoDialog } from "@/components/views/eliminar-movimiento-dialog"
 
 type Transaction = Movimiento
 
@@ -40,6 +41,7 @@ export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
   // de hoy y sin resolver — `puedeEditarComoAsesor` es quien lo decide, y el
   // servidor lo vuelve a validar por si la pantalla está vieja.
   const [editando, setEditando] = useState<Transaction | null>(null)
+  const [eliminando, setEliminando] = useState<Transaction | null>(null)
   const [usuarioId, setUsuarioId] = useState<number | null>(null)
 
   useEffect(() => { setUsuarioId(getUsuarioSesion().id) }, [])
@@ -358,6 +360,7 @@ export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
                 <TableBody>
                   {filteredTransactions.map((transaction) => {
                     const permiso = puedeEditarComoAsesor(transaction, usuarioId)
+                    const permisoBorrar = puedeEliminar(transaction, usuarioId, { comoAsesor: true })
                     return (
                     <TableRow key={transaction.id}>
                       <TableCell className="text-[9px] md:text-sm">
@@ -392,17 +395,30 @@ export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
                             deshabilitado en cada fila sería puro ruido, porque
                             la mayoría de movimientos no son editables. El
                             `title` explica el porqué cuando sí aparece. */}
-                        {permiso.puede && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            title="Editar este movimiento"
-                            onClick={() => setEditando(transaction)}
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
+                        <div className="flex items-center gap-0.5">
+                          {permiso.puede && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              title="Editar este movimiento"
+                              onClick={() => setEditando(transaction)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          {permisoBorrar.puede && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                              title="Eliminar este movimiento"
+                              onClick={() => setEliminando(transaction)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                     )
@@ -420,6 +436,14 @@ export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
         onOpenChange={(o) => !o && setEditando(null)}
         comoAsesor
         onSaved={fetchTransactions}
+      />
+
+      <EliminarMovimientoDialog
+        movimiento={eliminando}
+        open={eliminando !== null}
+        onOpenChange={(o) => !o && setEliminando(null)}
+        comoAsesor
+        onDeleted={fetchTransactions}
       />
     </div>
   )
