@@ -3003,102 +3003,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                             </button>
                           </div>
 
-                          {/* Las acciones: columna vertical pegada a la
-                              izquierda, al lado del control de orden. Estaban
-                              en fila al pie de la tarjeta.
-
-                              36px y no 40: apiladas de a tres, cuatro pixeles
-                              menos cada una son doce de alto que se ahorran, y
-                              siguen por encima del minimo comodo para un dedo.
-                              Mas abajo de 32 se empiezan a fallar toques, asi
-                              que este es el piso. */}
-                          <div className="flex flex-col gap-1.5 shrink-0">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button size="icon" variant="outline" className="h-9 w-9 bg-transparent" aria-label="Más opciones">
-                                  <MoreVertical className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-48">
-                                <DropdownMenuItem
-                                  className="text-xs md:text-base cursor-pointer"
-                                  onClick={() => { setPaymentHistoryClient(client); setPaymentHistoryOpen(true) }}
-                                >
-                                  <History className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                  Historial de pagos
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className="text-xs md:text-base cursor-pointer"
-                                  onClick={() => { setLoanHistoryClient(client); setLoanHistoryOpen(true) }}
-                                >
-                                  <FileText className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                  Historial de prestamos
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className="text-xs md:text-base cursor-pointer"
-                                  onClick={() => { setSelectedClientInfo(client); setClientInfoDialogOpen(true) }}
-                                >
-                                  <User className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                  Info del cliente
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className="text-xs md:text-base cursor-pointer"
-                                  onClick={() => handleGenerarRecibo(client)}
-                                >
-                                  <Receipt className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                  Generar recibo
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-
-                            <Button
-                              size="icon"
-                              className="bg-destructive hover:bg-destructive/80 text-destructive-foreground h-9 w-9 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                              onClick={() => {
-                                if (gpsStatus !== "granted") {
-                                  handleLocationRequired()
-                                  return
-                                }
-                                setAgregarCuotaSiDebeNoPago(true)
-                                setNoPaymentClient(client)
-                              }}
-                              disabled={canManage === false && gpsStatus === "granted"}
-                              title={
-                                gpsStatus !== "granted"
-                                  ? "Debes habilitar la ubicacion para registrar no pagos"
-                                  : !canManage
-                                  ? "No es el dia de pago de este cliente"
-                                  : "Registrar No Pago"
-                              }
-                              aria-label="Registrar No Pago"
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-
-                            <Button
-                              size="icon"
-                              className="bg-success hover:bg-success/80 text-card h-9 w-9 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                              onClick={() =>
-                                gpsStatus !== "granted"
-                                  ? handleLocationRequired()
-                                  : handleSelectClient(client)
-                              }
-                              disabled={canManage === false && gpsStatus === "granted"}
-                              title={
-                                gpsStatus !== "granted"
-                                  ? "Debes habilitar la ubicacion para registrar pagos"
-                                  : !canManage
-                                  ? "No es el dia de pago de este cliente"
-                                  : client.nextPaymentEsFuturo
-                                  ? `Adelantar la cuota del ${client.nextPaymentFecha.split("-").reverse().slice(0, 2).join("/")}`
-                                  : "Registrar Pago"
-                              }
-                              aria-label="Registrar Pago"
-                            >
-                              <DollarSign className="h-4 w-4" />
-                            </Button>
-                            </div>
-
                           {/* Nombre arriba, apodo debajo. Los dos ENVUELVEN a
                               dos o mas lineas: con `truncate` dos clientes del
                               mismo apellido quedaban indistinguibles. */}
@@ -3181,6 +3085,105 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               </span>
                             )}
                             </div>
+                          </div>
+                        </div>
+
+                        {/* Las acciones, de punta a punta de la tarjeta: Pago
+                            a la izquierda, No pago a la derecha. Estaban
+                            apiladas en una columna al costado, donde los dos
+                            botones que hacen lo CONTRARIO quedaban pegados uno
+                            encima del otro — el peor sitio posible para dos
+                            acciones que no se pueden confundir.
+
+                            Van con su nombre al lado y no solo el icono: en
+                            las puntas de una fila ancha, dos iconos sueltos se
+                            leen como adornos. El menu queda junto a No pago
+                            porque es la parte secundaria de la tarjeta. */}
+                        <div className="flex items-center justify-between gap-2 mt-2">
+                            <Button
+                              className="bg-success hover:bg-success/80 text-card h-10 px-4 gap-1.5 font-semibold shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                              onClick={() =>
+                                gpsStatus !== "granted"
+                                  ? handleLocationRequired()
+                                  : handleSelectClient(client)
+                              }
+                              disabled={canManage === false && gpsStatus === "granted"}
+                              title={
+                                gpsStatus !== "granted"
+                                  ? "Debes habilitar la ubicacion para registrar pagos"
+                                  : !canManage
+                                  ? "No es el dia de pago de este cliente"
+                                  : client.nextPaymentEsFuturo
+                                  ? `Adelantar la cuota del ${client.nextPaymentFecha.split("-").reverse().slice(0, 2).join("/")}`
+                                  : "Registrar Pago"
+                              }
+                              aria-label="Registrar Pago"
+                            >
+                              <DollarSign className="h-4 w-4" />
+                              Pago
+                            </Button>
+
+                          <div className="flex items-center gap-1.5">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button size="icon" variant="outline" className="h-10 w-10 bg-transparent" aria-label="Más opciones">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-48">
+                                <DropdownMenuItem
+                                  className="text-xs md:text-base cursor-pointer"
+                                  onClick={() => { setPaymentHistoryClient(client); setPaymentHistoryOpen(true) }}
+                                >
+                                  <History className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                  Historial de pagos
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-xs md:text-base cursor-pointer"
+                                  onClick={() => { setLoanHistoryClient(client); setLoanHistoryOpen(true) }}
+                                >
+                                  <FileText className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                  Historial de prestamos
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-xs md:text-base cursor-pointer"
+                                  onClick={() => { setSelectedClientInfo(client); setClientInfoDialogOpen(true) }}
+                                >
+                                  <User className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                  Info del cliente
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-xs md:text-base cursor-pointer"
+                                  onClick={() => handleGenerarRecibo(client)}
+                                >
+                                  <Receipt className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                  Generar recibo
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                            <Button
+                              className="bg-destructive hover:bg-destructive/80 text-destructive-foreground h-10 px-4 gap-1.5 font-semibold shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                              onClick={() => {
+                                if (gpsStatus !== "granted") {
+                                  handleLocationRequired()
+                                  return
+                                }
+                                setAgregarCuotaSiDebeNoPago(true)
+                                setNoPaymentClient(client)
+                              }}
+                              disabled={canManage === false && gpsStatus === "granted"}
+                              title={
+                                gpsStatus !== "granted"
+                                  ? "Debes habilitar la ubicacion para registrar no pagos"
+                                  : !canManage
+                                  ? "No es el dia de pago de este cliente"
+                                  : "Registrar No Pago"
+                              }
+                              aria-label="Registrar No Pago"
+                            >
+                              <X className="h-4 w-4" />
+                              No pago
+                            </Button>
                           </div>
                         </div>
                       </div>
