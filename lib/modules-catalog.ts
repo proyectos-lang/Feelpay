@@ -130,7 +130,12 @@ export const ALL_MODULES: ModuleDefinition[] = [
     label: "Ordenar Ruta",
     mobileLabel: "Ordenar",
     description: "Configurar el orden de visitas de la ruta",
-    defaultRoles: ["admin", "administrador"],
+    // El asesor tambien: es QUIEN recorre la ruta, asi que es quien sabe en
+    // que orden le queda mejor. Sigue viviendo en el grupo "Administrador"
+    // del menu, pero eso ya no decide quien lo ve (ver `sidebar.tsx`).
+    defaultRoles: ["admin", "administrador", "vendedor", "asesor"],
+    // NO entra a la barra inferior del movil: son cinco lugares y ya estan
+    // ocupados por lo que se usa todo el dia. Queda en el menu.
     defaultMobileNavRoles: ["admin", "administrador"],
     iconName: "MapPin",
     group: "Administrador",

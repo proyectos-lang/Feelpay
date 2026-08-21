@@ -36,7 +36,7 @@ import { Button } from "@/components/ui/button"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import type { AuthenticatedUser } from "./views/login-view"
-import type { PermissionsMap } from "@/lib/modules-catalog"
+import { ALL_MODULES, type PermissionsMap } from "@/lib/modules-catalog"
 
 // Tipo para el evento de instalación PWA (no está en los tipos estándar de TS)
 interface BeforeInstallPromptEvent extends Event {
@@ -66,10 +66,11 @@ const navGroups: NavGroup[] = [
       { id: "admin-dashboard",        label: "Dashboard",          icon: LayoutDashboard, colorClass: "sidebar-item-summary"  },
       { id: "admin-route-detail",     label: "Detalle Rutas",      icon: ClipboardList,   colorClass: "sidebar-item-clients"  },
       { id: "pending-authorizations", label: "Autor. Admin",       icon: CheckCircle,     colorClass: "sidebar-item-auth"     },
-      // Va también en el grupo del admin porque sin permisos personalizados el
-      // menú se arma por GRUPO, no por módulo: al vivir solo en "Secretaria",
-      // el admin nunca lo veía. Y las ventas por aprobar solo están aquí —
-      // "Autor. Admin" lee `gastosregistros`, donde una venta no aparece.
+      // Duplicado a proposito en los dos grupos: el admin y la secretaria
+      // entran los dos a esta bandeja. (La razon vieja —que el menu se armaba
+      // por grupo y el admin no lo veia— ya no aplica: hoy manda el rol.)
+      // Las ventas por aprobar solo estan aca: "Autor. Admin" lee
+      // `gastosregistros`, donde una venta no aparece.
       { id: "movimientos-revision",   label: "Movim. Revisión",    icon: ShieldCheck,     colorClass: "sidebar-item-payment"  },
       { id: "admin-route-monitor",    label: "Monitoreo Rutas",    icon: Route,           colorClass: "sidebar-item-route"    },
       { id: "configure-route",        label: "Ordenar Ruta",       icon: MapPin,          colorClass: "sidebar-item-route"    },
@@ -196,16 +197,25 @@ export function Sidebar({
       ]
     }
 
-    // Sin permisos: comportamiento por rol (defaults) + siempre el grupo General
-    const roleGroup = (
-      ["vendedor", "asesor"].includes(rol)      ? navGroups.filter((g) => g.group === "Asesor") :
-      ["admin", "administrador"].includes(rol)  ? navGroups.filter((g) => g.group === "Administrador") :
-      ["secretaria", "secretario"].includes(rol)? navGroups.filter((g) => g.group === "Secretaria") :
-      rol === "gerencia"                         ? navGroups.filter((g) => g.group === "Gerencia") :
-      rol === "liquidador"                       ? navGroups.filter((g) => g.group === "Liquidador") :
-      rol === "socioadmin"                       ? navGroups.filter((g) => g.group === "Socio Administrador") :
-      navGroups
-    )
+    // Sin permisos propios: manda `defaultRoles` del catalogo, NO el grupo.
+    //
+    // Antes esto era `navGroups.filter(g => g.group === "Asesor")` y sus
+    // hermanos: el grupo hacia de sustituto del rol. Con eso, la visibilidad
+    // se decidia de DOS formas distintas segun si el usuario tenia permisos
+    // personalizados —por `defaultRoles` en un caso, por el grupo en el otro—
+    // y las dos discrepaban. Un admin sin permisos propios no veia Auditoria
+    // 360 ni Control Total, aunque el catalogo se los daba, solo porque esos
+    // modulos estan dibujados dentro del grupo "Secretaria".
+    //
+    // Ahora el grupo es lo que dice: un titulo para agrupar el menu. Quien ve
+    // que sale de un solo lado.
+    const rolesDe = new Map(ALL_MODULES.map((m) => [m.viewId, m.defaultRoles]))
+    const roleGroup = navGroups
+      .map((g) => ({
+        ...g,
+        items: g.items.filter((item) => (rolesDe.get(item.id) ?? []).includes(rol)),
+      }))
+      .filter((g) => g.items.length > 0)
     return [...roleGroup.filter((g) => g.group !== "General"), generalGroup]
   })()
 
