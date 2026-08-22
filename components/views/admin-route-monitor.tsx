@@ -504,6 +504,27 @@ export function AdminRouteMonitor() {
   }, [openDetalle, selectedRuta])
 
   // ── Build ordered list of map points (with valid GPS) ─────────────────────
+  /**
+   * Cuantas de las gestiones del dia SON una visita.
+   *
+   * Se separa de `mapPoints` para poder distinguir dos situaciones que antes
+   * daban el mismo mensaje: que la ruta no haya trabajado todavia, y que haya
+   * trabajado sin GPS. La primera es normal; la segunda hay que mirarla.
+   *
+   * Cuenta SOLO pago, no_pago y cancelacion. No usa `ES_VISITA`, que ademas
+   * incluye `abono_venta`: ese se registra al CREAR la venta, desde el
+   * formulario, y nunca trae coordenadas — contarlo haria que una ruta con un
+   * abono y nada mas avisara de un problema de GPS que no existe.
+   *
+   * Las reversas y los ajustes tampoco cuentan, por lo mismo: se registran
+   * desde un escritorio corrigiendo algo que ya paso.
+   */
+  const TIPOS_CON_GPS: TipoGestion[] = ["pago", "no_pago", "cancelacion"]
+  const visitasDelDia = useMemo(
+    () => detalle.filter((r) => TIPOS_CON_GPS.includes(r.tipo)).length,
+    [detalle],
+  )
+
   const mapPoints: MapPoint[] = useMemo(() => {
     return detalle
       .filter(
@@ -870,12 +891,21 @@ export function AdminRouteMonitor() {
           ) : mapPoints.length > 0 ? (
             <AdminRouteMonitorMap points={mapPoints} />
           ) : (
+            /* Dos situaciones distintas que antes decian lo mismo.
+               "Sin datos GPS disponibles" sobre una ruta que simplemente no ha
+               salido a cobrar se lee como una falla del sistema, y asi lo
+               reportan los usuarios. */
             <div className="flex h-[240px] w-full flex-col items-center justify-center gap-2 rounded-xl bg-muted/30 px-4 text-center">
               <MapPinOff className="h-10 w-10 text-muted-foreground" />
-              <p className="font-semibold">Sin datos GPS disponibles</p>
+              <p className="font-semibold">
+                {visitasDelDia === 0 ? "Todavía no hay visitas registradas" : "Visitas sin ubicación"}
+              </p>
               <p className="text-sm text-muted-foreground">
-                No se registraron coordenadas para los movimientos de esta ruta o
-                la consulta no devolvio resultados.
+                {visitasDelDia === 0
+                  ? detalle.length > 0
+                    ? "La ruta tiene movimientos de este día, pero ninguno es una visita: las reversas y los ajustes se registran desde un escritorio y no llevan ubicación."
+                    : "La jornada está abierta pero no se ha registrado ningún pago ni no pago. El mapa se dibuja con las visitas del día."
+                  : `Las ${visitasDelDia} visitas de este día se registraron sin coordenadas. Eso no debería pasar: revisa el GPS del dispositivo del cobrador.`}
               </p>
               <Button
                 size="sm"
