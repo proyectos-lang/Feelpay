@@ -187,8 +187,12 @@ export function ConfigureRoute({ currentRutaId = 1 }: ConfigureRouteProps) {
           <CardTitle className="text-sm md:text-base">
             Orden de visita
           </CardTitle>
+          {/* Se dice cuantos son y que solo estan los activos. Un filtro
+              silencioso hace dudar: "¿me falta un cliente o ya no lo cobro?"
+              es una pregunta que no deberia tener que hacerse. */}
           <p className="text-[11px] md:text-sm text-muted-foreground">
-            Arrastra los clientes para reorganizar el orden de visita de la ruta
+            Arrastra los clientes para reorganizar el orden de visita de la ruta.
+            {loans.length > 0 && ` ${loans.length} ${loans.length === 1 ? "crédito activo" : "créditos activos"}; los cancelados no aparecen.`}
           </p>
         </CardHeader>
         <CardContent>
@@ -199,7 +203,7 @@ export function ConfigureRoute({ currentRutaId = 1 }: ConfigureRouteProps) {
             </div>
           ) : loans.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground text-sm">
-              No hay prestamos registrados en esta ruta
+              No hay créditos activos en esta ruta
             </div>
           ) : (
             <div
