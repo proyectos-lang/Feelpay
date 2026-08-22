@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect, useCallback, useRef } from "react"
+import { Fragment, useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -2976,7 +2976,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                           Antes era 100 px y los botones se montaban sobre
                           la columna Cliente. */}
                       <TableHead className="w-[48px] md:w-[140px] text-[12px] md:text-base whitespace-nowrap py-1 md:py-3 px-0.5 md:px-2">Accion</TableHead>
-                      <TableHead className="text-[12px] md:text-base whitespace-nowrap py-1 md:py-3 px-0.5 md:px-1">Cliente</TableHead>
+                      <TableHead className="text-[12px] md:text-base whitespace-nowrap py-1 md:py-3 px-0.5 md:px-1">Frec. / Mora</TableHead>
                       <TableHead className="w-[96px] md:w-[180px] text-right text-[12px] md:text-base whitespace-nowrap py-1 md:py-3 px-1 md:px-2">Monto / Detalle</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -2990,24 +2990,59 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                     ) : (
                       displayClients.map((client, index) => {
                         const canManage = canManageClient(client)
+                        // El arrastre va IGUAL en las dos filas del cliente:
+                        // agarrarlo por el nombre tiene que funcionar lo mismo
+                        // que agarrarlo por los datos.
+                        const arrastre = {
+                          draggable: true,
+                          onDragStart: () => handleDragStart(index),
+                          onDragOver: (e: React.DragEvent) => handleDragOver(e, index),
+                          onDragEnd: () => { setDragIndex(null); setDragOverIndex(null) },
+                          onDrop: () => handleDrop(index),
+                        }
+                        // El fondo y el atenuado son de las DOS: si solo una
+                        // llevara el franjeado, el cliente se veria partido a
+                        // la mitad.
+                        const fondo = `${index % 2 === 0 ? "bg-card" : "bg-muted"} hover:bg-accent/30 transition-colors ${
+                          dragIndex === index ? "opacity-50" : ""
+                        } ${!canManage ? "opacity-60" : ""}`
                         return (
+                        <Fragment key={client.loanId}>
+                        {/* FILA 1: el nombre solo, con TODO el ancho.
+                            Compartia celda con la frecuencia y la mora, en una
+                            columna de 160px de 360: se partia en tres o cuatro
+                            renglones. Solo, y cruzando las cuatro columnas, le
+                            sobra para dos. */}
                         <TableRow
-                          key={client.loanId}
-                          draggable
-                          onDragStart={() => handleDragStart(index)}
-                          onDragOver={(e) => handleDragOver(e, index)}
-                          onDragEnd={() => { setDragIndex(null); setDragOverIndex(null) }}
-                          onDrop={() => handleDrop(index)}
+                          {...arrastre}
+                          className={`${fondo} border-b-0 ${
+                            dragOverIndex === index ? "border-t-2 border-t-brand" : ""
+                          }`}
+                        >
+                          <TableCell colSpan={4} className={`pt-2 pb-0 px-2 border-l-4 ${getMoraBarra(client.mora)}`}>
+                            {/* ENVUELVE, no se corta: con `truncate` dos
+                                clientes del mismo apellido quedaban
+                                indistinguibles. */}
+                            <span className="block font-semibold text-[13px] md:text-base leading-tight break-words [overflow-wrap:anywhere]">
+                              {client.nombreCompleto}
+                            </span>
+                            {client.apodo && (
+                              <span className="block text-[11px] md:text-sm text-muted-foreground leading-tight break-words [overflow-wrap:anywhere]">
+                                {client.apodo}
+                              </span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+
+                        {/* FILA 2: orden, acciones, estado y plata */}
+                        <TableRow
+                          {...arrastre}
                           // Separacion entre clientes, pensada para leerse al
                           // sol: franja de color a la izquierda, linea gruesa
                           // abajo y franjeado de verdad. Antes era una linea de
                           // 1px casi invisible sobre un franjeado al 40% de
                           // opacidad — o sea, blanco contra blanco.
-                          className={`${index % 2 === 0 ? "bg-card" : "bg-muted"} border-b-2 border-b-border hover:bg-accent/30 transition-colors ${
-                            dragIndex === index ? "opacity-50" : ""
-                          } ${dragOverIndex === index ? "border-t-2 border-t-brand" : ""} ${
-                            !canManage ? "opacity-60" : ""
-                          }`}
+                          className={`${fondo} border-b-2 border-b-border`}
                         >
                           {/* La franja va en la CELDA y no en la fila: la tabla
                               le quita todos los bordes al ultimo `<tr>`
@@ -3183,22 +3218,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 derecha. Con min-w-0 + table-fixed el span
                                 respeta el ancho de la columna y envuelve. */}
                             <div className="flex flex-col gap-0.5 min-w-0">
-                              {/* Nombre arriba, apodo debajo en su propio
-                                  renglon.
-
-                                  Los dos ENVUELVEN a dos o mas lineas, no se
-                                  cortan: con `truncate` un nombre largo
-                                  terminaba en "..." y dos clientes del mismo
-                                  apellido quedaban indistinguibles. `min-w-0`
-                                  es CRITICO — sin eso el span impone su ancho
-                                  intrinseco al flex item, desborda la celda y
-                                  se solapa con la columna de la derecha. */}
-                              <span className="font-semibold text-[12px] md:text-base leading-tight break-words [overflow-wrap:anywhere] min-w-0">{client.nombreCompleto}</span>
-                              {client.apodo && (
-                                <span className="text-[11px] md:text-sm text-muted-foreground leading-tight break-words [overflow-wrap:anywhere] min-w-0">
-                                  {client.apodo}
-                                </span>
-                              )}
                               <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                                 <span className="text-[11px] md:text-sm text-muted-foreground">{frecuenciaLabel(client.frecuenciaPago)}</span>
                                 {client.frecuenciaPago !== "daily" && client.diaSemana && (
@@ -3306,6 +3325,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                             </div>
                           </TableCell>
                         </TableRow>
+                        </Fragment>
                         )
                       })
                     )}
