@@ -51,6 +51,7 @@ import {
 } from "@/lib/gestion-core"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, type RutaUmbrales } from "@/lib/ruta-umbrales"
 import { obtenerUbicacion, evaluarGeocerca, formatearDistancia, type ResultadoGeocerca, type UbicacionMedida } from "@/lib/geo"
+import { useEstadoGps } from "@/lib/use-gps"
 
 // Types matching DB schema
 type LoanWithClient = {
@@ -628,9 +629,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   const [savingOrder, setSavingOrder] = useState(false)
 
-  // GPS permission state
-  type GpsStatus = "checking" | "granted" | "denied" | "unavailable"
-  const [gpsStatus, setGpsStatus] = useState<GpsStatus>("checking")
+  // El estado del permiso sale de `lib/use-gps.ts`, el MISMO que usa el
+  // encabezado. Antes cada pantalla lo averiguaba por su cuenta y podian
+  // contradecirse: la pastilla roja de "Sin ubicacion" arriba mientras aca los
+  // botones estaban habilitados, o al reves.
+  //
+  // Ese modulo tambien resuelve lo que costo encontrar en iPhone: que
+  // `navigator.permissions` puede no existir y revienta SINCRONO, que Safari
+  // no soporta 'geolocation' en esa API, que preguntar con alta precision solo
+  // para saber si hay permiso se pasa de tiempo bajo techo, y que volver de
+  // Ajustes tiene que notarse sin recargar la pagina.
+  const { estado: gpsStatus, volverAPedir: requestGpsPermission } = useEstadoGps()
   // Cuando la lista se sirve desde el dispositivo (sin señal), guarda el
   // momento en que esos datos se trajeron del servidor. null = datos frescos.
   const [datosDesdeCache, setDatosDesdeCache] = useState<string | null>(null)
@@ -663,105 +672,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   useEffect(() => {
     toastRef.current = toast
   }, [toast])
-
-  /**
-   * Estado del permiso de ubicación al abrir la pantalla.
-   *
-   * EN IPHONE ESTO SE ROMPÍA. La versión anterior arrancaba con
-   * `navigator.permissions.query(...)` colgado de un `.catch()`. Eso cubre que
-   * la promesa sea RECHAZADA —que es lo que hace Safari moderno, porque no
-   * soporta 'geolocation' en la Permissions API—, pero NO cubre que
-   * `navigator.permissions` directamente no exista, que es el caso de iOS
-   * viejo: ahí `.query` revienta con un TypeError SÍNCRONO que el `.catch()`
-   * ni ve. El efecto moría antes de tocar el estado y `gpsStatus` se quedaba
-   * en "checking" para siempre: cartel de "Verificando acceso a GPS..." eterno
-   * y los botones de pago y no pago apagados, sin que el teléfono llegara a
-   * preguntar nada.
-   *
-   * Ahora la Permissions API es un ATAJO, no el camino: si existe y contesta,
-   * se usa; ante cualquier problema —no existe, revienta, tarda— se le
-   * pregunta al GPS directamente, que es lo único que funciona en todos lados.
-   */
-  useEffect(() => {
-    if (typeof window === "undefined" || !navigator.geolocation) {
-      setGpsStatus("unavailable")
-      return
-    }
-
-    let vivo = true
-    let resuelto = false
-    const aplicar = (s: GpsStatus) => {
-      if (!vivo) return
-      resuelto = true
-      setGpsStatus(s)
-    }
-
-    // Este chequeo NO necesita saber DONDE esta el cobrador, solo si el
-    // telefono deja leer la ubicacion. Por eso va con baja precision y acepta
-    // una posicion vieja: se resuelve por wifi y antenas, casi al instante.
-    //
-    // Antes pedia alta precision con `maximumAge: 0`, o sea encender el chip y
-    // esperar satelites solo para responder si/no. En iPhone bajo techo eso se
-    // pasaba de los 10s, el timeout saltaba y la pantalla decia "GPS no
-    // disponible" AUNQUE el usuario acabara de tocar "Permitir". La lectura
-    // buena, la de verdad, se toma despues, al registrar la gestion.
-    const preguntarAlGps = () => {
-      navigator.geolocation.getCurrentPosition(
-        () => aplicar("granted"),
-        (e) => aplicar(e.code === 1 ? "denied" : "unavailable"),
-        { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 },
-      )
-    }
-
-    let permResult: PermissionStatus | null = null
-    try {
-      // `?.` en los dos: ni el objeto ni el método están garantizados.
-      const consulta = navigator.permissions?.query?.({ name: "geolocation" as PermissionName })
-      if (consulta) {
-        consulta
-          .then((result) => {
-            if (!vivo) return
-            permResult = result
-            if (result.state === "granted") aplicar("granted")
-            else if (result.state === "denied") aplicar("denied")
-            else preguntarAlGps() // "prompt": hay que pedirlo de verdad
-            result.onchange = () => {
-              if (result.state === "granted") aplicar("granted")
-              else if (result.state === "denied") aplicar("denied")
-            }
-          })
-          .catch(preguntarAlGps)
-      } else {
-        preguntarAlGps()
-      }
-    } catch {
-      preguntarAlGps()
-    }
-
-    // Red de seguridad: si a los 12 segundos nadie contestó, se sale de
-    // "checking". Quedarse ahí deja la pantalla inutilizable sin explicar por
-    // qué, que es justo lo que pasaba en iPhone.
-    const reloj = setTimeout(() => {
-      if (!resuelto) aplicar("unavailable")
-    }, 20000)
-
-    return () => {
-      vivo = false
-      clearTimeout(reloj)
-      if (permResult) permResult.onchange = null
-    }
-  }, [])
-
-  // Re-request GPS permission manually (called from the banner button)
-  // Igual que el chequeo de arriba: solo interesa si el telefono contesta.
-  const requestGpsPermission = () => {
-    setGpsStatus("checking")
-    navigator.geolocation.getCurrentPosition(
-      () => setGpsStatus("granted"),
-      (e) => setGpsStatus(e.code === 1 ? "denied" : "unavailable"),
-      { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 },
-    )
-  }
 
   const managedIds = new Set(managedToday.map((m) => m.loanId))
 

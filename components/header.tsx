@@ -13,10 +13,10 @@ import {
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { OfflineIndicator } from "@/components/offline-indicator"
 import { useState, useEffect } from "react"
+import { useEstadoGps } from "@/lib/use-gps"
 import type { SelectedRuta } from "./route-selector"
 import type { AuthenticatedUser } from "./views/login-view"
 
-type GpsStatus = "checking" | "granted" | "denied" | "unavailable"
 
 interface HeaderProps {
   title: string
@@ -51,27 +51,11 @@ export function Header({
 }: HeaderProps) {
   const hayPendientes = Object.values(moduleBadgeCounts ?? {}).some((n) => n > 0)
   const [currentDateTime, setCurrentDateTime] = useState(new Date())
-  const [gpsStatus, setGpsStatus] = useState<GpsStatus>("checking")
-
-  // Try to actually obtain coordinates — works from PC (WiFi/IP) and mobile (GPS).
-  // "granted" means we received a real lat/lng. Anything else is "no coords available".
-  const attemptLocation = () => {
-    if (typeof window === "undefined" || !navigator.geolocation) {
-      setGpsStatus("unavailable")
-      return
-    }
-    setGpsStatus("checking")
-    navigator.geolocation.getCurrentPosition(
-      () => setGpsStatus("granted"),
-      (e) => setGpsStatus(e.code === 1 ? "denied" : "unavailable"),
-      { enableHighAccuracy: false, timeout: 12000, maximumAge: 30000 },
-    )
-  }
-
-  useEffect(() => {
-    attemptLocation()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // El estado del GPS sale de un solo lugar (`lib/use-gps.ts`), compartido con
+  // el modulo de pagos. Antes cada uno lo averiguaba por su cuenta y aca se
+  // preguntaba UNA vez al abrir: el cobrador daba el permiso en la pantalla de
+  // pagos y esta pastilla seguia en rojo, porque nadie le avisaba.
+  const { estado: gpsStatus, volverAPedir: attemptLocation } = useEstadoGps()
 
   useEffect(() => {
     const timer = setInterval(() => {
