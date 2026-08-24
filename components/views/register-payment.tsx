@@ -496,18 +496,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // asocia a esa cuota pendiente (comportamiento de siempre) o si se
   // registra como un pago de hoy en una linea nueva, dejando la cuota
   // atrasada intacta.
-  const [fechaChoiceInfo, setFechaChoiceInfo] = useState<{ fechaOriginal: string; fechaHoy: string } | null>(null)
-  const fechaChoiceResolveRef = useRef<((v: "pendiente" | "hoy" | null) => void) | null>(null)
-  const askFechaChoice = (fechaOriginal: string, fechaHoy: string) =>
-    new Promise<"pendiente" | "hoy" | null>((resolve) => {
-      fechaChoiceResolveRef.current = resolve
-      setFechaChoiceInfo({ fechaOriginal, fechaHoy })
-    })
-  const handleFechaChoice = (choice: "pendiente" | "hoy" | null) => {
-    setFechaChoiceInfo(null)
-    fechaChoiceResolveRef.current?.(choice)
-    fechaChoiceResolveRef.current = null
-  }
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [clientForShare, setClientForShare] = useState<DisplayClient | null>(null)
   const [sharingPdf, setSharingPdf] = useState(false)
@@ -1322,42 +1310,22 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       const fechaPagoReal = ahoraColombiaISO()
       const { latitud, longitud } = coords
 
-      // -----------------------------------------------------------------
-      // ── ¿Quedo un dia anterior sin gestionar? ────────────────────────
-      // Si el cliente arrastra una cuota vencida y AYER no se le registro
-      // nada, se pregunta a que dia va esta gestion.
+      // La gestion se registra SIEMPRE con la fecha de hoy.
       //
-      //  · "Al dia anterior": el evento queda fechado AYER — cuenta en los
-      //    registros e indicadores de ese dia — y el cliente sigue
-      //    disponible para la gestion de HOY.
-      //  · "Para hoy": el evento queda fechado hoy, y ayer sigue sin
-      //    gestionar (mañana vuelve a preguntar).
+      // Aca se abria un dialogo —"Quedó un día sin gestionar"— preguntando si
+      // el pago iba para ayer o para hoy. Se quito a pedido del dueno: saltaba
+      // en cada cliente que arrastrara una cuota vencida, o sea en media ruta
+      // los lunes, y en la calle se contesta lo primero que aparezca. La plata
+      // se recibe HOY y se registra HOY, que ademas es lo que respondia el 99%
+      // de las veces.
       //
-      // Cancelacion y extension se excluyen: son operaciones de hoy por
-      // naturaleza (la cancelacion cubre tambien lo vencido).
-      //
-      // Va ANTES del umbral para que, si el pago termina en la cola de
-      // secretaria, lleve la misma fecha que el cobrador eligio.
-      let fechaAplicacion = fechaPago
-      let numCuotasEfectivo = numCuotasSnap
-      let retroAplicado = false
-      if (
-        clientSnapshot.cuotaVencidaId &&
-        clientSnapshot.cuotaVencidaFecha &&
-        !isCanceladaSnap &&
-        !extenderSnap
-      ) {
-        const choice = await askFechaChoice(clientSnapshot.cuotaVencidaFecha, fechaPago)
-        if (choice === null) {
-          setSaving(false)
-          return
-        }
-        if (choice === "pendiente") {
-          fechaAplicacion = clientSnapshot.cuotaVencidaFecha
-          numCuotasEfectivo = 1
-          retroAplicado = true
-        }
-      }
+      // Lo que se dejo de decidir aca no se pierde: la cuota vieja sigue
+      // pendiente y la cascada le asigna la plata igual, porque reparte de la
+      // mas vieja hacia adelante. Y si hay que fechar algo en un dia anterior,
+      // ese es el trabajo de Control de Pagos.
+      const fechaAplicacion = fechaPago
+      const numCuotasEfectivo = numCuotasSnap
+      const retroAplicado = false
 
       // Llave del evento: se genera AQUI, al capturar. Es la misma que se
       // usa ahora o dentro de dos horas al drenar la cola, y es la llave
@@ -1708,22 +1676,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       const fechaPagoReal = ahoraColombiaISO()
       const { latitud, longitud } = coords
 
-      // Igual que en el pago: si quedó un día anterior sin gestionar se
-      // pregunta a qué día va este no pago. "Al día anterior" lo fecha ese
-      // día y deja al cliente vigente para la gestión de hoy.
-      let fechaAplicacionNp = colombiaDateStr
-      let retroAplicadoNp = false
-      if (clientSnapshot.cuotaVencidaId && clientSnapshot.cuotaVencidaFecha) {
-        const choice = await askFechaChoice(clientSnapshot.cuotaVencidaFecha, colombiaDateStr)
-        if (choice === null) {
-          setSaving(false)
-          return
-        }
-        if (choice === "pendiente") {
-          fechaAplicacionNp = clientSnapshot.cuotaVencidaFecha
-          retroAplicadoNp = true
-        }
-      }
+      // Igual que en el pago: la visita se registra con la fecha de HOY, sin
+      // preguntar. Ver el comentario en `handleConfirmPayment`.
+      const fechaAplicacionNp = colombiaDateStr
+      const retroAplicadoNp = false
 
       const gestionIdNp = nuevaGestionId()
 
@@ -3983,33 +3939,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               className="flex-1 h-8 md:h-10 text-xs md:text-base"
             >
               Continuar
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Dialog: elegir a que fecha se asocia un pago/no-pago con atraso */}
-      <Dialog open={!!fechaChoiceInfo} onOpenChange={(open) => { if (!open) handleFechaChoice(null) }}>
-        <DialogContent className="p-4 md:p-6 max-w-[90vw] md:max-w-md">
-          <DialogHeader>
-            <div className="flex items-center justify-center h-12 w-12 rounded-full bg-amber-100 mx-auto mb-2">
-              <AlertCircle className="h-6 w-6 text-amber-600" />
-            </div>
-            <DialogTitle className="text-sm md:text-lg text-center">Quedó un día sin gestionar</DialogTitle>
-            <DialogDescription className="text-xs md:text-sm text-center">
-              La cuota del <strong>{fechaChoiceInfo?.fechaOriginal}</strong> no tiene pago ni no pago registrado.
-              ¿Para qué día registro esta gestión?
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-2 pt-2 md:pt-4">
-            <Button variant="outline" onClick={() => handleFechaChoice("pendiente")} className="h-auto py-2 text-xs md:text-sm whitespace-normal">
-              Aplicar al {fechaChoiceInfo?.fechaOriginal} — queda en los registros de ese día y el cliente sigue disponible para gestionar hoy
-            </Button>
-            <Button onClick={() => handleFechaChoice("hoy")} className="h-auto py-2 text-xs md:text-sm whitespace-normal">
-              Registrar para hoy ({fechaChoiceInfo?.fechaHoy}) — la cuota del {fechaChoiceInfo?.fechaOriginal} seguirá pendiente
-            </Button>
-            <Button variant="ghost" onClick={() => handleFechaChoice(null)} className="h-8 text-xs md:text-sm">
-              Cancelar
             </Button>
           </div>
         </DialogContent>

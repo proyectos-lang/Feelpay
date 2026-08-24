@@ -302,13 +302,14 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDi
                   <SelectValue placeholder="Selecciona el día" />
                 </SelectTrigger>
                 <SelectContent>
+                  {/* Domingo NO se ofrece: no se cobra ese dia (script 067), y
+                      elegirlo dejaba todas las cuotas en un dia sin ruta. */}
                   <SelectItem value="lunes">Lunes</SelectItem>
                   <SelectItem value="martes">Martes</SelectItem>
                   <SelectItem value="miercoles">Miércoles</SelectItem>
                   <SelectItem value="jueves">Jueves</SelectItem>
                   <SelectItem value="viernes">Viernes</SelectItem>
                   <SelectItem value="sabado">Sábado</SelectItem>
-                  <SelectItem value="domingo">Domingo</SelectItem>
                 </SelectContent>
               </Select>
             </div>

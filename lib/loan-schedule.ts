@@ -84,8 +84,11 @@ export interface ScheduleResult {
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
+// `domingo: 1` NO es un error: se manda a lunes. Los domingos no se cobra,
+// asi que un credito semanal fechado en domingo dejaba TODAS sus cuotas en un
+// dia en que nadie sale a la ruta. Espejo de `generar_cronograma` (script 067).
 const DIAS_SEMANA: Record<string, number> = {
-  domingo: 0, lunes: 1, martes: 2, miercoles: 3, "miércoles": 3,
+  domingo: 1, lunes: 1, martes: 2, miercoles: 3, "miércoles": 3,
   jueves: 4, viernes: 5, sabado: 6, "sábado": 6,
 }
 
@@ -114,8 +117,12 @@ export function buildPaymentSchedule(p: BuildScheduleParams): ScheduleResult {
   if (!(numeroCuotas >= 1)) throw new Error("El número de cuotas debe ser al menos 1")
 
   // ── Fecha de inicio ────────────────────────────────────────────────────
+  // NINGUNA cuota puede caer en domingo, en ninguna frecuencia. Antes esto
+  // solo miraba la diaria, y un credito semanal/quincenal/mensual que
+  // arrancara un domingo dejaba todas sus cuotas ahi: nacian vencidas y el
+  // cliente aparecia en mora sin haber fallado nunca.
   let inicio = p.fechaInicio || sumar(todayColombia(), 1)
-  if (frecuencia === "daily" && dow(inicio) === 0) inicio = sumar(inicio, 1)
+  if (dow(inicio) === 0) inicio = sumar(inicio, 1)
   if (frecuencia === "weekly" && p.diaSemana) {
     const objetivo = DIAS_SEMANA[p.diaSemana.toLowerCase()]
     if (objetivo !== undefined) {
@@ -151,9 +158,14 @@ export function buildPaymentSchedule(p: BuildScheduleParams): ScheduleResult {
   let acumulado = 0
 
   for (let i = 1; i <= numeroCuotas; i++) {
-    const fecha_pago = paso === 1
+    // La diaria saltea domingos por construccion. Las demas avanzan de 7, 15
+    // o 30 dias y si pueden aterrizar en domingo: esa cuota se corre al lunes
+    // SIN mover las siguientes, para que el credito no se alargue un dia por
+    // cada domingo que toque.
+    let fecha_pago = paso === 1
       ? sumar(inicio, (i - 1) + Math.floor((pos + i - 1) / 6))
       : sumar(inicio, paso * (i - 1))
+    if (paso !== 1 && dow(fecha_pago) === 0) fecha_pago = sumar(fecha_pago, 1)
 
     const esUltima = i === numeroCuotas
     let valor_cuota: number

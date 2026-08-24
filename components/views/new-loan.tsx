@@ -2610,6 +2610,8 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                   <SelectValue placeholder="Seleccione día" />
                 </SelectTrigger>
                 <SelectContent>
+                  {/* Domingo NO se ofrece: no se cobra ese dia (script 067), y
+                      elegirlo dejaba todas las cuotas en un dia sin ruta. */}
                   <SelectItem value="lunes" className="text-[11px] md:text-sm">
                     Lunes
                   </SelectItem>
@@ -2627,9 +2629,6 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                   </SelectItem>
                   <SelectItem value="sabado" className="text-[11px] md:text-sm">
                     Sábado
-                  </SelectItem>
-                  <SelectItem value="domingo" className="text-[11px] md:text-sm">
-                    Domingo
                   </SelectItem>
                 </SelectContent>
               </Select>
