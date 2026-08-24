@@ -489,6 +489,19 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
         monto_pagado: newMonto,
       })
 
+      // Una cuota no puede quedarse con mas de lo que vale. El sobrante NO se
+      // pierde: vuelve a la bolsa comun y cae en cascada sobre las cuotas mas
+      // viejas sin cubrir. Se avisa porque si no, el usuario marca 30.000 en
+      // una cuota de 19.500, ve 19.500 y cree que se perdieron 10.500.
+      const sobrante = Number(newMonto ?? 0) - Number(newValor ?? row.valor_cuota ?? 0)
+      if (newEstado !== "no_pago" && newEstado !== "pendiente" && sobrante > 0) {
+        toast({
+          title: `Quedaron ${fmtCOP(sobrante)} por encima de la cuota`,
+          description:
+            "Esta cuota queda pagada con su valor completo y el resto se aplica a las cuotas más viejas que sigan pendientes. No se pierde.",
+        })
+      }
+
       const nuevoSaldo = Number(res.nuevo_saldo ?? 0)
       const estadoFinal = (res.loan_estado_final as string) ?? selectedLoan?.estado ?? "activo"
       const reactivado = res.loan_reactivado === true
