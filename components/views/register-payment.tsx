@@ -742,26 +742,40 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     if (moraFilter === "yellow") return c.mora > 4 && c.mora <= 8
     return c.mora > 8
   }).sort((a, b) => {
-    // 1. Clientes con cuota FUTURA siempre al final, sin importar
-    //    frecuencia ni dia. Se pueden cobrar (adelanto), pero no son la
-    //    ruta del dia: primero lo que vence hoy o esta atrasado.
+    // 1. EL ORDEN DE LA RUTA MANDA.
+    //
+    //    Antes era el ultimo criterio de tres, y los dos de arriba lo
+    //    deshacian: primero se mandaban al final los clientes con cuota
+    //    FUTURA, y en "No Diario" se subian los del dia de cobro. En la ruta
+    //    190, 28 de 44 clientes caen en el primer grupo — o sea que quien
+    //    acomodaba su ruta en "Ordenar Ruta" abria Pagos y veia OTRA cosa.
+    //
+    //    Y esa reorganizacion era invisible: el badge "Próx. pago" que la
+    //    explicaba se quito hace unas semanas, asi que la lista se reordenaba
+    //    sola sin nada en pantalla que dijera por que.
+    //
+    //    El orden de visita es GEOGRAFICO: es la calle, en el orden en que se
+    //    camina. Mandarle al final a los que estan al dia obliga a pasar de
+    //    largo y volver.
+    const ordA = a.ordenvisita > 0 ? a.ordenvisita : 99999
+    const ordB = b.ordenvisita > 0 ? b.ordenvisita : 99999
+    if (ordA !== ordB) return ordA - ordB
+
+    // 2. Entre los que NO tienen orden asignado (ambos 99999), se conserva el
+    //    criterio de siempre: primero lo que vence hoy o esta atrasado, y los
+    //    que estan al dia al final. Una ruta que nunca se ordeno se sigue
+    //    viendo como antes.
     const aFuturo = a.nextPaymentEsFuturo ? 1 : 0
     const bFuturo = b.nextPaymentEsFuturo ? 1 : 0
     if (aFuturo !== bFuturo) return aFuturo - bFuturo
 
-    // 2. En "No Diario": dentro del grupo procesable, los del dia
-    //    de pago de hoy van antes que los de otro dia.
+    // 3. Y en "No Diario", los del dia de cobro de hoy antes que los demas.
     if (!isDiario) {
       const aIsToday = isPaymentDayToday(a.diaSemana) ? 0 : 1
       const bIsToday = isPaymentDayToday(b.diaSemana) ? 0 : 1
       if (aIsToday !== bIsToday) return aIsToday - bIsToday
     }
-
-    // 3. Dentro de cada subgrupo, ordenvisita (0 se trata como
-    //    infinito para no flotar clientes sin orden asignado).
-    const ordA = a.ordenvisita > 0 ? a.ordenvisita : 99999
-    const ordB = b.ordenvisita > 0 ? b.ordenvisita : 99999
-    return ordA - ordB
+    return 0
   })
   
   // Helper to determine if a client can be managed (register payment/no-payment)
@@ -1178,13 +1192,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         }
       }
 
-      // Sort: primero lo que vence hoy o esta atrasado (ordenvisita), y los
-      // que estan al dia (cuota FUTURA, cobrarlos seria adelantar) al final.
+      // Mismo criterio que la lista visible: manda `ordenvisita`, y solo
+      // entre los que no lo tienen asignado decide la cuota futura. Si los dos
+      // ordenes no coincidieran, la lista daria un salto al terminar de
+      // cargar.
       pendingClients.sort((a, b) => {
+        const ordA = a.ordenvisita > 0 ? a.ordenvisita : 99999
+        const ordB = b.ordenvisita > 0 ? b.ordenvisita : 99999
+        if (ordA !== ordB) return ordA - ordB
         const aFuturo = a.nextPaymentEsFuturo ? 1 : 0
         const bFuturo = b.nextPaymentEsFuturo ? 1 : 0
-        if (aFuturo !== bFuturo) return aFuturo - bFuturo
-        return a.ordenvisita - b.ordenvisita
+        return aFuturo - bFuturo
       })
       managedClientsFromDB.sort((a, b) => a.ordenvisita - b.ordenvisita)
 
