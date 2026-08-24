@@ -225,6 +225,25 @@ const getTodayDayName = () => {
 }
 
 // Check if the payment day matches today
+/**
+ * ¿Es un iPhone o un iPad?
+ *
+ * Se usa SOLO para escribir las instrucciones correctas cuando el permiso de
+ * ubicación está negado: en iOS no alcanza con volver a pedirlo —Safari no
+ * vuelve a preguntar una vez que se dijo que no— y hay que ir a Ajustes. Sin
+ * decírselo, el cobrador toca "Solicitar permiso" una y otra vez sin que pase
+ * nada.
+ *
+ * El iPad moderno se identifica como Mac, por eso el segundo chequeo.
+ */
+const esIOS = () => {
+  if (typeof navigator === "undefined") return false
+  return (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  )
+}
+
 const isPaymentDayToday = (diaSemana: string | null) => {
   if (!diaSemana) return false
   const today = getTodayDayName()
@@ -638,46 +657,81 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     toastRef.current = toast
   }, [toast])
 
-  // On mount: query permission status and listen for changes
+  /**
+   * Estado del permiso de ubicación al abrir la pantalla.
+   *
+   * EN IPHONE ESTO SE ROMPÍA. La versión anterior arrancaba con
+   * `navigator.permissions.query(...)` colgado de un `.catch()`. Eso cubre que
+   * la promesa sea RECHAZADA —que es lo que hace Safari moderno, porque no
+   * soporta 'geolocation' en la Permissions API—, pero NO cubre que
+   * `navigator.permissions` directamente no exista, que es el caso de iOS
+   * viejo: ahí `.query` revienta con un TypeError SÍNCRONO que el `.catch()`
+   * ni ve. El efecto moría antes de tocar el estado y `gpsStatus` se quedaba
+   * en "checking" para siempre: cartel de "Verificando acceso a GPS..." eterno
+   * y los botones de pago y no pago apagados, sin que el teléfono llegara a
+   * preguntar nada.
+   *
+   * Ahora la Permissions API es un ATAJO, no el camino: si existe y contesta,
+   * se usa; ante cualquier problema —no existe, revienta, tarda— se le
+   * pregunta al GPS directamente, que es lo único que funciona en todos lados.
+   */
   useEffect(() => {
     if (typeof window === "undefined" || !navigator.geolocation) {
       setGpsStatus("unavailable")
       return
     }
 
-    const applyState = (state: PermissionState) => {
-      if (state === "granted") setGpsStatus("granted")
-      else if (state === "denied") setGpsStatus("denied")
-      else setGpsStatus("checking") // "prompt" — need to ask
+    let vivo = true
+    let resuelto = false
+    const aplicar = (s: GpsStatus) => {
+      if (!vivo) return
+      resuelto = true
+      setGpsStatus(s)
+    }
+
+    const preguntarAlGps = () => {
+      navigator.geolocation.getCurrentPosition(
+        () => aplicar("granted"),
+        (e) => aplicar(e.code === 1 ? "denied" : "unavailable"),
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+      )
     }
 
     let permResult: PermissionStatus | null = null
+    try {
+      // `?.` en los dos: ni el objeto ni el método están garantizados.
+      const consulta = navigator.permissions?.query?.({ name: "geolocation" as PermissionName })
+      if (consulta) {
+        consulta
+          .then((result) => {
+            if (!vivo) return
+            permResult = result
+            if (result.state === "granted") aplicar("granted")
+            else if (result.state === "denied") aplicar("denied")
+            else preguntarAlGps() // "prompt": hay que pedirlo de verdad
+            result.onchange = () => {
+              if (result.state === "granted") aplicar("granted")
+              else if (result.state === "denied") aplicar("denied")
+            }
+          })
+          .catch(preguntarAlGps)
+      } else {
+        preguntarAlGps()
+      }
+    } catch {
+      preguntarAlGps()
+    }
 
-    navigator.permissions
-      .query({ name: "geolocation" as PermissionName })
-      .then((result) => {
-        permResult = result
-        applyState(result.state)
-        result.onchange = () => applyState(result.state)
-        // If status is "prompt", actively call getCurrentPosition to trigger browser dialog
-        if (result.state === "prompt") {
-          navigator.geolocation.getCurrentPosition(
-            () => setGpsStatus("granted"),
-            (e) => setGpsStatus(e.code === 1 ? "denied" : "unavailable"),
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
-          )
-        }
-      })
-      .catch(() => {
-        // Permissions API not available — try directly
-        navigator.geolocation.getCurrentPosition(
-          () => setGpsStatus("granted"),
-          (e) => setGpsStatus(e.code === 1 ? "denied" : "unavailable"),
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
-        )
-      })
+    // Red de seguridad: si a los 12 segundos nadie contestó, se sale de
+    // "checking". Quedarse ahí deja la pantalla inutilizable sin explicar por
+    // qué, que es justo lo que pasaba en iPhone.
+    const reloj = setTimeout(() => {
+      if (!resuelto) aplicar("unavailable")
+    }, 12000)
 
     return () => {
+      vivo = false
+      clearTimeout(reloj)
       if (permResult) permResult.onchange = null
     }
   }, [])
@@ -2642,8 +2696,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             </p>
             <p className="mt-0.5 text-xs text-destructive/80">
               {gpsStatus === "denied"
-                ? "Debes permitir el acceso a la ubicación en la configuración del navegador para registrar pagos o no pagos."
-                : "No es posible obtener la ubicación. Verifica que el GPS esté activado."}
+                ? esIOS()
+                  ? "En iPhone hay que habilitarlo desde Ajustes: Ajustes › Privacidad y seguridad › Localización › activarla, y ahí mismo buscar Safari y poner “Al usar la app”. Después volvé y recargá esta pantalla. El botón de acá no sirve: una vez que se dijo que no, Safari no vuelve a preguntar."
+                  : "Debes permitir el acceso a la ubicación en la configuración del navegador para registrar pagos o no pagos."
+                : esIOS()
+                  ? "No se pudo leer la ubicación. Revisá que la Localización esté encendida en Ajustes › Privacidad y seguridad, y que Safari la tenga en “Al usar la app”. Si abriste la app desde el ícono del escritorio, el permiso se pide aparte del de Safari."
+                  : "No es posible obtener la ubicación. Verifica que el GPS esté activado."}
             </p>
           </div>
           {gpsStatus !== "denied" && (
