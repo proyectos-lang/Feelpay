@@ -419,10 +419,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         previa.loanId === cliente.loanId &&
         Date.now() - previa.tomadaEn < 45_000
       coords = fresca ? previa.coords : await obtenerUbicacion()
-    } catch {
+    } catch (err) {
+      // Se distingue el permiso negado de que el chip no enganche: son dos
+      // problemas distintos y se arreglan de forma distinta. Con un solo
+      // mensaje —"activa el GPS"— el cobrador que ya lo tenia activado se
+      // quedaba mirando la pantalla sin saber que hacer.
+      const negado = err instanceof Error && err.message === "GPS_DENIED"
       toast({
-        title: "GPS no disponible",
-        description: `Activa el GPS del dispositivo para registrar ${accion}.`,
+        title: negado ? "Sin permiso de ubicación" : "No se pudo leer la ubicación",
+        description: negado
+          ? `Este teléfono tiene bloqueada la ubicación para la app. Hay que habilitarla en la configuración del sistema para registrar ${accion}.`
+          : `El teléfono no logró ubicarse. Salí a un lugar más despejado y volvé a intentar; si estás bajo techo puede tardar. (Se intenta dos veces: primero con el GPS y después por antenas.)`,
         variant: "destructive",
       })
       return null
@@ -689,11 +696,20 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       setGpsStatus(s)
     }
 
+    // Este chequeo NO necesita saber DONDE esta el cobrador, solo si el
+    // telefono deja leer la ubicacion. Por eso va con baja precision y acepta
+    // una posicion vieja: se resuelve por wifi y antenas, casi al instante.
+    //
+    // Antes pedia alta precision con `maximumAge: 0`, o sea encender el chip y
+    // esperar satelites solo para responder si/no. En iPhone bajo techo eso se
+    // pasaba de los 10s, el timeout saltaba y la pantalla decia "GPS no
+    // disponible" AUNQUE el usuario acabara de tocar "Permitir". La lectura
+    // buena, la de verdad, se toma despues, al registrar la gestion.
     const preguntarAlGps = () => {
       navigator.geolocation.getCurrentPosition(
         () => aplicar("granted"),
         (e) => aplicar(e.code === 1 ? "denied" : "unavailable"),
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+        { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 },
       )
     }
 
@@ -727,7 +743,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     // qué, que es justo lo que pasaba en iPhone.
     const reloj = setTimeout(() => {
       if (!resuelto) aplicar("unavailable")
-    }, 12000)
+    }, 20000)
 
     return () => {
       vivo = false
@@ -737,12 +753,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   }, [])
 
   // Re-request GPS permission manually (called from the banner button)
+  // Igual que el chequeo de arriba: solo interesa si el telefono contesta.
   const requestGpsPermission = () => {
     setGpsStatus("checking")
     navigator.geolocation.getCurrentPosition(
       () => setGpsStatus("granted"),
       (e) => setGpsStatus(e.code === 1 ? "denied" : "unavailable"),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+      { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 },
     )
   }
 

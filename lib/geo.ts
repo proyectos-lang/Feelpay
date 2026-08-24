@@ -25,22 +25,9 @@ export interface UbicacionMedida extends Ubicacion {
   precision: number
 }
 
-/**
- * Pide la posicion actual con la precision mas alta disponible.
- *
- * Rechaza con "GPS_DENIED" o "GPS_UNAVAILABLE" para que quien llama pueda
- * distinguir un permiso negado de un chip que no engancho.
- *
- * `maximumAge: 0` a proposito: cada gestion es en un punto distinto y una
- * posicion cacheada seria la del cliente anterior. El timeout de 10s le da
- * margen al warm-up del GPS en moviles.
- */
-export function obtenerUbicacion(): Promise<UbicacionMedida> {
+/** Una lectura del navegador, ya normalizada. */
+function leer(opciones: PositionOptions): Promise<UbicacionMedida> {
   return new Promise((resolve, reject) => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      reject(new Error("GPS_UNAVAILABLE"))
-      return
-    }
     navigator.geolocation.getCurrentPosition(
       (position) => {
         resolve({
@@ -49,15 +36,61 @@ export function obtenerUbicacion(): Promise<UbicacionMedida> {
           // accuracy es obligatorio en la spec y siempre viene poblado,
           // pero si algun navegador lo deja en null tratamos la lectura
           // como imprecisa en vez de como perfecta.
-          precision: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : Number.POSITIVE_INFINITY,
+          precision: Number.isFinite(position.coords.accuracy)
+            ? position.coords.accuracy
+            : Number.POSITIVE_INFINITY,
         })
       },
-      (error) => {
-        reject(new Error(error.code === 1 ? "GPS_DENIED" : "GPS_UNAVAILABLE"))
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+      reject,
+      opciones,
     )
   })
+}
+
+/**
+ * Pide la posicion actual. DOS INTENTOS, y el segundo es el que salva iPhone.
+ *
+ * PRIMERO: alta precision, 20s, sin aceptar nada cacheado. Es la lectura buena
+ * — la del GPS de verdad — y es la que se quiere para una gestion.
+ *
+ * SI ESE SE PASA DE TIEMPO: baja precision, 8s, aceptando una posicion de
+ * hasta 60s. Esa la resuelve el telefono por wifi y antenas, y vuelve casi al
+ * instante.
+ *
+ * POR QUE HIZO FALTA
+ * En iPhone el usuario tocaba "Permitir" y la pantalla igual decia que no
+ * habia GPS. El permiso estaba dado: lo que fallaba era el fix. Un iPhone
+ * pidiendo alta precision con `maximumAge: 0` tiene que encender el chip y
+ * esperar satelites, y bajo techo eso pasa de 10s sin problema. El timeout
+ * saltaba, el error llegaba como "no disponible" y quedaba igual que un
+ * permiso negado.
+ *
+ * Una posicion por antenas tiene cientos de metros de error, pero para lo que
+ * se usa —dejar constancia de donde se registro la gestion— vale
+ * infinitamente mas que no tener nada. Y la imprecision no se oculta: viaja en
+ * `precision`, y `evaluarGeocerca` ya sabe que una lectura mas imprecisa que
+ * el radio no sirve para decidir ("no_verificable") y NO bloquea.
+ *
+ * Rechaza con "GPS_DENIED" cuando el permiso esta negado y "GPS_UNAVAILABLE"
+ * en cualquier otro caso, para que quien llama pueda decir cual de los dos es.
+ */
+export function obtenerUbicacion(): Promise<UbicacionMedida> {
+  if (typeof navigator === "undefined" || !navigator.geolocation) {
+    return Promise.reject(new Error("GPS_UNAVAILABLE"))
+  }
+
+  return leer({ enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }).catch(
+    (error: GeolocationPositionError) => {
+      // Permiso negado: no hay segundo intento que valga.
+      if (error?.code === 1) throw new Error("GPS_DENIED")
+
+      return leer({ enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }).catch(
+        (segundo: GeolocationPositionError) => {
+          throw new Error(segundo?.code === 1 ? "GPS_DENIED" : "GPS_UNAVAILABLE")
+        },
+      )
+    },
+  )
 }
 
 const RADIO_TIERRA_M = 6371000
