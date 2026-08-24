@@ -742,7 +742,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     if (moraFilter === "yellow") return c.mora > 4 && c.mora <= 8
     return c.mora > 8
   }).sort((a, b) => {
-    // 1. EL ORDEN DE LA RUTA MANDA.
+    // 1. EL ORDEN DE LA RUTA MANDA, Y ES LO UNICO QUE ORDENA.
     //
     //    Antes era el ultimo criterio de tres, y los dos de arriba lo
     //    deshacian: primero se mandaban al final los clientes con cuota
@@ -761,21 +761,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     const ordB = b.ordenvisita > 0 ? b.ordenvisita : 99999
     if (ordA !== ordB) return ordA - ordB
 
-    // 2. Entre los que NO tienen orden asignado (ambos 99999), se conserva el
-    //    criterio de siempre: primero lo que vence hoy o esta atrasado, y los
-    //    que estan al dia al final. Una ruta que nunca se ordeno se sigue
-    //    viendo como antes.
-    const aFuturo = a.nextPaymentEsFuturo ? 1 : 0
-    const bFuturo = b.nextPaymentEsFuturo ? 1 : 0
-    if (aFuturo !== bFuturo) return aFuturo - bFuturo
-
-    // 3. Y en "No Diario", los del dia de cobro de hoy antes que los demas.
-    if (!isDiario) {
-      const aIsToday = isPaymentDayToday(a.diaSemana) ? 0 : 1
-      const bIsToday = isPaymentDayToday(b.diaSemana) ? 0 : 1
-      if (aIsToday !== bIsToday) return aIsToday - bIsToday
-    }
-    return 0
+    // 2. Los que TODAVIA no tienen orden asignado van al final, y entre
+    //    ellos se ordenan por algo FIJO: la fecha de la venta y, si empatan,
+    //    el id del prestamo.
+    //
+    //    No se usa la cuota futura ni el dia de cobro, aunque sean criterios
+    //    mas "inteligentes": esos cambian solos de un dia para el otro, y una
+    //    lista que se reacomoda sola es justo lo que se vino a arreglar. Con
+    //    la fecha de venta, el cobrador ve siempre la misma secuencia hasta
+    //    que decida ordenarla el.
+    if (a.fechaVenta !== b.fechaVenta) return a.fechaVenta < b.fechaVenta ? -1 : 1
+    return a.loanId < b.loanId ? -1 : a.loanId > b.loanId ? 1 : 0
   })
   
   // Helper to determine if a client can be managed (register payment/no-payment)
@@ -1200,9 +1196,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         const ordA = a.ordenvisita > 0 ? a.ordenvisita : 99999
         const ordB = b.ordenvisita > 0 ? b.ordenvisita : 99999
         if (ordA !== ordB) return ordA - ordB
-        const aFuturo = a.nextPaymentEsFuturo ? 1 : 0
-        const bFuturo = b.nextPaymentEsFuturo ? 1 : 0
-        return aFuturo - bFuturo
+        if (a.fechaVenta !== b.fechaVenta) return a.fechaVenta < b.fechaVenta ? -1 : 1
+        return a.loanId < b.loanId ? -1 : a.loanId > b.loanId ? 1 : 0
       })
       managedClientsFromDB.sort((a, b) => a.ordenvisita - b.ordenvisita)
 
