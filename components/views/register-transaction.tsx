@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { ConceptoCombobox } from "@/components/concepto-combobox"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TrendingDown, TrendingUp, Wallet, Camera, X, AlertCircle } from "lucide-react"
@@ -638,23 +638,16 @@ export function RegisterTransaction({
                 <Label htmlFor="incomeItem" className="text-[12px] md:text-sm">
                   Item de Ingreso
                 </Label>
-                <Select disabled={loading} value={selectedIncomeItem} onValueChange={handleIncomeItemChange}>
-                  <SelectTrigger id="incomeItem" className="h-7 md:h-10 text-[12px] md:text-sm">
-                    <SelectValue placeholder={loading ? "Cargando..." : "Seleccione un item"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {incomeItems.map((item) => (
-                      <SelectItem key={item.id} value={item.id.toString()} className="text-[12px] md:text-sm">
-                        {item.nombre}
-                      </SelectItem>
-                    ))}
-                    {incomeItems.length === 0 && !loading && (
-                      <SelectItem value="none" disabled className="text-[12px] md:text-sm">
-                        No hay items disponibles
-                      </SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
+                <ConceptoCombobox
+                  id="incomeItem"
+                  opciones={incomeItems.map((i) => ({ valor: i.id.toString(), etiqueta: i.nombre }))}
+                  valor={selectedIncomeItem}
+                  onValorChange={handleIncomeItemChange}
+                  cargando={loading}
+                  placeholder="Seleccione un item"
+                  vacioTexto="No hay items de ingreso disponibles"
+                  className="h-7 md:h-10 text-[12px] md:text-sm px-2 md:px-3"
+                />
               </div>
 
               {incomeTope !== null && (
@@ -793,23 +786,17 @@ export function RegisterTransaction({
                 <Label htmlFor="expenseItem" className="text-[12px] md:text-sm">
                   Item de Gasto
                 </Label>
-                <Select disabled={loading} value={selectedExpenseItem} onValueChange={handleExpenseItemChange}>
-                  <SelectTrigger id="expenseItem" className="h-7 md:h-10 text-[12px] md:text-sm">
-                    <SelectValue placeholder={loading ? "Cargando..." : "Seleccione un item"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {expenseItems.map((item) => (
-                      <SelectItem key={item.id} value={item.id.toString()} className="text-[12px] md:text-sm">
-                        {item.nombre}
-                      </SelectItem>
-                    ))}
-                    {expenseItems.length === 0 && !loading && (
-                      <SelectItem value="none" disabled className="text-[12px] md:text-sm">
-                        No hay items disponibles
-                      </SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
+                {/* Acá es donde más se nota: son 40 conceptos de gasto. */}
+                <ConceptoCombobox
+                  id="expenseItem"
+                  opciones={expenseItems.map((i) => ({ valor: i.id.toString(), etiqueta: i.nombre }))}
+                  valor={selectedExpenseItem}
+                  onValorChange={handleExpenseItemChange}
+                  cargando={loading}
+                  placeholder="Seleccione un item"
+                  vacioTexto="No hay items de gasto disponibles"
+                  className="h-7 md:h-10 text-[12px] md:text-sm px-2 md:px-3"
+                />
               </div>
 
               {expenseTope !== null && (
@@ -948,23 +935,16 @@ export function RegisterTransaction({
                 <Label htmlFor="withdrawalItem" className="text-[12px] md:text-sm">
                   Item de Retiro
                 </Label>
-                <Select disabled={loading} value={selectedWithdrawalItem} onValueChange={handleWithdrawalItemChange}>
-                  <SelectTrigger id="withdrawalItem" className="h-7 md:h-10 text-[12px] md:text-sm">
-                    <SelectValue placeholder={loading ? "Cargando..." : "Seleccione un item"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {withdrawalItems.map((item) => (
-                      <SelectItem key={item.id} value={item.id.toString()} className="text-[12px] md:text-sm">
-                        {item.nombre}
-                      </SelectItem>
-                    ))}
-                    {withdrawalItems.length === 0 && !loading && (
-                      <SelectItem value="none" disabled className="text-[12px] md:text-sm">
-                        No hay items disponibles
-                      </SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
+                <ConceptoCombobox
+                  id="withdrawalItem"
+                  opciones={withdrawalItems.map((i) => ({ valor: i.id.toString(), etiqueta: i.nombre }))}
+                  valor={selectedWithdrawalItem}
+                  onValorChange={handleWithdrawalItemChange}
+                  cargando={loading}
+                  placeholder="Seleccione un item"
+                  vacioTexto="No hay items de retiro disponibles"
+                  className="h-7 md:h-10 text-[12px] md:text-sm px-2 md:px-3"
+                />
               </div>
 
               {withdrawalTope !== null && (

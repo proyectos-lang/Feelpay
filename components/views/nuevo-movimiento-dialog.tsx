@@ -38,6 +38,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { ConceptoCombobox } from "@/components/concepto-combobox"
 import { Loader2, Plus, ShieldCheck } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
@@ -234,16 +235,15 @@ export function NuevoMovimientoDialog({ open, onOpenChange, rutaActual, rutas, o
 
           <div className="space-y-1">
             <Label className="text-xs">Concepto</Label>
-            <Select value={concepto} onValueChange={setConcepto} disabled={cargandoConceptos}>
-              <SelectTrigger className="h-9 text-sm">
-                <SelectValue placeholder={cargandoConceptos ? "Cargando…" : "Elige el concepto"} />
-              </SelectTrigger>
-              <SelectContent>
-                {conceptos.map((c) => (
-                  <SelectItem key={c} value={c} className="text-sm">{c}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ConceptoCombobox
+              opciones={conceptos.map((c) => ({ valor: c, etiqueta: c }))}
+              valor={concepto}
+              onValorChange={setConcepto}
+              cargando={cargandoConceptos}
+              placeholder="Elige el concepto"
+              vacioTexto={`No hay conceptos de ${tipo.toLowerCase()} configurados`}
+              className="h-9 text-sm"
+            />
             {!cargandoConceptos && conceptos.length === 0 && (
               <p className="text-[11px] text-muted-foreground">
                 No hay conceptos de {tipo.toLowerCase()} configurados. Se agregan en Usuarios y Rutas.

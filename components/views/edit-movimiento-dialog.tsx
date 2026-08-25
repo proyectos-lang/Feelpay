@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { ConceptoCombobox } from "@/components/concepto-combobox"
 import { Loader2, Save, AlertTriangle } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
@@ -155,16 +155,14 @@ export function EditMovimientoDialog({ movimiento, open, onOpenChange, comoAseso
 
           <div className="space-y-1">
             <Label className="text-xs">Concepto</Label>
-            <Select value={fConcepto} onValueChange={setFConcepto}>
-              <SelectTrigger className="h-9 text-sm">
-                <SelectValue placeholder="Elige un concepto" />
-              </SelectTrigger>
-              <SelectContent>
-                {conceptos.map((c) => (
-                  <SelectItem key={c} value={c} className="text-sm">{c}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ConceptoCombobox
+              opciones={conceptos.map((c) => ({ valor: c, etiqueta: c }))}
+              valor={fConcepto}
+              onValorChange={setFConcepto}
+              placeholder="Elige un concepto"
+              vacioTexto="No hay conceptos configurados"
+              className="h-9 text-sm"
+            />
           </div>
 
           <div className="space-y-1">
