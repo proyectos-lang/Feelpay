@@ -45,6 +45,7 @@ import { RouteSelector, type SelectedRuta } from "@/components/route-selector"
 import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
 import { LoginView, type AuthenticatedUser } from "@/components/views/login-view"
 import { LoginSplash } from "@/components/login-splash"
+import { PinLockView } from "@/components/views/pin-lock-view"
 import { SESSION_LOST_EVENT, getSupabaseSafe } from "@/lib/api-helper"
 import { limpiarCache } from "@/lib/offline-cache"
 import { createClient } from "@/lib/supabase/client"
@@ -128,6 +129,18 @@ export default function Page() {
 
   // Authenticated user + selected ruta (both global). Hydrated from localStorage on mount.
   const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(null)
+  /**
+   * El candado del PIN.
+   *
+   * Vive SOLO en memoria a proposito. Si se guardara en `localStorage`,
+   * sobreviviria al cierre de la app — pero al reves de como conviene: habria
+   * que acordarse de escribirlo antes de cerrar, y un cierre brusco (batería,
+   * el sistema matando la pestaña) lo dejaria sin escribir y la app abriria
+   * desbloqueada. Al vivir en memoria, CUALQUIER forma de cerrar lo borra, y
+   * al volver a montar se arranca bloqueado. El caso seguro es el que sale
+   * gratis.
+   */
+  const [bloqueado, setBloqueado] = useState(false)
   const [selectedRuta, setSelectedRuta] = useState<SelectedRuta | null>(null)
   const [hydrated, setHydrated] = useState(false)
   // Splash de transicion tras un login fresco (no se muestra al recargar la pagina)
@@ -157,6 +170,12 @@ export default function Page() {
           const parsed = JSON.parse(rawUser) as AuthenticatedUser
           if (parsed && parsed.id) {
             setCurrentUser(parsed)
+            // LA SESION VOLVIO DE DISCO, asi que la app se acaba de abrir:
+            // arranca bloqueada. Esto es "cerro el sistema y lo volvio a
+            // abrir". La unica forma de arrancar abierta es que el login
+            // ocurra en esta misma vida de la pagina — y eso pasa por
+            // `handleLoginSuccess`, que apaga el candado en memoria.
+            setBloqueado(true)
             loadUserPermissions(parsed.id, parsed.rol ?? "").then(setUserPermissions).catch(() => {})
             // Refresca la foto de perfil por si cambio desde otro dispositivo
             // desde la ultima vez que se guardo la sesion en este localStorage.
@@ -430,6 +449,9 @@ export default function Page() {
       console.error("[v0] Error writing currentUser to localStorage:", err)
     }
     setCurrentUser(user)
+    // Acaba de escribir usuario y contraseña: no tiene sentido pedirle
+    // ademas el PIN. El candado se arma solo la proxima vez que salga.
+    setBloqueado(false)
     setShowSplash(true)
     loadUserPermissions(user.id, user.rol ?? "").then(setUserPermissions).catch(() => {})
     loadUserFoto(user.id).then((foto_url) => {
@@ -508,6 +530,27 @@ export default function Page() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  /**
+   * SE FUE DE LA APP → SE ARMA EL CANDADO.
+   *
+   * Solo `visibilitychange`, no `blur`. Un `<input type="file">` abriendo la
+   * galeria, el permiso de ubicacion o un dialogo del navegador roban el foco
+   * sin que la pagina deje de estar visible; con `blur` el cobrador estaria
+   * tecleando el PIN varias veces por cliente.
+   *
+   * Se arma al OCULTARSE, no al volver: cuando la persona regresa, el estado
+   * ya esta puesto y la pantalla del PIN aparece de una, sin un parpadeo en
+   * el que se alcance a ver la informacion.
+   */
+  useEffect(() => {
+    if (!currentUser) return
+    const alOcultarse = () => {
+      if (document.visibilityState === "hidden") setBloqueado(true)
+    }
+    document.addEventListener("visibilitychange", alOcultarse)
+    return () => document.removeEventListener("visibilitychange", alOcultarse)
+  }, [currentUser])
+
   const handleLogout = useCallback(() => {
     try {
       localStorage.removeItem(USER_STORAGE_KEY)
@@ -515,6 +558,7 @@ export default function Page() {
     } catch (err) {
       console.error("[v0] Error clearing session:", err)
     }
+    setBloqueado(false)
     setCurrentUser(null)
     setSelectedRuta(null)
     setSessionPhase("idle")
@@ -981,6 +1025,20 @@ export default function Page() {
   // 1) No user → Login screen
   if (!currentUser) {
     return <LoginView onLoginSuccess={handleLoginSuccess} />
+  }
+
+  // 2) Hay sesion pero la app estuvo fuera de vista (o se acaba de abrir) →
+  //    el PIN. Va ANTES de cualquier otra rama: ni la pantalla de carga ni el
+  //    dashboard se llegan a dibujar, asi que no hay un instante en el que
+  //    alguien alcance a leer algo.
+  if (bloqueado) {
+    return (
+      <PinLockView
+        user={currentUser}
+        onDesbloqueado={() => setBloqueado(false)}
+        onSalir={handleLogout}
+      />
+    )
   }
 
   // Render principal: loading / error / dashboard

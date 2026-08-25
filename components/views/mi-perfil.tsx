@@ -1,10 +1,14 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
-import { Camera, Loader2, User as UserIcon } from "lucide-react"
+import { Camera, KeyRound, Loader2, ShieldAlert, User as UserIcon } from "lucide-react"
+import { cambiarPin, pinSigueEnDefault } from "@/lib/pin-lock"
 import type { AuthenticatedUser } from "./login-view"
 
 function initials(nombre: string): string {
@@ -110,6 +114,106 @@ export function MiPerfil({ currentUser, onUserUpdate }: MiPerfilProps) {
           )}
         </div>
       </div>
+
+      <CambiarPinCard userId={currentUser.id} />
+    </div>
+  )
+}
+
+/**
+ * Cambiar el PIN de bloqueo.
+ *
+ * Pide el actual además del nuevo: sin eso, quien levanta un celular
+ * desbloqueado le pondría otro PIN y se quedaría con la sesión para siempre.
+ * La comprobación la hace el servidor — acá solo se manda.
+ */
+function CambiarPinCard({ userId }: { userId: number | string }) {
+  const { toast } = useToast()
+  const [actual, setActual] = useState("")
+  const [nuevo, setNuevo] = useState("")
+  const [repetir, setRepetir] = useState("")
+  const [guardando, setGuardando] = useState(false)
+  const [esDefault, setEsDefault] = useState(false)
+
+  useEffect(() => {
+    pinSigueEnDefault(userId).then(setEsDefault).catch(() => {})
+  }, [userId])
+
+  const soloDigitos = (v: string) => v.replace(/[^0-9]/g, "").slice(0, 4)
+  const listo = actual.length === 4 && nuevo.length === 4 && repetir.length === 4 && !guardando
+
+  const guardar = async () => {
+    if (nuevo !== repetir) {
+      toast({ title: "No coinciden", description: "El PIN nuevo y su repetición son distintos.", variant: "destructive" })
+      return
+    }
+    if (nuevo === "0000") {
+      toast({
+        title: "Elige otro PIN",
+        description: "0000 es el que trae por defecto: no protege nada.",
+        variant: "destructive",
+      })
+      return
+    }
+    setGuardando(true)
+    try {
+      const r = await cambiarPin(userId, actual, nuevo)
+      if (!r.ok) {
+        toast({ title: "No se pudo cambiar", description: r.error ?? "Intenta de nuevo.", variant: "destructive" })
+        return
+      }
+      setActual(""); setNuevo(""); setRepetir(""); setEsDefault(false)
+      toast({ title: "PIN actualizado", description: "Lo vas a necesitar la próxima vez que vuelvas a la app." })
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border bg-card p-5 space-y-3">
+      <div className="flex items-center gap-2">
+        <KeyRound className="h-4 w-4 text-brand" />
+        <div>
+          <h3 className="text-sm font-semibold leading-tight">PIN de bloqueo</h3>
+          <p className="text-[11px] text-muted-foreground">
+            Se pide cada vez que vuelves a la app.
+          </p>
+        </div>
+      </div>
+
+      {esDefault && (
+        <p className="flex items-start gap-1.5 rounded-lg border border-warning/40 bg-warning/10 p-2 text-[11px] leading-snug text-warning-foreground">
+          <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+          Tu PIN sigue siendo <span className="font-semibold">0000</span>, el que viene por
+          defecto. Cualquiera que tome tu celular lo adivina.
+        </p>
+      )}
+
+      <div className="grid gap-2">
+        {[
+          { label: "PIN actual", v: actual, set: setActual },
+          { label: "PIN nuevo", v: nuevo, set: setNuevo },
+          { label: "Repite el nuevo", v: repetir, set: setRepetir },
+        ].map((c) => (
+          <div key={c.label} className="space-y-1">
+            <Label className="text-xs">{c.label}</Label>
+            <Input
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="••••"
+              value={c.v}
+              onChange={(e) => c.set(soloDigitos(e.target.value))}
+              className="h-9 text-center text-base tracking-[0.4em]"
+            />
+          </div>
+        ))}
+      </div>
+
+      <Button size="sm" className="w-full" disabled={!listo} onClick={guardar}>
+        {guardando ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+        Cambiar PIN
+      </Button>
     </div>
   )
 }
