@@ -341,7 +341,12 @@ type RutaConfigRow = {
   amortizacion_default: string | null
 }
 
-type CatalogItem = { id: number; nombre: string }
+/**
+ * `limite` es el tope GENERAL del concepto, el mismo para todas las rutas.
+ * Se trae acá porque es lo que rige mientras la ruta no configure el suyo, y
+ * sin él esta pantalla no podía decir la verdad sobre lo que pasa hoy.
+ */
+type CatalogItem = { id: number; nombre: string; limite: number | null }
 
 type ItemFormRow = { habilitado: boolean; umbral: string }
 
@@ -411,9 +416,9 @@ function RutasTab() {
       const [rutasRes, configsRes, ingresosRes, gastosRes, retirosRes] = await Promise.all([
         supabase.from("rutas").select("id, nombre, ciudad, pais").order("id", { ascending: true }),
         supabase.from("ruta_config_umbrales").select("*"),
-        supabase.from("ingresos").select("id, nombre").order("nombre"),
-        supabase.from("gastos").select("id, nombre").order("nombre"),
-        supabase.from("retiros").select("id, nombre").order("nombre"),
+        supabase.from("ingresos").select("id, nombre, limite").order("nombre"),
+        supabase.from("gastos").select("id, nombre, limite").order("nombre"),
+        supabase.from("retiros").select("id, nombre, limite").order("nombre"),
       ])
       if (rutasRes.error) throw rutasRes.error
       setRutas((rutasRes.data as Ruta[]) ?? [])
@@ -478,10 +483,15 @@ function RutasTab() {
     }
   }
 
-  const toggleItemHabilitado = (key: string, habilitado: boolean) => {
+  /**
+   * `umbralActual` es lo que la fila está MOSTRANDO, que puede venir heredado
+   * del tope general. Sin pasarlo, encender el interruptor sobre un concepto
+   * heredado dejaba el umbral vacío y la ruta terminaba con un tope nulo.
+   */
+  const toggleItemHabilitado = (key: string, habilitado: boolean, umbralActual: string) => {
     setItemForm((prev) => {
       const next = new Map(prev)
-      next.set(key, { habilitado, umbral: next.get(key)?.umbral ?? "" })
+      next.set(key, { habilitado, umbral: next.get(key)?.umbral ?? umbralActual })
       return next
     })
   }
@@ -489,7 +499,11 @@ function RutasTab() {
   const setItemUmbralValue = (key: string, umbral: string) => {
     setItemForm((prev) => {
       const next = new Map(prev)
-      next.set(key, { habilitado: next.get(key)?.habilitado ?? false, umbral })
+      // `?? true` y no `?? false`: la casilla del umbral SOLO se ve cuando el
+      // concepto pide aprobación. Con `false`, escribir un número sobre un
+      // concepto heredado creaba la fila en "sin tope" — es decir, teclear un
+      // tope lo QUITABA.
+      next.set(key, { habilitado: next.get(key)?.habilitado ?? true, umbral })
       return next
     })
   }
@@ -917,7 +931,14 @@ function RutasTab() {
                 <Accordion type="multiple" className="rounded-lg border px-3">
                   {ITEM_TIPOS.map(({ tipo, label }) => {
                     const items = itemsByTipo[tipo]
-                    const activos = items.filter((item) => itemForm.get(`${tipo}:${item.id}`)?.habilitado).length
+                    // Mismo criterio que las filas de adentro: cuenta los que HOY
+                    // piden aprobación, heredados incluidos. Antes contaba solo
+                    // los configurados en la ruta, así que un grupo entero
+                    // pidiendo aprobación por el tope general decía "0 con umbral".
+                    const activos = items.filter((item) => {
+                      const f = itemForm.get(`${tipo}:${item.id}`)
+                      return f === undefined ? item.limite != null : f.habilitado
+                    }).length
                     return (
                       <AccordionItem key={tipo} value={tipo}>
                         <AccordionTrigger className="text-sm">
@@ -936,23 +957,68 @@ function RutasTab() {
                               {items.map((item) => {
                                 const key = `${tipo}:${item.id}`
                                 const f = itemForm.get(key)
+
+                                // LO QUE LE PASA HOY A ESTA RUTA CON ESTE CONCEPTO.
+                                //
+                                // Antes el interruptor salía apagado en DOS casos
+                                // opuestos: cuando la ruta dijo "sin tope" y cuando
+                                // la ruta no ha dicho nada y rige el tope general.
+                                // El segundo sí pide aprobación. Quien configuraba
+                                // veía "apagado", entendía "no pide" y guardaba sin
+                                // tocar nada — y no se escribía ninguna fila, así
+                                // que todo seguía igual.
+                                //
+                                // Ahora la fila muestra el estado EFECTIVO. Apagar
+                                // un heredado sí escribe la fila y sí lo quita.
+                                const heredado = f === undefined
+                                const pide = heredado ? item.limite != null : f.habilitado
+                                const umbralTexto = heredado
+                                  ? (item.limite?.toString() ?? "")
+                                  : f.umbral
+                                const umbralNum = umbralTexto.trim() === "" ? null : Number(umbralTexto)
+
                                 return (
-                                  <div key={item.id} className="space-y-1">
+                                  <div key={item.id} className="space-y-1 rounded-md border border-border/60 p-2">
                                     <div className="flex items-center justify-between gap-2">
                                       <Label className="text-xs font-normal truncate">{item.nombre}</Label>
-                                      <Switch
-                                        checked={f?.habilitado ?? false}
-                                        onCheckedChange={(v) => toggleItemHabilitado(key, v)}
-                                      />
+                                      <div className="flex shrink-0 items-center gap-1.5">
+                                        <span className="text-[10px] text-muted-foreground">Pide aprobación</span>
+                                        <Switch
+                                          checked={pide}
+                                          onCheckedChange={(v) => toggleItemHabilitado(key, v, umbralTexto)}
+                                        />
+                                      </div>
                                     </div>
-                                    {f?.habilitado && (
+                                    {pide && (
                                       <Input
                                         type="number"
-                                        value={f?.umbral ?? ""}
+                                        value={umbralTexto}
                                         onChange={(e) => setItemUmbralValue(key, e.target.value)}
                                         placeholder="Umbral en $"
                                         className="h-8 text-xs"
                                       />
+                                    )}
+                                    {/* Se dice en palabras qué va a pasar. El caso
+                                        del CERO es el que trajo el reporte: se lee
+                                        como "sin límite" y significa lo contrario. */}
+                                    {!pide ? (
+                                      <p className="text-[10px] leading-snug text-muted-foreground">
+                                        Sin tope: nunca pide aprobación.
+                                      </p>
+                                    ) : umbralNum === 0 ? (
+                                      <p className="text-[10px] font-medium leading-snug text-destructive">
+                                        En 0 pide aprobación SIEMPRE, con cualquier valor. Para quitarle
+                                        el tope, apaga el interruptor.
+                                      </p>
+                                    ) : umbralNum === null || Number.isNaN(umbralNum) ? (
+                                      <p className="text-[10px] leading-snug text-muted-foreground">
+                                        Escribe desde qué valor pide aprobación.
+                                      </p>
+                                    ) : (
+                                      <p className="text-[10px] leading-snug text-muted-foreground">
+                                        Pide aprobación si supera ${umbralNum.toLocaleString()}.
+                                        {heredado && " Viene del tope general de todas las rutas."}
+                                      </p>
                                     )}
                                   </div>
                                 )
