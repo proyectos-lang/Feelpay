@@ -203,14 +203,20 @@ export function totalesPorTipo(movs: Movimiento[]): Record<TipoMovimiento, numbe
 }
 
 /** Identidad del usuario en sesión, para saber qué puede editar y firmar. */
-export function getUsuarioSesion(): { id: number | null; nombre: string } {
-  if (typeof window === "undefined") return { id: null, nombre: "" }
+export function getUsuarioSesion(): { id: number | null; nombre: string; usuario: string } {
+  if (typeof window === "undefined") return { id: null, nombre: "", usuario: "" }
   try {
     const raw = localStorage.getItem("currentUser")
-    if (!raw) return { id: null, nombre: "" }
+    if (!raw) return { id: null, nombre: "", usuario: "" }
     const u = JSON.parse(raw)
-    return { id: typeof u?.id === "number" ? u.id : null, nombre: u?.nombre ?? "" }
+    return {
+      id: typeof u?.id === "number" ? u.id : null,
+      nombre: u?.nombre ?? "",
+      // El nombre de usuario, no el nombre de la persona: es lo que pide
+      // `ver_pines` para comprobar la contraseña contra la tabla.
+      usuario: u?.usuario ?? "",
+    }
   } catch {
-    return { id: null, nombre: "" }
+    return { id: null, nombre: "", usuario: "" }
   }
 }

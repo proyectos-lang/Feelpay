@@ -15,6 +15,8 @@ import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, E
 import { useToast } from "@/hooks/use-toast"
 import { ALL_MODULES, MODULE_GROUPS, getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
 import { AMORTIZACIONES } from "@/lib/gestion-core"
+import { verPines } from "@/lib/pin-lock"
+import { getUsuarioSesion } from "@/lib/movimientos"
 import type { ModuleDefinition } from "@/lib/modules-catalog"
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
@@ -26,6 +28,8 @@ type Usuario = {
   rol: string
   activo: boolean
   acceso_modulo_reporte: boolean | null
+  /** La calcula la base a partir del PIN (script 074): no puede mentir. */
+  pin_cambiado?: boolean | null
 }
 
 type Ruta = {
@@ -70,6 +74,9 @@ function UsuariosTab() {
   const [fNombre, setFNombre] = useState("")
   const [fUsuario, setFUsuario] = useState("")
   const [fPassword, setFPassword] = useState("")
+  // El PIN de bloqueo. Al editar, vacio = no cambiarlo (mismo trato que
+  // la contraseña). Al crear, vacio = 0000.
+  const [fPin, setFPin] = useState("")
   const [fRol, setFRol] = useState<string>("vendedor")
   const [fActivo, setFActivo] = useState(true)
   const [fAccesoReporte, setFAccesoReporte] = useState(false)
@@ -80,7 +87,7 @@ function UsuariosTab() {
       const supabase = createClient()
       const { data, error } = await supabase
         .from("usuarios")
-        .select("id, usuario, nombre, rol, activo, acceso_modulo_reporte")
+        .select("id, usuario, nombre, rol, activo, acceso_modulo_reporte, pin_cambiado")
         .order("nombre", { ascending: true })
       if (error) throw error
       setUsuarios(data ?? [])
@@ -96,17 +103,49 @@ function UsuariosTab() {
 
   const openCreate = () => {
     setEditing(null)
-    setFNombre(""); setFUsuario(""); setFPassword(""); setFRol("vendedor")
+    setFNombre(""); setFUsuario(""); setFPassword(""); setFPin(""); setFRol("vendedor")
     setFActivo(true); setFAccesoReporte(false); setShowPass(false)
     setShowForm(true)
   }
 
   const openEdit = (u: Usuario) => {
     setEditing(u)
-    setFNombre(u.nombre); setFUsuario(u.usuario); setFPassword("")
+    setFNombre(u.nombre); setFUsuario(u.usuario); setFPassword(""); setFPin("")
     setFRol(u.rol); setFActivo(u.activo)
     setFAccesoReporte(u.acceso_modulo_reporte ?? false)
     setShowPass(false); setShowForm(true)
+  }
+
+  // ── Ver los PIN ─────────────────────────────────────────────────────────
+  // `pines` en null = ocultos. Se piden al servidor con la contraseña de quien
+  // mira y viven SOLO en memoria: al salir del módulo se olvidan, y hay que
+  // volver a demostrarlo. No se guardan en localStorage a propósito — sería
+  // dejar los 18 PIN escritos en el teléfono, que es justo lo que el servidor
+  // está evitando.
+  const [pines, setPines] = useState<Record<string, string> | null>(null)
+  const [pidiendoClave, setPidiendoClave] = useState(false)
+  const [claveVer, setClaveVer] = useState("")
+  const [cargandoPines, setCargandoPines] = useState(false)
+
+  const revelarPines = async () => {
+    const sesion = getUsuarioSesion()
+    if (!sesion.usuario) {
+      toast({ title: "Sesión no encontrada", description: "Vuelve a entrar.", variant: "destructive" })
+      return
+    }
+    setCargandoPines(true)
+    try {
+      const r = await verPines(sesion.usuario, claveVer)
+      if (!r.ok) {
+        toast({ title: "No se pudo", description: r.error ?? "Intenta de nuevo.", variant: "destructive" })
+        return
+      }
+      setPines(r.pines)
+      setPidiendoClave(false)
+      setClaveVer("")
+    } finally {
+      setCargandoPines(false)
+    }
   }
 
   const handleSave = async () => {
@@ -118,6 +157,12 @@ function UsuariosTab() {
       toast({ title: "Contraseña requerida", description: "Ingresa una contraseña para el nuevo usuario", variant: "destructive" })
       return
     }
+    // Cuatro dígitos o nada. Al editar, vacío significa "no lo cambies" —
+    // igual que la contraseña, que ya se comporta así.
+    if (fPin.trim() && !/^[0-9]{4}$/.test(fPin.trim())) {
+      toast({ title: "PIN inválido", description: "El PIN tiene que ser de 4 dígitos.", variant: "destructive" })
+      return
+    }
     setSaving(true)
     try {
       const supabase = createClient()
@@ -127,6 +172,13 @@ function UsuariosTab() {
           rol: fRol, activo: fActivo, acceso_modulo_reporte: fAccesoReporte,
         }
         if (fPassword.trim()) payload.password = fPassword.trim()
+        if (fPin.trim()) {
+          payload.pin = fPin.trim()
+          // Ponerle otro PIN a alguien tiene que devolverle los intentos: si
+          // se quedó afuera por olvidarlo, cambiárselo es justamente la
+          // forma de rescatarlo.
+          payload.pin_fallos = 0
+        }
         const { error } = await supabase.from("usuarios").update(payload).eq("id", editing.id)
         if (error) throw error
         toast({ title: "Usuario actualizado" })
@@ -135,6 +187,8 @@ function UsuariosTab() {
           nombre: fNombre.trim(), usuario: fUsuario.trim(),
           password: fPassword.trim(), rol: fRol,
           activo: fActivo, acceso_modulo_reporte: fAccesoReporte,
+          // Sin PIN escrito, el que trae por defecto.
+          pin: fPin.trim() || "0000",
         })
         if (error) throw error
         toast({ title: "Usuario creado" })
@@ -171,14 +225,59 @@ function UsuariosTab() {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">
           {loading ? "Cargando..." : `${usuarios.length} usuario${usuarios.length !== 1 ? "s" : ""} registrados`}
         </p>
-        <Button size="sm" onClick={openCreate} className="gap-1.5 h-8 text-xs">
-          <Plus className="h-3.5 w-3.5" /> Nuevo usuario
-        </Button>
+        <div className="flex items-center gap-1.5">
+          {/* Ver los PIN NO es leer una columna: es pedírselos al servidor
+              demostrando quién eres. Por eso hay un botón y no salen solos. */}
+          <Button
+            size="sm"
+            variant={pines ? "secondary" : "outline"}
+            className="gap-1.5 h-8 text-xs"
+            onClick={() => (pines ? setPines(null) : setPidiendoClave(true))}
+          >
+            {pines ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            {pines ? "Ocultar PINs" : "Ver PINs"}
+          </Button>
+          <Button size="sm" onClick={openCreate} className="gap-1.5 h-8 text-xs">
+            <Plus className="h-3.5 w-3.5" /> Nuevo usuario
+          </Button>
+        </div>
       </div>
+
+      <Dialog open={pidiendoClave} onOpenChange={(o) => { if (!o) { setPidiendoClave(false); setClaveVer("") } }}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-sm">
+              <Shield className="h-4 w-4 text-brand" /> Confirma que eres tú
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Los PIN no viajan al teléfono por su cuenta. Escribe tu contraseña
+              para que el servidor te los entregue.
+            </p>
+            <div className="space-y-1">
+              <Label className="text-xs">Tu contraseña</Label>
+              <Input
+                type="password"
+                autoComplete="current-password"
+                value={claveVer}
+                onChange={(e) => setClaveVer(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && claveVer) void revelarPines() }}
+                className="h-9 text-sm"
+                autoFocus
+              />
+            </div>
+            <Button size="sm" className="w-full" disabled={!claveVer || cargandoPines} onClick={() => void revelarPines()}>
+              {cargandoPines ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+              Ver los PIN
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {loading ? (
         <div className="flex h-40 items-center justify-center">
@@ -192,6 +291,7 @@ function UsuariosTab() {
                 <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Nombre</th>
                 <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden sm:table-cell">Usuario</th>
                 <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Rol</th>
+                <th className="px-3 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">PIN</th>
                 <th className="px-3 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell">Activo</th>
                 <th className="px-3 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Reportes</th>
                 <th className="px-3 py-2" />
@@ -200,7 +300,7 @@ function UsuariosTab() {
             <tbody className="divide-y divide-border">
               {usuarios.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-10 text-center text-sm text-muted-foreground">
+                  <td colSpan={7} className="px-3 py-10 text-center text-sm text-muted-foreground">
                     No hay usuarios registrados
                   </td>
                 </tr>
@@ -213,6 +313,20 @@ function UsuariosTab() {
                     <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${ROL_BADGE[u.rol] ?? "bg-muted text-muted-foreground"}`}>
                       {ROL_LABELS[u.rol] ?? u.rol}
                     </span>
+                  </td>
+                  {/* Mientras no se hayan revelado, se dice lo que se sabe
+                      sin verlos: si sigue en el que viene por defecto o si la
+                      persona ya lo cambió. Eso llega sin pedir contraseña. */}
+                  <td className="px-3 py-2.5 text-center">
+                    {pines ? (
+                      <span className="font-mono text-sm font-semibold tracking-[0.2em]">
+                        {pines[String(u.id)] ?? "—"}
+                      </span>
+                    ) : u.pin_cambiado ? (
+                      <span className="text-[10px] text-muted-foreground">cambiado</span>
+                    ) : (
+                      <span className="text-[10px] font-medium text-warning">0000</span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 text-center hidden md:table-cell">
                     <span className={`inline-block h-2 w-2 rounded-full ${u.activo ? "bg-green-500" : "bg-red-400"}`} title={u.activo ? "Activo" : "Inactivo"} />
@@ -268,6 +382,24 @@ function UsuariosTab() {
                   {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">
+                {editing ? "Nuevo PIN de bloqueo (vacío = no cambiar)" : "PIN de bloqueo"}
+              </Label>
+              <Input
+                inputMode="numeric"
+                value={fPin}
+                onChange={(e) => setFPin(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
+                placeholder={editing ? "••••" : "0000"}
+                autoComplete="off"
+                className="h-9 text-sm font-mono tracking-[0.3em]"
+              />
+              <p className="text-[10px] leading-snug text-muted-foreground">
+                {editing
+                  ? "Cambiárselo también le devuelve los intentos, por si se quedó afuera."
+                  : "Cuatro dígitos. Si lo dejas vacío queda en 0000."}
+              </p>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Rol</Label>
@@ -1102,7 +1234,7 @@ function AsignacionesTab() {
     try {
       const supabase = createClient()
       const [uRes, rRes, aRes] = await Promise.all([
-        supabase.from("usuarios").select("id, usuario, nombre, rol, activo, acceso_modulo_reporte").order("nombre"),
+        supabase.from("usuarios").select("id, usuario, nombre, rol, activo, acceso_modulo_reporte, pin_cambiado").order("nombre"),
         supabase.from("rutas").select("id, nombre, ciudad, pais").order("id"),
         supabase.from("usuario_rutas").select("usuario_id, ruta_id"),
       ])
@@ -1341,7 +1473,7 @@ function PermisosTab() {
       const supabase = createClient()
       const { data, error } = await supabase
         .from("usuarios")
-        .select("id, usuario, nombre, rol, activo, acceso_modulo_reporte")
+        .select("id, usuario, nombre, rol, activo, acceso_modulo_reporte, pin_cambiado")
         .order("nombre")
       if (error) throw error
       setUsuarios(data ?? [])

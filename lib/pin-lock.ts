@@ -89,6 +89,33 @@ export async function cambiarPin(
   return { ok: !!r.ok, error: r.error }
 }
 
+/**
+ * Los PIN de todos, para Usuarios y Rutas.
+ *
+ * Pide usuario y contraseña de quien consulta y los comprueba EN EL SERVIDOR
+ * contra la tabla. No alcanza con decir "soy secretaria": el rol viaja en el
+ * teléfono y ahí se puede escribir a mano; una contraseña no.
+ *
+ * Devuelve un mapa `{ "3": "0000", "7": "4821" }` — id de usuario a PIN.
+ */
+export async function verPines(
+  usuario: string,
+  password: string,
+): Promise<{ ok: boolean; error?: string; pines: Record<string, string> }> {
+  const { data, error } = await createClient().rpc("ver_pines", {
+    p_usuario: usuario,
+    p_password: password,
+  })
+
+  if (error) {
+    console.error("[v0] ver_pines error:", error.message)
+    return { ok: false, error: "No se pudieron leer los PIN. Revisa la conexión.", pines: {} }
+  }
+
+  const r = (data ?? {}) as { ok?: boolean; error?: string; pines?: Record<string, string> }
+  return { ok: !!r.ok, error: r.error, pines: r.pines ?? {} }
+}
+
 /** ¿Esta persona sigue con el 0000? Para avisárselo, no para bloquearla. */
 export async function pinSigueEnDefault(userId: number | string): Promise<boolean> {
   try {
