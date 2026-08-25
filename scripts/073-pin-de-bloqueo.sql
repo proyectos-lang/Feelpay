@@ -132,7 +132,12 @@ CREATE OR REPLACE FUNCTION public.verificar_pin(
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+-- `extensions` VA EN LA LISTA, y no es opcional: en Supabase `pgcrypto` se
+-- instala en ese esquema, no en `public`. Sin el, `crypt()` existe pero esta
+-- funcion no la ve y revienta con "function crypt(text, text) does not
+-- exist" — aunque el mismo `crypt()` funcione perfecto en el editor, que si
+-- tiene `extensions` en su ruta de busqueda.
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_hash   text;
@@ -206,7 +211,12 @@ CREATE OR REPLACE FUNCTION public.cambiar_pin(
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+-- `extensions` VA EN LA LISTA, y no es opcional: en Supabase `pgcrypto` se
+-- instala en ese esquema, no en `public`. Sin el, `crypt()` existe pero esta
+-- funcion no la ve y revienta con "function crypt(text, text) does not
+-- exist" — aunque el mismo `crypt()` funcione perfecto en el editor, que si
+-- tiene `extensions` en su ruta de busqueda.
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_hash text;
@@ -277,3 +287,22 @@ SELECT u.usuario,
  WHERE u.activo = true
  ORDER BY u.id
  LIMIT 1;
+
+
+-- ── PASO 16) Donde vive pgcrypto (diagnostico) ────────────────────────────
+-- Si el paso 15 falla con "function crypt(text, text) does not exist", la
+-- causa es esta: `crypt()` esta en un esquema que la funcion no tiene en su
+-- ruta de busqueda. En Supabase suele ser `extensions`, y por eso los pasos
+-- 8 y 10 lo declaran.
+--
+-- Esta consulta dice en que esquema quedo de verdad. Si sale algo distinto
+-- de `public` o `extensions`, agrega ese esquema al `SET search_path` de las
+-- dos funciones y vuelve a correr los pasos 8 y 10.
+SELECT n.nspname AS esquema_de_pgcrypto,
+       CASE WHEN n.nspname IN ('public', 'extensions')
+            THEN 'ok — ya esta en el search_path de las funciones'
+            ELSE '*** agregalo al SET search_path de los pasos 8 y 10 ***'
+       END AS que_hacer
+  FROM pg_extension e
+  JOIN pg_namespace n ON n.oid = e.extnamespace
+ WHERE e.extname = 'pgcrypto';
