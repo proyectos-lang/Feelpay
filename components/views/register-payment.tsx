@@ -499,6 +499,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [clientForShare, setClientForShare] = useState<DisplayClient | null>(null)
   const [sharingPdf, setSharingPdf] = useState(false)
+  // El comprobante ya dibujado y listo para mandar. Se prepara al ABRIR el
+  // dialogo para que el boton de compartir no tenga que esperar nada: ver el
+  // comentario largo sobre la activacion del usuario en `handleShareComprobante`.
+  const [reciboListo, setReciboListo] = useState<
+    { file: File; dataUrl: string; filename: string } | null
+  >(null)
+  const [preparandoRecibo, setPreparandoRecibo] = useState(false)
   // true = el dialogo se abrio tras registrar un pago (al cerrarlo hay que
   // volver al listado). false = se abrio desde "Generar recibo" del menu,
   // donde no hay formulario abierto que cerrar.
@@ -2232,6 +2239,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const cerrarShare = () => {
     setShowShareDialog(false)
     setClientForShare(null)
+    setReciboListo(null)
     if (shareTrasPago) handleBack()
     setShareTrasPago(false)
   }
@@ -2242,55 +2250,101 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     setShowShareDialog(true)
   }
 
-  const handleDescargarRecibo = async (client: DisplayClient) => {
-    setSharingPdf(true)
-    try {
-      const { dataUrl, filename } = await buildReciboImagen(client, gestionDe(client))
-      const a = document.createElement("a")
-      a.href = dataUrl
-      a.download = filename
-      a.click()
-    } catch (e) {
-      console.error("[v0] handleDescargarRecibo error:", e)
-      toast({ title: "Error", description: "No se pudo generar el recibo.", variant: "destructive" })
-    } finally {
-      setSharingPdf(false)
-    }
-  }
+  // `handleDescargarRecibo` vivía acá y volvía a dibujar el comprobante para
+  // descargarlo. Ya no hace falta: el diálogo lo prepara al abrir y el botón
+  // de Descargar usa esa misma imagen, sin pedirle otra vez los datos al
+  // servidor.
 
   /** Si el cliente ya fue gestionado hoy, devuelve esa gestion (trae el abono). */
   const gestionDe = (client: DisplayClient): ManagedClient | undefined =>
     managedToday.find((m) => m.loanId === client.loanId)
 
-  const handleShareComprobante = async (client: DisplayClient) => {
-    setSharingPdf(true)
-    try {
-      const { blob, dataUrl, filename } = await buildReciboImagen(client, gestionDe(client))
-      const file = new File([blob], filename, { type: "image/png" })
+  /**
+   * EL COMPROBANTE SE DIBUJA AL ABRIR EL DIÁLOGO, NO AL TOCAR "COMPARTIR".
+   *
+   * Esto es lo que hacía que el menú para elegir app no apareciera.
+   * `navigator.share()` solo se puede llamar mientras dura la ACTIVACIÓN que
+   * deja el toque del usuario, y armar el recibo son CUATRO viajes de red
+   * —financiero del crédito, datos del cliente, eventos del día y el logo de
+   * la ruta— más el dibujo del canvas. Con señal de calle eso son segundos.
+   * Para cuando terminaba, la activación ya había caducado: el navegador
+   * rechazaba la llamada y Safari lo hace sin decir nada útil. El cobrador
+   * tocaba Compartir y no pasaba nada.
+   *
+   * Preparándolo antes, el botón llama a `share()` en el mismo gesto y el menú
+   * sale siempre.
+   */
+  useEffect(() => {
+    if (!showShareDialog || !clientForShare) return
+    let vigente = true
+    setReciboListo(null)
+    setPreparandoRecibo(true)
+    ;(async () => {
+      try {
+        const { blob, dataUrl, filename } = await buildReciboImagen(
+          clientForShare,
+          gestionDe(clientForShare),
+        )
+        if (vigente) setReciboListo({ file: new File([blob], filename, { type: "image/png" }), dataUrl, filename })
+      } catch (e) {
+        console.error("[v0] No se pudo preparar el comprobante:", e)
+        if (vigente) {
+          toast({
+            title: "Error",
+            description: "No se pudo preparar el comprobante.",
+            variant: "destructive",
+          })
+        }
+      } finally {
+        if (vigente) setPreparandoRecibo(false)
+      }
+    })()
+    return () => { vigente = false }
+    // Solo depende de QUÉ comprobante hay que dibujar. `buildReciboImagen` y
+    // `gestionDe` se redefinen en cada render y meterlos acá lo dibujaría sin
+    // parar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showShareDialog, clientForShare?.loanId])
 
-      if (
-        typeof navigator !== "undefined" &&
-        navigator.share &&
-        navigator.canShare &&
-        navigator.canShare({ files: [file] })
-      ) {
-        await navigator.share({ files: [file], title: "Comprobante de pago" })
-      } else {
-        // Fallback: descarga directa si Web Share API no soporta archivos
-        const a = document.createElement("a")
-        a.href = dataUrl
-        a.download = filename
-        a.click()
-      }
-    } catch (e: unknown) {
-      // El usuario canceló el share — no es un error real
-      if (e instanceof Error && e.name !== "AbortError") {
-        console.error("[v0] handleShareComprobante error:", e)
-        toast({ title: "Error", description: "No se pudo compartir el comprobante.", variant: "destructive" })
-      }
-    } finally {
-      setSharingPdf(false)
+  /**
+   * OJO AL ORDEN: no es `async` y no puede serlo. Entre el toque y
+   * `navigator.share()` no puede haber ni un `await`, o se pierde el menú.
+   */
+  const handleShareComprobante = () => {
+    if (!reciboListo) return
+    const { file, dataUrl, filename } = reciboListo
+
+    if (
+      typeof navigator !== "undefined" &&
+      navigator.share &&
+      navigator.canShare &&
+      navigator.canShare({ files: [file] })
+    ) {
+      navigator
+        .share({ files: [file], title: "Comprobante de pago" })
+        .then(() => cerrarShare())
+        .catch((e: unknown) => {
+          // Cancelar el menú lanza AbortError: es el usuario diciendo que no,
+          // y el diálogo se queda abierto por si quiere reintentar.
+          if (e instanceof Error && e.name !== "AbortError") {
+            console.error("[v0] handleShareComprobante error:", e)
+            toast({ title: "Error", description: "No se pudo compartir el comprobante.", variant: "destructive" })
+          }
+        })
+      return
     }
+
+    // Este teléfono no sabe compartir archivos: se descarga y se dice por qué,
+    // en vez de dejar la sensación de que el botón no hizo nada.
+    const a = document.createElement("a")
+    a.href = dataUrl
+    a.download = filename
+    a.click()
+    toast({
+      title: "Comprobante descargado",
+      description: "Este dispositivo no permite elegir la app para compartir.",
+    })
+    cerrarShare()
   }
 
   const handleRenovationConfirm = () => {
@@ -4162,26 +4216,44 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 : "Puedes compartirlo por WhatsApp, correo o cualquier app del teléfono, o descargarlo."}
             </DialogDescription>
           </DialogHeader>
+          {/* VISTA PREVIA. Además de dejar ver qué se va a mandar, es la
+              salida de emergencia en los iPhone viejos (iOS 14 y anteriores):
+              ahí no existe `canShare({files})` Y el enlace de descarga tampoco
+              funciona — Safari navega en vez de guardar. Manteniendo pulsada
+              la imagen, el teléfono ofrece "Guardar imagen" y "Compartir". */}
+          {reciboListo && (
+            <img
+              src={reciboListo.dataUrl}
+              alt="Comprobante de pago"
+              className="mx-auto max-h-[45vh] w-auto rounded-md border border-border"
+            />
+          )}
           <div className="flex flex-col gap-2 pt-2 md:pt-4">
+            {/* `onClick={handleShareComprobante}` a secas: sin envolverlo en
+                una función async, para que el navegador vea la llamada a
+                `share()` dentro del mismo gesto del usuario. */}
             <Button
               className="h-9 md:h-10 text-xs md:text-base gap-1.5"
-              disabled={sharingPdf}
-              onClick={async () => {
-                if (!clientForShare) return
-                await handleShareComprobante(clientForShare)
-                cerrarShare()
-              }}
+              disabled={sharingPdf || preparandoRecibo || !reciboListo}
+              onClick={handleShareComprobante}
             >
-              {sharingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
-              Compartir
+              {preparandoRecibo || sharingPdf ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Share2 className="h-4 w-4" />
+              )}
+              {preparandoRecibo ? "Preparando…" : "Compartir"}
             </Button>
             <Button
               variant="outline"
               className="h-9 md:h-10 text-xs md:text-base gap-1.5"
-              disabled={sharingPdf}
-              onClick={async () => {
-                if (!clientForShare) return
-                await handleDescargarRecibo(clientForShare)
+              disabled={sharingPdf || preparandoRecibo || !reciboListo}
+              onClick={() => {
+                if (!reciboListo) return
+                const a = document.createElement("a")
+                a.href = reciboListo.dataUrl
+                a.download = reciboListo.filename
+                a.click()
                 cerrarShare()
               }}
             >

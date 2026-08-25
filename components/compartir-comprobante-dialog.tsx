@@ -6,8 +6,10 @@
  * Tres salidas para la misma imagen: mandarla por fuera (WhatsApp, correo),
  * guardarla en el teléfono, o dejarla como evidencia en el chat de la app.
  *
- * La imagen se genera al momento de elegir, no al abrir: si el usuario abre
- * y cierra sin compartir, no se dibujó nada.
+ * La imagen se dibuja AL ABRIR el diálogo. Antes se generaba al elegir la
+ * opción —para no dibujar nada si el usuario cerraba sin compartir— y eso era
+ * justo lo que rompía el botón de Compartir: ver el comentario largo sobre la
+ * activación del usuario, más abajo.
  */
 
 import { useEffect, useState } from "react"
@@ -56,10 +58,8 @@ export function CompartirComprobanteDialog({
   const [eligiendoChat, setEligiendoChat] = useState(false)
   const [conversaciones, setConversaciones] = useState<Conversacion[]>([])
   const [cargandoConvs, setCargandoConvs] = useState(false)
-
-  useEffect(() => {
-    if (!open) { setEligiendoChat(false); setOcupado(false) }
-  }, [open])
+  const [listo, setListo] = useState<{ blob: Blob; dataUrl: string; filename: string } | null>(null)
+  const [preparando, setPreparando] = useState(false)
 
   const fallar = (err: unknown, queHacia: string) => {
     // Cancelar el menú nativo de compartir lanza AbortError. No es un error:
@@ -73,48 +73,96 @@ export function CompartirComprobanteDialog({
     })
   }
 
-  const compartirFuera = async () => {
-    setOcupado(true)
-    try {
-      const { blob, dataUrl, filename } = await construirImagen()
-      const file = new File([blob], filename, { type: "image/png" })
-      // `canShare({files})` es la guarda que importa: Chrome de escritorio
-      // tiene `share` pero no admite archivos, y sin esto fallaría ahí.
-      if (
-        typeof navigator !== "undefined" &&
-        navigator.share &&
-        navigator.canShare &&
-        navigator.canShare({ files: [file] })
-      ) {
-        await navigator.share({ files: [file], title: titulo })
-      } else {
-        const a = document.createElement("a")
-        a.href = dataUrl
-        a.download = filename
-        a.click()
-        toast({ title: "Imagen descargada", description: "Este dispositivo no permite compartir archivos." })
-      }
-      onOpenChange(false)
-    } catch (err) {
-      fallar(err, "compartir")
-    } finally {
+  /**
+   * LA IMAGEN SE PREPARA AL ABRIR, NO AL ELEGIR.
+   *
+   * Antes se generaba dentro del click de "Compartir", y ahí se perdía el menú
+   * nativo. `navigator.share()` solo se puede llamar mientras dura la
+   * ACTIVACIÓN que deja el toque del usuario, y esa activación se gasta con la
+   * espera: armar el comprobante son cuatro viajes de red (financiero, cliente,
+   * eventos del día y el logo de la ruta). Para cuando terminaban, el permiso
+   * ya había caducado y el navegador rechazaba la llamada — Safari lo hace sin
+   * decir nada útil. El usuario tocaba Compartir y no pasaba nada.
+   *
+   * Con la imagen ya lista, el botón llama a `share()` de una vez, sin un solo
+   * `await` en medio, y el menú de apps aparece siempre.
+   *
+   * Se paga con dibujar el comprobante aunque el usuario cierre sin compartir.
+   * Vale la pena: es trabajo de una vez contra una función que no servía.
+   */
+  useEffect(() => {
+    if (!open) {
+      setEligiendoChat(false)
       setOcupado(false)
+      setListo(null)
+      setPreparando(false)
+      return
     }
+    let vigente = true
+    setListo(null)
+    setPreparando(true)
+    ;(async () => {
+      try {
+        const img = await construirImagen()
+        if (vigente) setListo(img)
+      } catch (err) {
+        if (vigente) fallar(err, "preparar el comprobante")
+      } finally {
+        if (vigente) setPreparando(false)
+      }
+    })()
+    return () => { vigente = false }
+    // `construirImagen` cambia de identidad en cada render del padre; meterlo
+    // en las dependencias volvería a dibujar el comprobante sin parar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
+  /**
+   * OJO AL ORDEN: esta función NO es `async` y no puede serlo. Entre el toque
+   * y `navigator.share()` no puede haber ni un `await`, o se pierde el menú.
+   */
+  const compartirFuera = () => {
+    if (!listo) return
+    const file = new File([listo.blob], listo.filename, { type: "image/png" })
+
+    // `canShare({files})` es la guarda que importa: Chrome de escritorio
+    // tiene `share` pero no admite archivos, y sin esto fallaría ahí.
+    const puedeCompartir =
+      typeof navigator !== "undefined" &&
+      !!navigator.share &&
+      !!navigator.canShare &&
+      navigator.canShare({ files: [file] })
+
+    if (!puedeCompartir) {
+      const a = document.createElement("a")
+      a.href = listo.dataUrl
+      a.download = listo.filename
+      a.click()
+      toast({ title: "Imagen descargada", description: "Este dispositivo no permite elegir app para compartir." })
+      onOpenChange(false)
+      return
+    }
+
+    navigator
+      .share({ files: [file], title: titulo })
+      .then(() => onOpenChange(false))
+      // Si canceló el menú, el diálogo se queda abierto: puede que quiera
+      // volver a intentarlo o mandarlo al chat.
+      .catch((err) => fallar(err, "compartir"))
   }
 
-  const descargar = async () => {
-    setOcupado(true)
+  // Descargar no necesita activación, pero reusa la imagen ya preparada: no
+  // tiene sentido volver a pedirle los mismos datos al servidor.
+  const descargar = () => {
+    if (!listo) return
     try {
-      const { dataUrl, filename } = await construirImagen()
       const a = document.createElement("a")
-      a.href = dataUrl
-      a.download = filename
+      a.href = listo.dataUrl
+      a.download = listo.filename
       a.click()
       onOpenChange(false)
     } catch (err) {
       fallar(err, "guardar la imagen")
-    } finally {
-      setOcupado(false)
     }
   }
 
@@ -136,9 +184,10 @@ export function CompartirComprobanteDialog({
   }
 
   const enviarAlChat = async (conv: Conversacion) => {
+    if (!listo) return
     setOcupado(true)
     try {
-      const { blob, filename } = await construirImagen()
+      const { blob, filename } = listo
       const supabase = createClient()
 
       const form = new FormData()
@@ -252,20 +301,32 @@ export function CompartirComprobanteDialog({
           </div>
         ) : (
           <div className="grid gap-2">
-            <Button className="h-11 justify-start gap-2" onClick={() => void compartirFuera()} disabled={ocupado}>
-              {ocupado ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
-              Compartir
+            {/* `onClick={compartirFuera}` directo, SIN envolverlo en una
+                función async ni en `void`: el navegador tiene que ver la
+                llamada a `share()` dentro del mismo gesto del usuario. */}
+            <Button
+              className="h-11 justify-start gap-2"
+              onClick={compartirFuera}
+              disabled={ocupado || preparando || !listo}
+            >
+              {preparando || ocupado ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
+              {preparando ? "Preparando…" : "Compartir"}
             </Button>
             <Button
               variant="outline"
               className="h-11 justify-start gap-2"
               onClick={() => void abrirListaChats()}
-              disabled={ocupado}
+              disabled={ocupado || preparando || !listo}
             >
               <MessageSquare className="h-4 w-4" />
               Enviar al chat de la app
             </Button>
-            <Button variant="outline" className="h-11 justify-start gap-2" onClick={() => void descargar()} disabled={ocupado}>
+            <Button
+              variant="outline"
+              className="h-11 justify-start gap-2"
+              onClick={descargar}
+              disabled={ocupado || preparando || !listo}
+            >
               <FileDown className="h-4 w-4" />
               Guardar imagen
             </Button>
