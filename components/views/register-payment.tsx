@@ -1149,8 +1149,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             paymentPlanId: targetEntry?.id ?? "",
           })
         } else {
-          // Loans con estado "cancelado" no se muestran en el listado de pendientes.
-          if (loan.estado === "cancelado") {
+          // Solo los ACTIVOS entran a la lista de cobro.
+          //
+          // Antes preguntaba `=== "cancelado"`, que era lo mismo mientras
+          // `estado` solo tuviera esos dos valores. Con 'anulado' (script 068)
+          // dejo de serlo: una venta anulada se colaba en la ruta como si nada.
+          // Preguntar por lo que SI se quiere, y no por lo que no, aguanta el
+          // proximo estado que aparezca.
+          if (loan.estado !== "activo") {
             continue
           }
           pendingClients.push(clientData)

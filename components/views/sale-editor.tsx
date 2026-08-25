@@ -226,6 +226,7 @@ type EnCurso =
   | "cuota-eliminar"
   | "gestion-corregir"
   | "gestion-anular"
+  | "venta-anular"
 
 // ── Componente ──────────────────────────────────────────────────────────────
 
@@ -291,6 +292,10 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
   const [gMotivo, setGMotivo] = useState("")
 
   const [enCurso, setEnCurso] = useState<EnCurso>(null)
+  // Anular la venta entera. Se guarda el motivo aparte del dialogo para que
+  // cerrarlo por error no borre lo que ya se habia escrito.
+  const [anularVentaAbierto, setAnularVentaAbierto] = useState(false)
+  const [motivoAnulacion, setMotivoAnulacion] = useState("")
 
   const errorToast = useCallback(
     (titulo: string, err: unknown) => {
@@ -894,7 +899,10 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
             <div className="flex flex-wrap gap-1.5">
               {([
                 { key: "activos", label: "Activos" },
-                { key: "cancelados", label: "Cancelados" },
+                // "Cancelados" agrupa tambien las anuladas: son los dos
+                // estados que no son 'activo'. La insignia de cada fila
+                // distingue cual es cual.
+                { key: "cancelados", label: "Cancelados y anulados" },
                 { key: "todos", label: "Todos" },
               ] as { key: FiltroEstado; label: string }[]).map((f) => (
                 <button
@@ -945,11 +953,19 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
                             {p.cliente.apodo || p.cliente.nombre_completo}
                           </span>
                           <span className="text-[10px] text-muted-foreground">{p.cliente.documento}</span>
-                          {p.estado !== "activo" && (
+                          {/* Una ANULADA y una CANCELADA significan lo
+                              contrario: la cancelada se pago entera, la
+                              anulada nunca debio existir. Con la misma
+                              insignia gris se leian igual. */}
+                          {p.estado === "anulado" ? (
+                            <Badge className="bg-destructive/15 text-destructive border-destructive/30 text-[9px] px-1.5 py-0">
+                              anulada
+                            </Badge>
+                          ) : p.estado !== "activo" ? (
                             <Badge variant="secondary" className="text-[9px] px-1.5 py-0">
                               {p.estado}
                             </Badge>
-                          )}
+                          ) : null}
                           <Badge variant="outline" className="text-[9px] px-1.5 py-0">
                             {etiquetaFrecuencia(p.frecuencia_pago)}
                           </Badge>
@@ -980,6 +996,46 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
   // ──────────────────────────────────────────────────────────────────────────
   // DETALLE
   // ──────────────────────────────────────────────────────────────────────────
+  /**
+   * Anular la venta completa.
+   *
+   * ANULA, no borra. De 144 prestamos, 133 ya tienen plata cobrada: borrar uno
+   * de esos haria desaparecer esos pagos de los resumenes de dias ya cerrados
+   * y aprobados. Ademas `gestiones` es un libro inmutable —un trigger prohibe
+   * DELETE— y tiene llave foranea a `loans`.
+   *
+   * El credito sale de la cartera, de la ruta y de la mora; cada peso sigue
+   * contando en el dia en que entro. Ver scripts/068.
+   */
+  const anularVenta = async () => {
+    if (!prestamo) return
+    const motivo = motivoAnulacion.trim()
+    if (!motivo) {
+      toast({ title: "Falta el motivo", description: "Escribe por qué se anula esta venta.", variant: "destructive" })
+      return
+    }
+    setEnCurso("venta-anular")
+    try {
+      await callRpcAtomic("anular_venta", { loan_id: prestamo.id, motivo })
+      toast({
+        title: "Venta anulada",
+        description: "Sale de la cartera y de la ruta. Los pagos que ya se habían recibido siguen contando en los días en que entraron.",
+      })
+      setAnularVentaAbierto(false)
+      setMotivoAnulacion("")
+      volverAlListado()
+    } catch (err) {
+      console.error("[v0] anularVenta:", err)
+      toast({
+        title: "No se pudo anular",
+        description: err instanceof Error ? err.message : "Intenta de nuevo.",
+        variant: "destructive",
+      })
+    } finally {
+      setEnCurso(null)
+    }
+  }
+
   const volverAlListado = () => {
     setLoanId(null)
     setBusqueda("")
@@ -1298,7 +1354,19 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
                 </div>
               )}
 
-              <div className="flex justify-end">
+              {/* Anular queda SEPARADO de guardar, y en el otro extremo: son
+                  la accion mas inocua y la mas grave de la pantalla, y no
+                  pueden estar una al lado de la otra. */}
+              <div className="flex items-center justify-between gap-2 pt-2 border-t">
+                <Button
+                  variant="outline"
+                  className="border-destructive/40 text-destructive hover:bg-destructive/10 gap-1.5"
+                  onClick={() => setAnularVentaAbierto(true)}
+                  disabled={guardando || prestamo.estado === "anulado"}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {prestamo.estado === "anulado" ? "Venta anulada" : "Anular venta"}
+                </Button>
                 <Button onClick={intentarGuardarTerminos} disabled={guardando}>
                   {enCurso === "terminos" ? (
                     <>
@@ -1661,6 +1729,67 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
       </Dialog>
 
       {/* ── Diálogo: agregar cuota ─────────────────────────────────────── */}
+      {/* Anular la venta completa */}
+      <Dialog open={anularVentaAbierto} onOpenChange={(v) => { if (!v && enCurso !== "venta-anular") setAnularVentaAbierto(false) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-4 w-4" />
+              Anular esta venta
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              El crédito sale de la cartera, de la ruta diaria y de la mora. El cliente
+              queda libre para una venta nueva.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Lo que NO pasa es tan importante como lo que pasa: si esto no se
+              dice, se anula creyendo que la plata se devuelve sola. */}
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-[12px] text-amber-900 space-y-1">
+            <p className="font-semibold">Los pagos ya recibidos NO se borran.</p>
+            <p>
+              Cada peso que entró sigue contando en el día en que entró, y los cierres de
+              caja ya firmados no se mueven. Si hay que devolverle plata al cliente, eso se
+              registra aparte como un movimiento de caja.
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <Label htmlFor="motivoAnulacion" className="text-xs">
+              ¿Por qué se anula? <span className="text-destructive">*</span>
+            </Label>
+            <Textarea
+              id="motivoAnulacion"
+              value={motivoAnulacion}
+              onChange={(e) => setMotivoAnulacion(e.target.value)}
+              placeholder="Ej: se registró al cliente equivocado"
+              className="min-h-[64px] text-sm"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Queda guardado con tu nombre y la fecha. No se puede deshacer desde la app.
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setAnularVentaAbierto(false)}
+              disabled={enCurso === "venta-anular"}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void anularVenta()}
+              disabled={enCurso === "venta-anular" || !motivoAnulacion.trim()}
+            >
+              {enCurso === "venta-anular" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              <span className="ml-1.5">Anular venta</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={crearAbierto} onOpenChange={(o) => !o && setCrearAbierto(false)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
