@@ -22,14 +22,9 @@ import { useToast } from "@/hooks/use-toast"
 import { editTransaction } from "@/lib/actions/edit-transaction"
 import { fmtMoneda, fmtFechaHora } from "@/lib/gestion-core"
 import { todayColombia } from "@/lib/colombia-date"
-import { getUsuarioSesion, movimientoAbierto, type Movimiento } from "@/lib/movimientos"
-
-/** De qué tabla sale el catálogo de conceptos de cada tipo. */
-const TABLA_CATALOGO: Record<string, string> = {
-  Ingreso: "ingresos",
-  Gasto: "gastos",
-  Retiro: "retiros",
-}
+import {
+  getUsuarioSesion, movimientoAbierto, TABLA_CATALOGO, type Movimiento,
+} from "@/lib/movimientos"
 
 interface Props {
   movimiento: Movimiento | null

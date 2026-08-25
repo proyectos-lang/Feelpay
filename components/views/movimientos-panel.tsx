@@ -21,7 +21,7 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Loader2, TrendingUp, TrendingDown, Wallet, Pencil, Search, PencilLine, Trash2 } from "lucide-react"
+import { Loader2, TrendingUp, TrendingDown, Wallet, Pencil, Search, PencilLine, Trash2, Plus } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { fmtMoneda, fmtFechaHora } from "@/lib/gestion-core"
 import { todayColombia } from "@/lib/colombia-date"
@@ -31,6 +31,7 @@ import {
 } from "@/lib/movimientos"
 import { EditMovimientoDialog } from "@/components/views/edit-movimiento-dialog"
 import { EliminarMovimientoDialog } from "@/components/views/eliminar-movimiento-dialog"
+import { NuevoMovimientoDialog } from "@/components/views/nuevo-movimiento-dialog"
 
 interface Props {
   /** Ruta a consultar. "todas" solo se usa desde los módulos de secretaría. */
@@ -44,6 +45,16 @@ interface Props {
    */
   rutas?: { id: number; nombre: string }[]
   onRutaChange?: (ruta: number | "todas") => void
+  /**
+   * true = además del botón de editar, aparece el de registrar un movimiento
+   * nuevo (Control Total). Es una bandera aparte de `editable` a propósito:
+   * corregir un movimiento que alguien ya registró y crear plata de la nada
+   * no son el mismo permiso.
+   *
+   * Necesita `rutas`: el movimiento nace en una ruta, y desde el diálogo hay
+   * que poder decir en cuál.
+   */
+  permiteRegistrar?: boolean
 }
 
 const ICONO_TIPO: Record<string, React.ReactNode> = {
@@ -65,7 +76,9 @@ function BadgeEstado({ estado }: { estado: string }) {
   return <Badge className={`${m.clase} text-[9px] md:text-[10px] font-semibold`}>{m.texto}</Badge>
 }
 
-export function MovimientosPanel({ rutaId, editable = false, rutas, onRutaChange }: Props) {
+export function MovimientosPanel({
+  rutaId, editable = false, rutas, onRutaChange, permiteRegistrar = false,
+}: Props) {
   const { toast } = useToast()
   const hoy = todayColombia()
   const [desde, setDesde] = useState(hoy)
@@ -76,6 +89,7 @@ export function MovimientosPanel({ rutaId, editable = false, rutas, onRutaChange
   const [cargando, setCargando] = useState(true)
   const [editando, setEditando] = useState<Movimiento | null>(null)
   const [eliminando, setEliminando] = useState<Movimiento | null>(null)
+  const [registrando, setRegistrando] = useState(false)
   // Solo para el predicado de borrado. Se lee en un efecto y no al construir
   // el estado: `localStorage` no existe en el servidor.
   const [usuarioId, setUsuarioId] = useState<number | null>(null)
@@ -115,6 +129,14 @@ export function MovimientosPanel({ rutaId, editable = false, rutas, onRutaChange
       {/* Filtros */}
       <Card>
         <CardContent className="p-3 space-y-2">
+          {permiteRegistrar && rutas && (
+            <div className="flex justify-end">
+              <Button size="sm" className="h-8 text-xs" onClick={() => setRegistrando(true)}>
+                <Plus className="mr-1 h-3.5 w-3.5" />
+                Registrar movimiento
+              </Button>
+            </div>
+          )}
           {rutas && onRutaChange && (
             <div className="space-y-1">
               <Label className="text-[11px]">Ruta</Label>
@@ -309,6 +331,19 @@ export function MovimientosPanel({ rutaId, editable = false, rutas, onRutaChange
           onOpenChange={(o) => !o && setEliminando(null)}
           comoAsesor={false}
           onDeleted={cargar}
+        />
+      )}
+
+      {permiteRegistrar && rutas && (
+        <NuevoMovimientoDialog
+          open={registrando}
+          onOpenChange={setRegistrando}
+          rutaActual={rutaId}
+          rutas={rutas}
+          // El movimiento puede quedar fuera del rango que está filtrado
+          // (registrar el gasto del martes estando en "hoy"), así que se
+          // recarga la lista y además se avisa dónde quedó.
+          onSaved={cargar}
         />
       )}
     </div>

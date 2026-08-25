@@ -31,6 +31,22 @@ export type TipoMovimiento = "Ingreso" | "Gasto" | "Retiro"
 
 export const TIPOS_MOVIMIENTO: TipoMovimiento[] = ["Ingreso", "Gasto", "Retiro"]
 
+/**
+ * De qué tabla sale el catálogo de conceptos de cada tipo.
+ *
+ * Vivía duplicado en el diálogo de edición. Ahora lo comparten el que edita y
+ * el que registra: si mañana se agrega un cuarto tipo, hay UN sitio donde
+ * acordarse, no dos que pueden quedar en desacuerdo.
+ */
+// La clave es `string` y no `TipoMovimiento` a propósito: `Movimiento.tipo`
+// viene de la base como texto libre, y el código que lo usa ya comprueba que
+// haya salido una tabla antes de consultarla.
+export const TABLA_CATALOGO: Record<string, string> = {
+  Ingreso: "ingresos",
+  Gasto: "gastos",
+  Retiro: "retiros",
+}
+
 export interface Movimiento {
   id: number
   fechahorasol: string

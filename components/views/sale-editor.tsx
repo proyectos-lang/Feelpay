@@ -857,11 +857,16 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
           </TabsList>
 
           <TabsContent value="movimientos" className="mt-3">
+            {/* `permiteRegistrar` solo acá, no en Auditoría 360: esa es una
+                pantalla para mirar. Registrar plata sin tope y con fecha
+                libre es una atribución de secretaría, y Control Total es
+                donde vive. */}
             <MovimientosPanel
               rutaId={rutaFiltro}
               rutas={rutas}
               onRutaChange={setRutaFiltro}
               editable
+              permiteRegistrar
             />
           </TabsContent>
 
