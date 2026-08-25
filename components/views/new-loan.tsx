@@ -1409,6 +1409,18 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
 
       console.log("[v0] registrar_venta OK:", resultadoVenta)
 
+      // El cliente sale de la lista EN EL ACTO, sin esperar a que vuelva la
+      // consulta.
+      //
+      // `resetFormularioVenta` ya dispara un refetch, pero ese pasa por un
+      // rebote de 300ms y por la red: durante ese rato el cliente al que se le
+      // acaba de vender seguia figurando como disponible, y en la calle eso
+      // alcanza para intentar venderle dos veces. Quitarlo de la lista es
+      // instantaneo y no depende de nada; el refetch que viene detras confirma.
+      if (!isNewClient && selectedClient) {
+        setClientOptions((prev) => prev.filter((c) => c.id !== selectedClient))
+      }
+
       const successMsg = `Se registró la venta de $${Number(valor || 0).toLocaleString()} para ${nombreParaEtiqueta}.`
       showToastPill("Venta registrada exitosamente")
       setSuccessDialog({ open: true, msg: successMsg })

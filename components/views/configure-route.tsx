@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { GripVertical, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import { useToast } from "@/hooks/use-toast"
 
 interface LoanItem {
@@ -38,6 +39,32 @@ export function ConfigureRoute({ currentRutaId = 1 }: ConfigureRouteProps) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
   const dragNode = useRef<HTMLDivElement | null>(null)
+  /** Qué fila tiene el cuadro de posición abierto, y qué se escribió en él. */
+  const [posEditando, setPosEditando] = useState<string | null>(null)
+  const [posTexto, setPosTexto] = useState("")
+
+  /**
+   * Mueve un cliente a la posición que se escribió.
+   *
+   * Arrastrar sirve para acomodar de a poco, pero no para mandar el 30 al 2:
+   * hay que sostener el dedo y recorrer treinta filas. Acá se escribe el
+   * número y listo.
+   *
+   * El que estaba en esa posición y todos los de abajo corren UN lugar. No es
+   * un intercambio: si el 30 pasa al 2, el que era 2 pasa a 3, el 3 a 4, y así.
+   * Intercambiarlos rompería el orden de la calle en dos puntos en vez de uno.
+   */
+  const moverAPosicion = (desde: number, destinoUno: number) => {
+    const destino = Math.min(Math.max(1, Math.trunc(destinoUno)), loans.length) - 1
+    setPosEditando(null)
+    setPosTexto("")
+    if (!Number.isFinite(destino) || destino === desde) return
+    const reordenado = [...loans]
+    const [movido] = reordenado.splice(desde, 1)
+    reordenado.splice(destino, 0, movido)
+    setLoans(reordenado.map((l, i) => ({ ...l, ordenvisita: i + 1 })))
+    saveOrder(reordenado)
+  }
 
   const fetchLoans = useCallback(async () => {
     setLoading(true)
@@ -191,7 +218,8 @@ export function ConfigureRoute({ currentRutaId = 1 }: ConfigureRouteProps) {
               silencioso hace dudar: "¿me falta un cliente o ya no lo cobro?"
               es una pregunta que no deberia tener que hacerse. */}
           <p className="text-[11px] md:text-sm text-muted-foreground">
-            Arrastra los clientes para reorganizar el orden de visita de la ruta.
+            Arrastra los clientes para reorganizar el orden, o tocá el número
+            de un cliente y escribí a qué puesto lo querés mover.
             {loans.length > 0 && ` ${loans.length} ${loans.length === 1 ? "crédito activo" : "créditos activos"}; los cancelados no aparecen.`}
           </p>
         </CardHeader>
@@ -249,11 +277,42 @@ export function ConfigureRoute({ currentRutaId = 1 }: ConfigureRouteProps) {
                     <GripVertical className="h-4 w-4 md:h-5 md:w-5" />
                   </div>
 
-                  {/* Order number */}
-                  <div className="flex items-center justify-center flex-shrink-0">
-                    <span className="flex h-6 w-6 md:h-7 md:w-7 items-center justify-center rounded-full bg-primary/10 text-[11px] md:text-xs font-bold text-primary">
-                      {index + 1}
-                    </span>
+                  {/* Posición. Tocar el número abre un cuadro para escribir a
+                      cuál se quiere mover: arrastrar el 30 hasta el 2 obliga a
+                      sostener el dedo y recorrer treinta filas. */}
+                  <div
+                    className="flex items-center justify-center flex-shrink-0"
+                    // El cuadro no puede arrastrarse: sin esto, tocar para
+                    // escribir dispara el drag y el número se va con el dedo.
+                    draggable={false}
+                    onDragStart={(e) => e.preventDefault()}
+                    onTouchStart={(e) => e.stopPropagation()}
+                  >
+                    {posEditando === loan.id ? (
+                      <Input
+                        autoFocus
+                        inputMode="numeric"
+                        value={posTexto}
+                        onChange={(e) => setPosTexto(e.target.value.replace(/[^0-9]/g, ""))}
+                        onBlur={() => { setPosEditando(null); setPosTexto("") }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && posTexto) moverAPosicion(index, Number(posTexto))
+                          if (e.key === "Escape") { setPosEditando(null); setPosTexto("") }
+                        }}
+                        className="h-7 w-12 px-1 text-center text-xs font-bold"
+                        aria-label={`Mover ${getClientName(loan)} a otra posición`}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setPosEditando(loan.id); setPosTexto("") }}
+                        disabled={saving}
+                        title={`Puesto ${index + 1} — tocá para moverlo a otro`}
+                        className="flex h-7 w-7 md:h-8 md:w-8 items-center justify-center rounded-full bg-primary/10 text-[11px] md:text-xs font-bold text-primary hover:bg-primary/20 disabled:opacity-50"
+                      >
+                        {index + 1}
+                      </button>
+                    )}
                   </div>
 
                   {/* Client name */}
