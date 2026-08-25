@@ -50,7 +50,7 @@ import { DetalleClientesDialog } from "@/components/detalle-clientes-dialog"
 import {
   todayColombia,
   horaColombia,
-  montoEfectivo,
+  colapsarPorCliente,
   type TipoGestion,
 } from "@/lib/gestion-core"
 import type { MapPoint } from "./admin-route-monitor-map"
@@ -73,6 +73,13 @@ type MonitoreoRuta = {
   estado_ruta: "abierta" | "cerrada" | string | null
   aprobacion_admin: "pendiente" | "aprobado" | string | null
   total_recaudado: number | null
+  /** Script 071: la plata que entró POR LA CALLE. Es la que responde el
+   *  cobrador y la que se muestra acá. */
+  recaudo_campo: number | null
+  /** El resto: correcciones de secretaría sobre cuotas de otros días. Es
+   *  plata real, pero no se recaudó hoy ni en esta ruta. No se esconde —
+   *  se muestra aparte para que el número de arriba sea el del cobrador. */
+  recaudo_ajuste: number | null
   pagos_exitosos: number | null
   visitas_sin_pago: number | null
   /** Script 060: la CARTERA de esa ruta ese día que quedó sin gestionar —
@@ -155,24 +162,9 @@ const formatCurrency = (n: number | null | undefined) =>
 
 const formatHora = (iso: string | null) => horaColombia(iso)
 
-/**
- * El mapa y los badges hablan el vocabulario viejo de estados de cuota
- * (`pagado` / `no_pago` / `cancelada`). Se traduce el tipo del evento a ese
- * vocabulario para no cambiar ni los colores ni los textos de la pantalla.
- */
-const estadoVisual = (tipo: TipoGestion): string => {
-  switch (tipo) {
-    case "pago":
-    case "abono_venta":
-      return "pagado"
-    case "cancelacion":
-      return "cancelada"
-    case "no_pago":
-      return "no_pago"
-    default:
-      return tipo
-  }
-}
+// `estadoVisual` vivía acá y traducía el tipo de UN evento al vocabulario de
+// la pantalla. Ya no hace falta: las filas son de un CLIENTE, no de un evento,
+// y `colapsarPorCliente` decide el estado mirando el día completo.
 
 /** Eventos que representan una visita del cobrador en el terreno. */
 const ES_VISITA: TipoGestion[] = ["pago", "no_pago", "cancelacion", "abono_venta"]
@@ -503,6 +495,31 @@ export function AdminRouteMonitor() {
     }
   }, [openDetalle, selectedRuta])
 
+  /**
+   * UNA FILA POR CLIENTE, no una por papel.
+   *
+   * `detalle` es el libro crudo del dia. Una tarde de correcciones de
+   * secretaria deja diez renglones del mismo cliente, ocho de ellos en cero.
+   * `colapsarPorCliente` aplica la MISMA regla que `resumen_diario_v2`
+   * (script 070), asi que esta lista y el contador de la tarjeta no pueden
+   * discrepar: si la vista dice 13 pagos, aca hay 13 filas.
+   *
+   * Se le pasa `tieneGps` para que, cuando un cliente tenga varios eventos,
+   * la fila se quede con la hora y las coordenadas de la VISITA real y no
+   * con las de un ajuste de escritorio posterior.
+   */
+  const detalleColapsado = useMemo(
+    () =>
+      colapsarPorCliente(detalle, {
+        tieneGps: (e) =>
+          typeof e.latitud === "number" &&
+          typeof e.longitud === "number" &&
+          !Number.isNaN(e.latitud) &&
+          !Number.isNaN(e.longitud),
+      }),
+    [detalle],
+  )
+
   // ── Build ordered list of map points (with valid GPS) ─────────────────────
   /**
    * Cuantas de las gestiones del dia SON una visita.
@@ -518,40 +535,46 @@ export function AdminRouteMonitor() {
    *
    * Las reversas y los ajustes tampoco cuentan, por lo mismo: se registran
    * desde un escritorio corrigiendo algo que ya paso.
+   *
+   * Ahora cuenta CLIENTES visitados, no eventos: si no, un cobrador que
+   * corrige el monto tres veces inflaba el aviso de GPS igual que inflaba
+   * el recaudo.
    */
   const TIPOS_CON_GPS: TipoGestion[] = ["pago", "no_pago", "cancelacion"]
   const visitasDelDia = useMemo(
-    () => detalle.filter((r) => TIPOS_CON_GPS.includes(r.tipo)).length,
-    [detalle],
+    () =>
+      detalleColapsado.filter((r) => TIPOS_CON_GPS.includes(r.representante.tipo))
+        .length,
+    [detalleColapsado],
   )
 
   const mapPoints: MapPoint[] = useMemo(() => {
-    return detalle
-      .filter(
-        (r) =>
-          typeof r.latitud === "number" &&
-          typeof r.longitud === "number" &&
-          !Number.isNaN(r.latitud) &&
-          !Number.isNaN(r.longitud) &&
-          ES_VISITA.includes(r.tipo),
-      )
-      .sort((a, b) => {
-        const aT = a.fecha_hora ? new Date(a.fecha_hora).getTime() : 0
-        const bT = b.fecha_hora ? new Date(b.fecha_hora).getTime() : 0
-        return aT - bT
+    return detalleColapsado
+      .filter((r) => {
+        const e = r.representante
+        return (
+          typeof e.latitud === "number" &&
+          typeof e.longitud === "number" &&
+          !Number.isNaN(e.latitud) &&
+          !Number.isNaN(e.longitud) &&
+          ES_VISITA.includes(e.tipo)
+        )
       })
       .map((r, idx) => ({
-        id: r.id,
-        lat: r.latitud as number,
-        lng: r.longitud as number,
-        estado: estadoVisual(r.tipo),
+        id: r.representante.id,
+        lat: r.representante.latitud as number,
+        lng: r.representante.longitud as number,
+        estado: r.estado,
         cliente:
-          r.loans?.clients?.apodo || r.loans?.clients?.nombre_completo || "Cliente",
-        monto: montoEfectivo({ tipo: r.tipo, monto: Number(r.monto) || 0 }),
-        hora: formatHora(r.fecha_hora),
+          r.representante.loans?.clients?.apodo ||
+          r.representante.loans?.clients?.nombre_completo ||
+          "Cliente",
+        // El NETO del cliente ese dia, no el monto de un evento suelto.
+        monto: r.neto,
+        hora: formatHora(r.representante.fecha_hora),
         orden: idx + 1,
       }))
-  }, [detalle])
+  }, [detalleColapsado])
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -704,15 +727,30 @@ export function AdminRouteMonitor() {
                     </div>
                   </div>
 
-                  {/* Recaudo */}
+                  {/* Recaudo — EL DEL COBRADOR.
+                      Antes acá iba `total_recaudado`, que mezcla la plata de
+                      la calle con las correcciones que secretaría escribe ese
+                      día sobre cuotas de OTROS días. Por eso la 151 marcaba
+                      1.103.500 un día en que el cobrador recaudó 341.500.
+                      Arriba va lo que él responde; los ajustes se muestran
+                      debajo, en pequeño, para que no desaparezcan. */}
                   <div className="flex flex-col lg:w-[150px] lg:shrink-0">
                     <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                       <Banknote className="h-3 w-3" />
                       Recaudo
                     </span>
                     <span className="text-lg font-bold tabular-nums text-foreground">
-                      {formatCurrency(r.total_recaudado)}
+                      {formatCurrency(r.recaudo_campo)}
                     </span>
+                    {Number(r.recaudo_ajuste) !== 0 && (
+                      <span
+                        className="text-[11px] tabular-nums text-muted-foreground"
+                        title="Correcciones de secretaría sobre cuotas de otros días. No es plata que haya entrado hoy por la calle."
+                      >
+                        {Number(r.recaudo_ajuste) > 0 ? "+" : "−"}
+                        {formatCurrency(Math.abs(Number(r.recaudo_ajuste)))} en ajustes
+                      </span>
+                    )}
                   </div>
 
                   {/* Gestión: Pagos / Sin Pago / Pendientes */}
@@ -934,36 +972,48 @@ export function AdminRouteMonitor() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {detalle.length === 0 ? (
+                {detalleColapsado.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
                       Sin movimientos registrados
                     </TableCell>
                   </TableRow>
                 ) : (
-                  detalle.map((r, idx) => {
+                  detalleColapsado.map((fila, idx) => {
+                    const r = fila.representante
                     const cliente =
                       r.loans?.clients?.apodo ||
                       r.loans?.clients?.nombre_completo ||
                       "Cliente"
                     const hasGps =
                       typeof r.latitud === "number" && typeof r.longitud === "number"
-                    const estado = estadoVisual(r.tipo)
+                    const estado = fila.estado
                     const color =
-                      estado === "pagado" || estado === "parcial" || estado === "cancelada"
+                      estado === "pagado"
                         ? "bg-success text-success-foreground"
-                        : estado === "no_pago"
-                          ? "bg-destructive text-destructive-foreground"
-                          : "bg-muted text-muted-foreground"
+                        : "bg-destructive text-destructive-foreground"
+                    // Cuantos papeles hubo detras de esta fila. Se dice, no se
+                    // esconde: es la pista de que ese cliente se corrigio.
+                    const correcciones = fila.eventos.length
                     return (
-                      <TableRow key={r.id}>
+                      <TableRow key={fila.loanId}>
                         <TableCell className="font-medium">{idx + 1}</TableCell>
-                        <TableCell className="font-medium">{cliente}</TableCell>
+                        <TableCell className="font-medium">
+                          {cliente}
+                          {correcciones > 1 && (
+                            <span
+                              className="ml-1 text-[11px] font-normal text-muted-foreground"
+                              title={`${correcciones} movimientos en el libro, ya netos`}
+                            >
+                              ({correcciones} mov.)
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell>
                           <Badge className={`${color} border-0`}>{estado}</Badge>
                         </TableCell>
                         <TableCell className="text-right font-semibold">
-                          {formatCurrency(montoEfectivo({ tipo: r.tipo, monto: Number(r.monto) || 0 }))}
+                          {formatCurrency(fila.neto)}
                         </TableCell>
                         <TableCell>{formatHora(r.fecha_hora) || "—"}</TableCell>
                         <TableCell className="text-center">

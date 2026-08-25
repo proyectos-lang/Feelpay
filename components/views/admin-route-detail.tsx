@@ -15,7 +15,7 @@ import {
   Receipt, TrendingUp, ArrowDownCircle, Clock, User,
 } from "lucide-react"
 import {
-  todayColombia, horaColombia, fmtMoneda, etiquetaFrecuencia, montoEfectivo,
+  todayColombia, horaColombia, fmtMoneda, etiquetaFrecuencia, colapsarPorCliente,
   type TipoGestion,
 } from "@/lib/gestion-core"
 
@@ -170,34 +170,39 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
 
       if (gestionesRes.error) throw gestionesRes.error
 
-      // Normalizar gestiones. El nombre del cliente ya viene en el mismo viaje
+      // UNA FILA POR CLIENTE, no una por evento.
+      //
+      // Antes cada papel del libro era un renglón: un cliente al que
+      // secretaría le marcó el pago, se lo quitó, le puso no pago y se lo
+      // volvió a marcar aparecía cuatro veces, y la reversa colgaba suelta en
+      // la pestaña de Pagos restando. `colapsarPorCliente` aplica la MISMA
+      // regla que `resumen_diario_v2` (script 070), así que estas listas y los
+      // contadores de las pestañas no pueden discrepar.
+      //
+      // El nombre del cliente ya viene en el mismo viaje
       // (gestiones → loans → clients), así que se acabó la consulta extra.
-      const eventos: GestionRow[] = ((gestionesRes.data ?? []) as any[]).map((g) => ({
-        id: g.id, loan_id: g.loan_id, ruta: g.ruta,
-        ruta_nombre: rutaInfoMap.get(g.ruta)?.nombre ?? `Ruta ${g.ruta}`,
-        tipo: g.tipo as TipoGestion,
-        numero_cuota: g.cuota?.numero_cuota ?? null,
-        fecha_pago: g.cuota?.fecha_pago ?? null,
-        valor_cuota: Number(g.cuota?.valor_cuota ?? 0),
-        // montoEfectivo: una reversa entra en negativo, para que el total del
-        // día sea la plata NETA que realmente entró (misma fórmula que
-        // vista_monitoreo_admin.total_recaudado).
-        monto: montoEfectivo({ tipo: g.tipo, monto: Number(g.monto ?? 0) }),
-        hora: hora(g.fecha_hora),
-        cliente_nombre: g.loans?.clients?.nombre_completo ?? "—",
-        cliente_documento: g.loans?.clients?.documento ?? "—",
-      }))
+      const filas = colapsarPorCliente((gestionesRes.data ?? []) as any[])
 
-      // Un pago es un evento que movió plata hacia el préstamo; la reversa
-      // aparece en la misma pestaña restando, porque también es caja del día.
-      setPagos(
-        eventos.filter(
-          (e) =>
-            (["pago", "cancelacion", "abono_venta"].includes(e.tipo) && e.monto > 0) ||
-            e.tipo === "reversa",
-        ),
-      )
-      setNoPagos(eventos.filter((e) => e.tipo === "no_pago"))
+      const aFila = (f: (typeof filas)[number]): GestionRow => {
+        const g = f.representante as any
+        return {
+          id: g.id, loan_id: g.loan_id, ruta: g.ruta,
+          ruta_nombre: rutaInfoMap.get(g.ruta)?.nombre ?? `Ruta ${g.ruta}`,
+          tipo: g.tipo as TipoGestion,
+          numero_cuota: g.cuota?.numero_cuota ?? null,
+          fecha_pago: g.cuota?.fecha_pago ?? null,
+          valor_cuota: Number(g.cuota?.valor_cuota ?? 0),
+          // El NETO del cliente ese día: las reversas ya vienen restadas
+          // adentro, así que dejaron de necesitar renglón propio.
+          monto: f.neto,
+          hora: hora(g.fecha_hora),
+          cliente_nombre: g.loans?.clients?.nombre_completo ?? "—",
+          cliente_documento: g.loans?.clients?.documento ?? "—",
+        }
+      }
+
+      setPagos(filas.filter((f) => f.estado === "pagado").map(aFila))
+      setNoPagos(filas.filter((f) => f.estado === "no_pago").map(aFila))
 
       // Normalizar ventas
       setVentas(

@@ -126,7 +126,13 @@ export function nuevaGestionId(): string {
  * ¿Este evento movió plata hacia el préstamo?
  * LA definición de "pago" para contadores y totales. Una reversa resta.
  */
-export function montoEfectivo(g: Pick<Gestion, "tipo" | "monto">): number {
+export function montoEfectivo(g: {
+  tipo: TipoGestion
+  // Suelto a propósito: PostgREST devuelve `numeric` como string y las filas
+  // crudas llegan acá antes de normalizarse. `Number(...) || 0` ya lo resuelve
+  // abajo; exigir `number` solo obligaba a convertir en cada sitio de llamada.
+  monto: number | string | null
+}): number {
   switch (g.tipo) {
     case "pago":
     case "cancelacion":
@@ -151,6 +157,110 @@ export function esPagoReal(g: Pick<Gestion, "tipo" | "monto" | "estado">): boole
 /** Eventos que representan una VISITA al cliente (cuentan como gestión del día). */
 export function esVisita(g: Pick<Gestion, "tipo">): boolean {
   return g.tipo === "pago" || g.tipo === "no_pago" || g.tipo === "cancelacion"
+}
+
+/** Lo mínimo que necesita un evento para poder colapsarse. */
+export interface EventoColapsable {
+  loan_id: string
+  tipo: TipoGestion
+  monto: number | string | null
+  fecha_hora: string | null
+}
+
+/** Una fila: un cliente, un día, un resultado. */
+export interface MovimientoColapsado<T> {
+  loanId: string
+  /** La plata que quedó puesta ese día, ya neteada. */
+  neto: number
+  estado: "pagado" | "no_pago"
+  /** Todos los eventos del cliente ese día, en orden. El rastro completo. */
+  eventos: T[]
+  /**
+   * El evento que representa la fila. De él salen la hora y el GPS: es el
+   * último que decidió el resultado, prefiriendo uno con coordenadas.
+   */
+  representante: T
+}
+
+/**
+ * UN CLIENTE, UN DÍA, UNA FILA.
+ *
+ * Es el espejo en TypeScript de lo que hace `resumen_diario_v2` en SQL
+ * (script 070), y existe para que la LISTA y el CONTADOR no puedan
+ * discrepar: si la vista dice 13 pagos, esto devuelve 13 filas.
+ *
+ * Sin esto, una tarde de correcciones se ve así en el detalle del día:
+ *
+ *   jenny condori carvajal   ajuste   $0        09:45
+ *   jenny condori carvajal   ajuste   $0        09:45
+ *   ... (seis más)
+ *   jenny condori carvajal   pagado   $97.500   09:48
+ *   jenny condori carvajal   pagado   $97.500   09:48
+ *
+ * Diez renglones del mismo cliente, ocho de ellos en cero. Es el libro
+ * crudo, y el libro tiene razón en guardarlo todo — cada corrección lleva su
+ * firma y su hora. Pero quien mira el día quiere saber qué pasó con jenny, y
+ * con jenny pasó UNA cosa: quedó pagando $195.000.
+ *
+ * LA REGLA (la misma del 070):
+ *   neto > 0                    -> una fila "pagado" por ese neto
+ *   neto <= 0 y hubo un no_pago -> una fila "no_pago"
+ *   neto = 0 sin no_pago        -> NO aparece
+ *
+ * El último caso es a propósito: un pago que se registró y se anuló no dejó
+ * nada, y una edición de cronograma en $0 no es un movimiento de plata. Si
+ * se listaran, la lista tendría más renglones que el contador y volveríamos
+ * al mismo problema por otra puerta.
+ */
+export function colapsarPorCliente<T extends EventoColapsable>(
+  eventos: T[],
+  opts?: { tieneGps?: (e: T) => boolean },
+): MovimientoColapsado<T>[] {
+  const porLoan = new Map<string, T[]>()
+  for (const e of eventos) {
+    const lista = porLoan.get(e.loan_id)
+    if (lista) lista.push(e)
+    else porLoan.set(e.loan_id, [e])
+  }
+
+  const filas: MovimientoColapsado<T>[] = []
+  for (const [loanId, lista] of porLoan) {
+    const orden = [...lista].sort((a, b) => tiempo(a.fecha_hora) - tiempo(b.fecha_hora))
+    const neto = orden.reduce((s, e) => s + montoEfectivo(e), 0)
+    const huboNoPago = orden.some((e) => e.tipo === "no_pago")
+
+    const estado: "pagado" | "no_pago" | null =
+      neto > 0 ? "pagado" : huboNoPago ? "no_pago" : null
+    if (estado === null) continue
+
+    // Los eventos que DECIDIERON el resultado. La hora y el GPS de la fila
+    // salen de ahí, no del último papel que se haya tocado: un ajuste de
+    // cronograma posterior no puede robarle la hora a la visita real.
+    const decisivos = orden.filter((e) =>
+      estado === "pagado" ? montoEfectivo(e) > 0 : e.tipo === "no_pago",
+    )
+    const candidatos = decisivos.length > 0 ? decisivos : orden
+    const conGps = opts?.tieneGps ? candidatos.filter(opts.tieneGps) : []
+    const pool = conGps.length > 0 ? conGps : candidatos
+
+    filas.push({
+      loanId,
+      neto,
+      estado,
+      eventos: orden,
+      representante: pool[pool.length - 1],
+    })
+  }
+
+  return filas.sort(
+    (a, b) => tiempo(a.representante.fecha_hora) - tiempo(b.representante.fecha_hora),
+  )
+}
+
+function tiempo(ts: string | null | undefined): number {
+  if (!ts) return 0
+  const t = new Date(ts).getTime()
+  return Number.isNaN(t) ? 0 : t
 }
 
 /** Resumen de lo que se le hizo a un préstamo en un día. */
