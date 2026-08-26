@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
  import { createClient } from "@/lib/supabase/client"
 import { getResumenDia } from "@/lib/resumen-dia"
+import { clientesSinGestionarHoy } from "@/lib/dashboard-data"
 import { todayColombia, bandaCartera, etiquetaFrecuencia } from "@/lib/gestion-core"
 import { contarPendientes, suscribirCola } from "@/lib/offline-queue"
 import { getRutaUmbrales } from "@/lib/ruta-umbrales"
@@ -40,6 +41,11 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
 
   // Estado real de la validación
   const [pagosPendientes, setPagosPendientes] = useState<number>(0)
+  // Los nombres de quienes faltan. "Faltan 4" sin decir quiénes obliga a
+  // repasar la lista cliente por cliente — que es lo que se reportó.
+  const [nombresPendientes, setNombresPendientes] = useState<string[]>([])
+  // Los mismos que el panel de pagos cuenta en su "X de Y gestionados".
+  const [totalCartera, setTotalCartera] = useState<number>(0)
   const [loadingPagos, setLoadingPagos] = useState<boolean>(true)
 
   // Operaciones pendientes (aún mock hasta que se conecte la lógica real)
@@ -48,35 +54,49 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
   // La fecha de hoy en Colombia sale de `todayColombia()` (@/lib/gestion-core):
   // una sola definicion para toda la app.
 
-  // Consultar payment_plan para contar cuántos pagos del día siguen en estado "pendiente"
+  /**
+   * QUIÉN QUEDÓ SIN VISITAR HOY.
+   *
+   * Antes esto contaba cuotas de `payment_plan` con `fecha_pago = hoy` y
+   * `estado = 'pendiente'`, y por eso señalaba a la gente equivocada.
+   *
+   * Una cuota que vence hoy se queda en 'pendiente' aunque el cliente HAYA
+   * pagado: la plata se reparte de la cuota más vieja hacia adelante, así que
+   * quien viene atrasado paga y su cuota de hoy sigue sin cubrir. Medido en la
+   * 151 el 25/08: el cierre reportaba 4 cobros sin marcar, y los CUATRO tenían
+   * su pago registrado ese mismo día. Mientras tanto el que de verdad faltaba
+   * —uno solo— no aparecía por ningún lado.
+   *
+   * Ahora se pregunta EXACTAMENTE lo que muestra el panel de pagos: se carga
+   * con el mismo cargador y se decide con el mismo predicado. Si el panel dice
+   * "42 de 42 gestionados", el cierre no tiene por qué opinar distinto.
+   *
+   * Y se traen los NOMBRES: "faltan 4" sin decir quiénes obliga a revisar la
+   * lista cliente por cliente, que es exactamente lo que se reportó.
+   */
   useEffect(() => {
+    let vigente = true
     const fetchPendientes = async () => {
       try {
         setLoadingPagos(true)
-        const supabase = createClient()
-        const fechaHoy = todayColombia()
-        const { count, error } = await supabase
-          .from("payment_plan")
-          .select("*", { count: "exact", head: true })
-          .eq("ruta", rutaId)
-          .eq("fecha_pago", fechaHoy)
-          .eq("estado", "pendiente")
-
-        if (error) {
-          console.error("[v0] Error fetching pagos pendientes:", error.message)
-          setPagosPendientes(0)
-        } else {
-          setPagosPendientes(count ?? 0)
-        }
+        const { total, sinGestionar } = await clientesSinGestionarHoy(createClient(), { rutaId })
+        if (!vigente) return
+        setPagosPendientes(sinGestionar.length)
+        setNombresPendientes(sinGestionar)
+        setTotalCartera(total)
       } catch (err) {
-        console.error("[v0] Unexpected error fetching pagos pendientes:", err)
-        setPagosPendientes(0)
+        console.error("[v0] Error consultando los clientes del día:", err)
+        // Se deja en 0 para NO bloquear el cierre por un problema de red: el
+        // cobrador quedaria sin poder cerrar por algo que no es suyo. El
+        // Monitoreo sigue mostrando la verdad para quien audite.
+        if (vigente) { setPagosPendientes(0); setNombresPendientes([]); setTotalCartera(0) }
       } finally {
-        setLoadingPagos(false)
+        if (vigente) setLoadingPagos(false)
       }
     }
 
     fetchPendientes()
+    return () => { vigente = false }
   }, [rutaId])
 
   // Operaciones capturadas sin conexion que aun no llegan al servidor. El
@@ -621,11 +641,25 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
                 <div className="flex items-start gap-2.5 bg-amber-50 rounded-lg p-3 border border-amber-100">
                   <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
                   <div>
-                    <p className="text-xs font-semibold text-amber-800">Pagos pendientes por procesar</p>
-                    <p className="text-xs text-amber-700 mt-0.5">
-                      Quedan <span className="font-bold">{pagosPendientes}</span> cobros del día sin marcar
-                      como pagado o no pagado.
+                    <p className="text-xs font-semibold text-amber-800">
+                      {pagosPendientes === 1 ? "Falta un cliente por visitar" : "Faltan clientes por visitar"}
                     </p>
+                    <p className="text-xs text-amber-700 mt-0.5">
+                      {/* Se dice "X de Y" igual que el panel de pagos: es el
+                          MISMO número, y así se ve de una que lo son. */}
+                      Llevas <span className="font-bold">{totalCartera - pagosPendientes}</span> de{" "}
+                      <span className="font-bold">{totalCartera}</span> gestionados.{" "}
+                      {pagosPendientes === 1 ? "Falta" : "Faltan"} por marcar como pagado o no pagado:
+                    </p>
+                    {/* Los nombres, no solo el número. Sin esto tocaba repasar
+                        la lista entera adivinando cuál era. */}
+                    {nombresPendientes.length > 0 && (
+                      <ul className="mt-1.5 space-y-0.5">
+                        {nombresPendientes.map((n) => (
+                          <li key={n} className="text-xs font-medium text-amber-900">• {n}</li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 </div>
               )}

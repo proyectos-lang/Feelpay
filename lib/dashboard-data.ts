@@ -23,7 +23,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { guardarCache, leerCache } from "@/lib/offline-cache"
-import { todayColombia, ayerColombia, COLUMNAS_GESTION, type Gestion } from "@/lib/gestion-core"
+import { todayColombia, ayerColombia, resumenDelDia, COLUMNAS_GESTION, type Gestion } from "@/lib/gestion-core"
 
 export type LoanWithClient = {
   id: string
@@ -285,3 +285,64 @@ export function inyectarGestionEnCache(
 
 /** La fecha de negocio de hoy, reexportada para quien solo importa esta capa. */
 export { todayColombia }
+
+/**
+ * ¿Quién de la ruta se quedó sin gestionar hoy?
+ *
+ * LA MISMA CUENTA QUE MUESTRA EL PANEL DE PAGOS. Literalmente: se carga con
+ * `loadDashboardPagos` —el mismo cargador— y se decide con `resumenDelDia`
+ * —el mismo predicado—. Si el panel dice "42 de 42 gestionados", esto
+ * devuelve cero, y el cierre de caja no tiene por qué opinar distinto.
+ *
+ * POR QUÉ EXISTE
+ * El cierre preguntaba otra cosa: cuántas cuotas con vencimiento HOY seguían
+ * en estado 'pendiente'. Eso no es lo mismo y no podía serlo:
+ *
+ *  · Una cuota que vence hoy se queda 'pendiente' aunque el cliente HAYA
+ *    pagado, porque la plata se reparte de la cuota más vieja hacia adelante.
+ *    Medido en la 151 el 25/08: el cierre reportaba 4 cobros sin marcar y los
+ *    CUATRO tenían su pago de ese día registrado.
+ *
+ *  · Y al revés: una venta hecha hoy, cuya primera cuota es mañana, no tiene
+ *    ninguna cuota vencida — pero tampoco hay nada que cobrarle. El cobrador
+ *    no la ve en su lista y no tiene forma de "gestionarla".
+ *
+ * Acá no hay ninguna de las dos trampas, porque no se mira el cronograma: se
+ * mira quién tiene saldo y a quién le falta el evento del día. Que es lo que
+ * el cobrador ve en pantalla.
+ */
+export async function clientesSinGestionarHoy(
+  supabase: SupabaseClient,
+  args: { rutaId: number; userId?: number | string | null; rol?: string | null },
+): Promise<{ total: number; sinGestionar: string[] }> {
+  const datos = await loadDashboardPagos(supabase, args)
+  const hoy = todayColombia()
+
+  // A QUIÉN LE TOCABA HOY.
+  //
+  // Una venta hecha hoy, cuya primera cuota es mañana, NO cuenta. No se puede
+  // estar pendiente de cobrar una deuda que todavía no empieza: el cobrador
+  // no tiene nada que hacer con ese cliente y no hay forma de "gestionarlo".
+  //
+  // Es el caso que bloqueaba el cierre el 25/08: la 151 tenía a NAZARENO
+  // (vendido con fecha 26/08) y la 190 a alicia (vendida hoy, primera cuota
+  // el 26). Los dos sin una sola cuota vencida, y los dos impidiendo cerrar.
+  //
+  // Sigue apareciendo en la lista de pagos —se le puede cobrar por adelantado
+  // si el cliente quiere— pero no cuenta como tarea del día.
+  const tieneAlgoQueCobrar = new Set(
+    datos.allPaymentPlans.filter((p) => p.fecha_pago <= hoy).map((p) => p.loan_id),
+  )
+
+  const activos = datos.loans.filter(
+    (l) => (datos.saldoMap.get(l.id) ?? 0) > 0 && tieneAlgoQueCobrar.has(l.id),
+  )
+  const faltan = activos.filter((l) => !resumenDelDia(datos.gestiones, l.id, hoy).gestionado)
+
+  return {
+    total: activos.length,
+    sinGestionar: faltan
+      .map((l) => l.clients?.nombre_completo || l.clients?.apodo || "Cliente")
+      .sort((a, b) => a.localeCompare(b)),
+  }
+}

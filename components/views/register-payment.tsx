@@ -2803,7 +2803,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 volver. Esto se lo deja a la vista sin dejar la pantalla. */}
             {(() => {
               const gestionados = managedToday.length
-              const total = gestionados + pendientesDeLaRuta.length
+              // Los de cuota FUTURA no entran en la cuenta del día: son ventas
+              // recién hechas cuyo primer cobro todavía no llega. Siguen
+              // visibles en la lista —se les puede cobrar por adelantado— pero
+              // no son tarea de hoy, y contarlos dejaba el avance en "41 de 42"
+              // para siempre. Es el mismo criterio que usa el cierre de caja
+              // (`clientesSinGestionarHoy`), para que los dos no discrepen.
+              const total = gestionados + pendientesDeLaRuta.filter((c) => !c.nextPaymentEsFuturo).length
               if (total === 0) return null
               const recaudado = managedToday.reduce((s, m) => s + (m.valorAbonado || 0), 0)
               const pct = Math.round((gestionados / total) * 100)
