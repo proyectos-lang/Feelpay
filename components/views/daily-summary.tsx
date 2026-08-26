@@ -4,7 +4,7 @@ import React from "react"
 import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, PiggyBank, Users, PieChart, LockKeyhole, Eye, X, Play, Loader2 } from "lucide-react"
+import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, Users, PieChart, LockKeyhole, Eye, X, Play, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
  import { createClient } from "@/lib/supabase/client"
 import { getResumenDia } from "@/lib/resumen-dia"
@@ -1126,8 +1126,11 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
               </CardContent>
             </Card>
 
-            {/* Frecuencia de Pago & Cuotas por Clientes - Side by Side */}
-            <div className="grid grid-cols-2 gap-2">
+            {/* Frecuencia de Pago y Cuotas Clientes, una debajo de la otra.
+                Antes iban lado a lado, a media pantalla. La tarjeta de cuotas
+                pasó al diseño de filas con barra y no cabe en media columna:
+                el número grande y la barra quedaban encimados. */}
+            <div className="grid grid-cols-1 gap-2">
               {/* Frecuencia de Pago */}
               <Card className="bg-card shadow-sm border-0">
                 <CardContent className="p-2">
@@ -1175,38 +1178,84 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                 </CardContent>
               </Card>
 
-              {/* Cuotas por Clientes */}
+              {/* Cuotas Clientes.
+                  Los datos son los MISMOS de siempre —clientes agrupados por
+                  cuotas vencidas— y solo cambia cómo se ven.
+                  DOS COSAS DEL DISEÑO NO SE COPIARON TAL CUAL, a propósito:
+                   · el subtítulo del mockup decía "cuotas pagadas", y estos
+                     números son cuotas VENCIDAS. Rotularlo mal en un informe
+                     de plata es peor que un subtítulo feo.
+                   · el mockup abría el primer grupo en 1, pero el grupo
+                     incluye a quien no debe NADA. Dice "0 a 3" porque eso es
+                     lo que agrupa. */}
               <Card className="bg-card shadow-sm border-0">
-                <CardContent className="p-2">
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <div className="h-5 w-5 rounded-full bg-success-light flex items-center justify-center">
-                      <Users className="h-2.5 w-2.5 text-icon-users" />
+                <CardContent className="p-3">
+                  <div className="mb-2 flex items-start gap-2">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-success-light">
+                      <Users className="h-4 w-4 text-icon-users" />
                     </div>
-                    <span className="text-xs font-semibold text-foreground">Cuotas por Clientes</span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold leading-tight text-foreground">Cuotas Clientes</p>
+                      <p className="text-[11px] leading-snug text-muted-foreground">
+                        Distribución de clientes según cuotas vencidas
+                      </p>
+                    </div>
                   </div>
-                  <div className="space-y-1">
+
+                  <div className="divide-y divide-border rounded-xl border border-border">
                     {([
-                      { key: "small", label: "De 0.1 - 3", Icono: PiggyBank, tono: "text-icon-sales",
+                      { key: "small", badge: "0-3", label: "De 0 a 3 cuotas",
+                        anillo: "bg-success-light text-success", barra: "bg-success",
                         n: reportData.installmentsByClient.small, ids: backIds.cuotas.small },
-                      { key: "large", label: "Mayor a 3",  Icono: Coins,     tono: "text-icon-wallet",
+                      { key: "large", badge: "+3", label: "Más de 3 cuotas",
+                        anillo: "bg-warning-light text-warning-foreground", barra: "bg-warning",
                         n: reportData.installmentsByClient.large, ids: backIds.cuotas.large },
-                    ] as const).map(({ key, label, Icono, tono, n, ids }) => (
-                      <div key={key} className="flex items-center justify-between">
-                        <div className="flex items-center gap-1">
-                          <Ojito
-                            disabled={ids.length === 0}
-                            onClick={() =>
-                              abrirDetalle(`Cuotas vencidas: ${label.toLowerCase()}`, [...ids], {
-                                subtitulo: `${n} ${n === 1 ? "cliente" : "clientes"}`,
-                              })
-                            }
-                          />
-                          <Icono className={`h-2.5 w-2.5 ${tono}`} />
-                          <span className="text-xs text-muted-foreground">{label}:</span>
+                    ] as const).map(({ key, badge, label, anillo, barra, n, ids }) => {
+                      const total = reportData.installmentsByClient.small + reportData.installmentsByClient.large
+                      // La barra compara los dos grupos entre sí. Sin total no
+                      // hay nada que comparar y se deja en cero.
+                      const pct = total > 0 ? (n / total) * 100 : 0
+                      return (
+                        <div key={key} className="flex items-center gap-2.5 p-2.5">
+                          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${anillo}`}>
+                            {badge}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1">
+                              {/* El ojito va POR GRUPO y no uno solo arriba:
+                                  se pidió poder ver los clientes de cierta
+                                  cantidad de cuotas, y eso es por grupo. */}
+                              <Ojito
+                                disabled={ids.length === 0}
+                                onClick={() =>
+                                  abrirDetalle(`Cuotas vencidas: ${label.toLowerCase()}`, [...ids], {
+                                    subtitulo: `${n} ${n === 1 ? "cliente" : "clientes"}`,
+                                  })
+                                }
+                              />
+                              <span className="truncate text-xs font-semibold text-foreground">{label}</span>
+                            </div>
+                            <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                              <div className={`${barra} h-full rounded-full transition-all`} style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <p className={`text-xl font-bold leading-none tabular-nums ${key === "small" ? "text-success" : "text-warning"}`}>
+                              {n}
+                            </p>
+                            <p className="text-[10px] text-muted-foreground">clientes</p>
+                          </div>
                         </div>
-                        <span className="text-xs font-bold text-foreground">{n}</span>
-                      </div>
-                    ))}
+                      )
+                    })}
+                  </div>
+
+                  <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-success-light/50 px-2.5 py-1.5">
+                    <Users className="h-3 w-3 text-icon-users" />
+                    <span className="text-[11px] text-muted-foreground">Total clientes:</span>
+                    <span className="text-[11px] font-bold text-success">
+                      {reportData.installmentsByClient.small + reportData.installmentsByClient.large}
+                    </span>
                   </div>
                 </CardContent>
               </Card>
