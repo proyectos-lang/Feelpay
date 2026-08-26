@@ -21,6 +21,13 @@
  * página, y eso vive en memoria (`recienAutenticado`), no en `localStorage`:
  * si viviera en disco, sobreviviría al cierre y el candado no serviría.
  *
+ * A QUIEN SE LE PIDE
+ * Solo a la gente de calle (`ROLES_CON_PIN`). Secretaría, admin, gerencia,
+ * liquidador y socioadmin entran sin PIN: trabajan sentados frente a un
+ * computador que no se levanta de una mesa, y el candado les cobraba el mismo
+ * peaje sin resolverles el riesgo que lo motivó — un celular desbloqueado en
+ * la calle.
+ *
  * LO QUE EL CANDADO NO ES
  * No protege los datos: quien tenga el teléfono puede abrir el navegador y
  * leer `localStorage`, y la llave pública de la app deja consultar Supabase
@@ -29,6 +36,26 @@
  */
 
 import { createClient } from "@/lib/supabase/client"
+
+/**
+ * Los roles a los que se les pide el PIN.
+ *
+ * Va por lista de quién SÍ, no de quién no. Con la lista invertida, un rol
+ * nuevo quedaría con candado sin que nadie lo hubiera decidido, y el dueño se
+ * enteraría por una queja. Así, un rol nuevo entra sin PIN hasta que alguien
+ * lo agregue a mano, que es una decisión visible.
+ *
+ * `asesor` va junto a `vendedor` porque el catálogo de módulos los trata como
+ * el mismo trabajo (`defaultRoles: ["vendedor", "asesor"]`): los dos salen a
+ * la calle con el teléfono.
+ */
+export const ROLES_CON_PIN = ["vendedor", "asesor"] as const
+
+/** ¿A este rol se le pide el PIN al volver a la app? */
+export function requierePin(rol: string | null | undefined): boolean {
+  const r = (rol ?? "").toLowerCase().trim()
+  return (ROLES_CON_PIN as readonly string[]).includes(r)
+}
 
 /** Cuántos intentos seguidos antes de mandar a la persona al login completo. */
 export const INTENTOS_MAX = 10

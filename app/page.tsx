@@ -46,7 +46,7 @@ import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
 import { LoginView, type AuthenticatedUser } from "@/components/views/login-view"
 import { LoginSplash } from "@/components/login-splash"
 import { PinLockView } from "@/components/views/pin-lock-view"
-import { abriendoAlgoDelSistema, salidaExenta, volvioTarde } from "@/lib/pin-lock"
+import { abriendoAlgoDelSistema, salidaExenta, volvioTarde, requierePin } from "@/lib/pin-lock"
 import { SESSION_LOST_EVENT, getSupabaseSafe } from "@/lib/api-helper"
 import { limpiarCache } from "@/lib/offline-cache"
 import { createClient } from "@/lib/supabase/client"
@@ -176,7 +176,10 @@ export default function Page() {
             // abrir". La unica forma de arrancar abierta es que el login
             // ocurra en esta misma vida de la pagina — y eso pasa por
             // `handleLoginSuccess`, que apaga el candado en memoria.
-            setBloqueado(true)
+            //
+            // Solo para la gente de calle: lo decide `requierePin`. Secretaria,
+            // admin, gerencia, liquidador y socioadmin entran directo.
+            if (requierePin(parsed.rol)) setBloqueado(true)
             loadUserPermissions(parsed.id, parsed.rol ?? "").then(setUserPermissions).catch(() => {})
             // Refresca la foto de perfil por si cambio desde otro dispositivo
             // desde la ultima vez que se guardo la sesion en este localStorage.
@@ -545,6 +548,8 @@ export default function Page() {
    */
   useEffect(() => {
     if (!currentUser) return
+    // Sin candado no hay nada que vigilar: los listeners ni se registran.
+    if (!requierePin(currentUser.rol)) return
     const alCambiarVisibilidad = () => {
       if (document.visibilityState === "hidden") {
         // Salida que provoco la app misma (abrir la camara para la cedula o
@@ -1153,7 +1158,10 @@ export default function Page() {
           persona vuelve exactamente a donde estaba, con su foto.
           Es opaca y va por encima de todo (los dialogos de Radix usan z-50),
           asi que quien levanta el telefono no alcanza a ver nada. */}
-      {bloqueado && (
+      {/* `requierePin` otra vez acá y no solo al armar el candado: si alguna
+          vez `bloqueado` quedara en true por otro camino, una secretaria se
+          encontraría una pantalla de PIN de la que no puede salir. */}
+      {bloqueado && requierePin(currentUser.rol) && (
         <div className="fixed inset-0 z-[200] overflow-y-auto bg-background">
           <PinLockView
             user={currentUser}

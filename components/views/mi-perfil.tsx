@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { Camera, KeyRound, Loader2, ShieldAlert, User as UserIcon } from "lucide-react"
-import { cambiarPin, pinSigueEnDefault } from "@/lib/pin-lock"
+import { cambiarPin, pinSigueEnDefault, requierePin } from "@/lib/pin-lock"
 import type { AuthenticatedUser } from "./login-view"
 
 function initials(nombre: string): string {
@@ -115,7 +115,10 @@ export function MiPerfil({ currentUser, onUserUpdate }: MiPerfilProps) {
         </div>
       </div>
 
-      <CambiarPinCard userId={currentUser.id} />
+      {/* A quien nunca se le pide el PIN no se le ofrece cambiarlo, y sobre
+          todo no se le avisa que "sigue en 0000": seria pedirle que arregle
+          una cerradura que su puerta no tiene. */}
+      {requierePin(currentUser.rol) && <CambiarPinCard userId={currentUser.id} />}
     </div>
   )
 }
