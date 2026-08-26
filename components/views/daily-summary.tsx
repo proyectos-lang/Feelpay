@@ -299,8 +299,8 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
   // Frecuencias desde las cuotas del dia + loans.frecuencia_pago; "Intereses"
   // = prestamos americanos con cuota hoy. Cartera desde `v_loan_financiero`
   // (columna `cuotas_mora`: CUOTAS vencidas sin cubrir, no dias) con las
-  // bandas de `bandaCartera()`. Cuotas por cliente = cuotas vencidas
-  // pendientes (0-3 / >3). Ventas: renovacion = cliente que ya tenia otro
+  // bandas de `bandaCartera()`. Cuotas Clientes = cuotas PAGADAS
+  // (`cuotas_cubiertas`, 0-3 / >3). Ventas: renovacion = cliente que ya tenia otro
   // prestamo.
   const [backCard, setBackCard] = useState({
     frequency: {
@@ -489,35 +489,30 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
           }
         }
 
-        // Cartera + cuotas vencidas por cliente (prestamos activos de la ruta)
+        // Cartera + cuotas PAGADAS por cliente (prestamos activos de la ruta)
         const loanIds = ((activosRes.data ?? []) as { id: string }[]).map((l) => l.id)
         const installmentsByClient = { small: 0, large: 0 }
         const portfolioStatus = { alDia: 0, mora: 0, vencidos: 0 }
         const idsCuotas = { small: [] as string[], large: [] as string[] }
         const idsCartera = { alDia: [] as string[], mora: [] as string[], vencidos: [] as string[] }
         if (loanIds.length > 0) {
-          const [vencidasRes, moraRes] = await Promise.all([
-            // Cuotas vencidas: `fecha_pago` es el VENCIMIENTO inmutable del
-            // cronograma, asi que pendiente + vencida antes de hoy sigue
-            // siendo la definicion correcta.
-            supabase
-              .from("payment_plan")
-              .select("loan_id")
-              .eq("estado", "pendiente")
-              .lt("fecha_pago", fechaHoy)
-              .in("loan_id", loanIds),
-            supabase.from("v_loan_financiero").select("loan_id, cuotas_mora").in("loan_id", loanIds),
-          ])
-          const vencidasPorLoan = new Map<string, number>()
-          for (const v of (vencidasRes.data ?? []) as { loan_id: string }[]) {
-            vencidasPorLoan.set(v.loan_id, (vencidasPorLoan.get(v.loan_id) ?? 0) + 1)
-          }
+          // Las cuotas PAGADAS y la mora salen de la MISMA vista, asi que
+          // se piden en una sola consulta. Antes habia un viaje extra a
+          // `payment_plan` para contar vencidas; ya no hace falta.
+          const finRes = await supabase
+            .from("v_loan_financiero")
+            .select("loan_id, cuotas_mora, cuotas_cubiertas")
+            .in("loan_id", loanIds)
+          const pagadasPorLoan = new Map<string, number>()
           const moraPorLoan = new Map<string, number>()
-          for (const m of (moraRes.data ?? []) as { loan_id: string; cuotas_mora: number | null }[]) {
-            moraPorLoan.set(m.loan_id, Number(m.cuotas_mora ?? 0))
+          for (const f of (finRes.data ?? []) as {
+            loan_id: string; cuotas_mora: number | null; cuotas_cubiertas: number | null
+          }[]) {
+            pagadasPorLoan.set(f.loan_id, Number(f.cuotas_cubiertas ?? 0))
+            moraPorLoan.set(f.loan_id, Number(f.cuotas_mora ?? 0))
           }
           for (const id of loanIds) {
-            if ((vencidasPorLoan.get(id) ?? 0) > 3) { installmentsByClient.large += 1; idsCuotas.large.push(id) }
+            if ((pagadasPorLoan.get(id) ?? 0) > 3) { installmentsByClient.large += 1; idsCuotas.large.push(id) }
             else { installmentsByClient.small += 1; idsCuotas.small.push(id) }
             // Las bandas las decide `bandaCartera()`, no una escalera local.
             const banda = bandaCartera(moraPorLoan.get(id) ?? 0)
@@ -1186,16 +1181,20 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                 </CardContent>
               </Card>
 
-              {/* Cuotas Clientes.
-                  Los datos son los MISMOS de siempre —clientes agrupados por
-                  cuotas vencidas— y solo cambia cómo se ven.
-                  DOS COSAS DEL DISEÑO NO SE COPIARON TAL CUAL, a propósito:
-                   · el subtítulo del mockup decía "cuotas pagadas", y estos
-                     números son cuotas VENCIDAS. Rotularlo mal en un informe
-                     de plata es peor que un subtítulo feo.
-                   · el mockup abría el primer grupo en 1, pero el grupo
-                     incluye a quien no debe NADA. Dice "0 a 3" porque eso es
-                     lo que agrupa. */}
+              {/* Cuotas Clientes: clientes agrupados por cuotas PAGADAS.
+                  Empezó midiendo cuotas vencidas y el dueño lo corrigió: es
+                  cuánto lleva pagado cada cliente, como decía el mockup.
+
+                  El grupo dice "0 a 3" y no "1 a 3" como el mockup porque hay
+                  11 clientes con CERO cuotas pagadas —ventas de ayer, sobre
+                  todo— y con "1 a 3" no aparecerían en ninguno de los dos
+                  grupos: la tarjeta sumaría menos clientes de los que tiene
+                  la ruta.
+
+                  Los colores van al revés de antes: llevar pocas cuotas
+                  pagadas ya no es lo verde. Pero tampoco es una alarma —una
+                  venta de ayer arranca en cero sin que nada esté mal— así que
+                  el primer grupo es azul informativo, no naranja. */}
               <Card className="bg-card shadow-sm border-0">
                 <CardContent className="p-3">
                   <div className="mb-2 flex items-start gap-2">
@@ -1205,18 +1204,18 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     <div className="min-w-0">
                       <p className="text-sm font-bold leading-tight text-foreground">Cuotas Clientes</p>
                       <p className="text-[11px] leading-snug text-muted-foreground">
-                        Distribución de clientes según cuotas vencidas
+                        Distribución de clientes según cuotas pagas
                       </p>
                     </div>
                   </div>
 
                   <div className="divide-y divide-border rounded-xl border border-border">
                     {([
-                      { key: "small", badge: "0-3", label: "De 0 a 3 cuotas",
-                        anillo: "bg-success-light text-success", barra: "bg-success",
+                      { key: "small", badge: "0-3", label: "De 0 a 3 cuotas pagas",
+                        anillo: "bg-info-light text-info", barra: "bg-info",
                         n: reportData.installmentsByClient.small, ids: backIds.cuotas.small },
-                      { key: "large", badge: "+3", label: "Más de 3 cuotas",
-                        anillo: "bg-warning-light text-warning-foreground", barra: "bg-warning",
+                      { key: "large", badge: "+3", label: "Más de 3 cuotas pagas",
+                        anillo: "bg-success-light text-success", barra: "bg-success",
                         n: reportData.installmentsByClient.large, ids: backIds.cuotas.large },
                     ] as const).map(({ key, badge, label, anillo, barra, n, ids }) => {
                       const total = reportData.installmentsByClient.small + reportData.installmentsByClient.large
@@ -1236,7 +1235,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                               <Ojito
                                 disabled={ids.length === 0}
                                 onClick={() =>
-                                  abrirDetalle(`Cuotas vencidas: ${label.toLowerCase()}`, [...ids], {
+                                  abrirDetalle(`Cuotas pagas: ${label.toLowerCase()}`, [...ids], {
                                     subtitulo: `${n} ${n === 1 ? "cliente" : "clientes"}`,
                                   })
                                 }
@@ -1248,7 +1247,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                             </div>
                           </div>
                           <div className="shrink-0 text-right">
-                            <p className={`text-xl font-bold leading-none tabular-nums ${key === "small" ? "text-success" : "text-warning"}`}>
+                            <p className={`text-xl font-bold leading-none tabular-nums ${key === "small" ? "text-info" : "text-success"}`}>
                               {n}
                             </p>
                             <p className="text-[10px] text-muted-foreground">clientes</p>
