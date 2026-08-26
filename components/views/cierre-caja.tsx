@@ -11,8 +11,8 @@ import {
 } from "lucide-react"
  import { createClient } from "@/lib/supabase/client"
 import { getResumenDia } from "@/lib/resumen-dia"
-import { clientesSinGestionarHoy } from "@/lib/dashboard-data"
-import { todayColombia, bandaCartera, etiquetaFrecuencia } from "@/lib/gestion-core"
+import { clientesSinGestionarHoy, type FrecuenciaKey } from "@/lib/dashboard-data"
+import { todayColombia, bandaCartera } from "@/lib/gestion-core"
 import { contarPendientes, suscribirCola } from "@/lib/offline-queue"
 import { getRutaUmbrales } from "@/lib/ruta-umbrales"
 import { renderComprobanteImagen, type SeccionComprobante } from "@/lib/imagen-comprobante"
@@ -46,6 +46,12 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
   const [nombresPendientes, setNombresPendientes] = useState<string[]>([])
   // Los mismos que el panel de pagos cuenta en su "X de Y gestionados".
   const [totalCartera, setTotalCartera] = useState<number>(0)
+  // Cuántos pagaron y cómo se reparten por frecuencia. Sale del MISMO cálculo
+  // que decide si se puede cerrar, para que el reporte no se contradiga solo.
+  const [resumenDelDiaRuta, setResumenDelDiaRuta] = useState<{
+    pagaron: number
+    porFrecuencia: Record<FrecuenciaKey, { pagos: number; total: number }>
+  } | null>(null)
   const [loadingPagos, setLoadingPagos] = useState<boolean>(true)
 
   // Operaciones pendientes (aún mock hasta que se conecte la lógica real)
@@ -79,11 +85,12 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
     const fetchPendientes = async () => {
       try {
         setLoadingPagos(true)
-        const { total, sinGestionar } = await clientesSinGestionarHoy(createClient(), { rutaId })
+        const r = await clientesSinGestionarHoy(createClient(), { rutaId })
         if (!vigente) return
-        setPagosPendientes(sinGestionar.length)
-        setNombresPendientes(sinGestionar)
-        setTotalCartera(total)
+        setPagosPendientes(r.sinGestionar.length)
+        setNombresPendientes(r.sinGestionar)
+        setTotalCartera(r.total)
+        setResumenDelDiaRuta({ pagaron: r.pagaron, porFrecuencia: r.porFrecuencia })
       } catch (err) {
         console.error("[v0] Error consultando los clientes del día:", err)
         // Se deja en 0 para NO bloquear el cierre por un problema de red: el
@@ -151,13 +158,11 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
         // fila —tipico de un domingo— dejaba este cierre en $0 aunque la ruta
         // tuviera plata. Es el mismo helper que usa el Resumen del Dia, para
         // que las dos pantallas no puedan discrepar.
-        const [resumen, rowsHoyRes, loansRes] = await Promise.all([
+        // La consulta a `payment_plan` por las cuotas que vencian hoy se
+        // elimino: era la fuente de "Cant. Pagos" y del desglose por
+        // frecuencia, y los dos pasaron al libro. Un viaje de red menos.
+        const [resumen, loansRes] = await Promise.all([
           getResumenDia(supabase, rutaId, fechaHoy),
-          supabase
-            .from("payment_plan")
-            .select("estado, monto_pagado, loans(frecuencia_pago)")
-            .eq("ruta", rutaId)
-            .eq("fecha_pago", fechaHoy),
           supabase.from("loans").select("id").eq("ruta", rutaId).eq("estado", "activo"),
         ])
 
@@ -175,31 +180,21 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
         // hubo días sin movimiento o cuando se editó un día pasado.
         const cajaAnterior = Number(r.caja_anterior ?? 0)
 
-        const rowsHoy = (rowsHoyRes.data ?? []) as {
-          estado: string
-          monto_pagado: number | null
-          loans: { frecuencia_pago: string | null } | null
-        }[]
-        // OJO: este predicado NO es el `esPagoReal` de @/lib/gestion-core.
-        // Aquel evalúa una GESTIÓN ({tipo, monto, estado}); aquí las filas son
-        // CUOTAS de payment_plan, cuyo `estado` es el cache de la cascada. Se
-        // deja local a propósito: este bloque cuenta cuotas del cronograma
-        // (cuántas de las que vencían hoy se tocaron), no eventos del libro.
-        const cuotaConPago = (row: { estado: string; monto_pagado: number | null }) =>
-          ["pagado", "parcial", "cancelada"].includes(row.estado) && Number(row.monto_pagado ?? 0) > 0
-        const frecuencia: Record<FrecKey, { pagos: number; total: number }> = {
-          diario: { pagos: 0, total: 0 },
-          semanal: { pagos: 0, total: 0 },
-          quincenal: { pagos: 0, total: 0 },
-          mensual: { pagos: 0, total: 0 },
-        }
-        for (const row of rowsHoy) {
-          // El mapeo frecuencia -> etiqueta vive en gestion-core (FRECUENCIAS):
-          // estaba copiado tal cual en daily-summary y aquí.
-          const key = etiquetaFrecuencia(row.loans?.frecuencia_pago).toLowerCase() as FrecKey
-          frecuencia[key].total += 1
-          if (cuotaConPago(row)) frecuencia[key].pagos += 1
-        }
+        // EL DESGLOSE POR FRECUENCIA TAMBIEN SALE DEL LIBRO.
+        //
+        // Contaba cuotas —cuantas de las que vencian hoy quedaron en 'pagado'
+        // o 'parcial'— igual que "Cant. Pagos". Al corregir ese, este habria
+        // quedado contradiciendolo en el MISMO reporte: la 151 es 100% diaria,
+        // asi que se habria leido "Cant. Pagos 8/12" arriba y "Frec. Pago
+        // Diario 4/12" abajo.
+        //
+        // Ahora los dos numeros vienen del mismo calculo, el que decide si se
+        // puede cerrar. `rowsHoy` ya no se usa para esto.
+        const frecuencia: Record<FrecKey, { pagos: number; total: number }> =
+          resumenDelDiaRuta
+            ? (resumenDelDiaRuta.porFrecuencia as Record<FrecKey, { pagos: number; total: number }>)
+            : { diario: { pagos: 0, total: 0 }, semanal: { pagos: 0, total: 0 },
+                quincenal: { pagos: 0, total: 0 }, mensual: { pagos: 0, total: 0 } }
 
         const loanIds = ((loansRes.data ?? []) as { id: string }[]).map((l) => l.id)
         let cuotas = { de0a3: 0, de3oMas: 0 }
@@ -249,7 +244,26 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
           gastos: { valor: valorGastos, cantidad: Number(r.cantidad_gastos ?? 0) },
           retiros: { valor: valorRetiros, cantidad: Number(r.cantidad_retiros ?? 0) },
           ingresos: { valor: valorIngresos, cantidad: Number(r.cantidad_ingresos ?? 0) },
-          pagos: { realizados: rowsHoy.filter(cuotaConPago).length, total: rowsHoy.length },
+          // CANT. PAGOS: sale del LIBRO, no del cronograma.
+          //
+          // Antes esto contaba cuotas: cuántas de las que vencían hoy habían
+          // quedado en 'pagado' o 'parcial'. No es lo mismo que cuántos
+          // clientes pagaron, y en una ruta con atrasos se separan mucho —
+          // la plata de quien viene atrasado tapa cuotas viejas, así que la
+          // de hoy sigue sin cubrir aunque el cliente sí haya pagado.
+          //
+          // Medido en la 151 el 25/08: el cierre decía 4/12 y ese día pagaron
+          // OCHO clientes. Las cuentas: 3 cuotas 'pagado' + 1 'parcial' = 4,
+          // contra 8 personas que entregaron plata.
+          //
+          // `cantidad_pagos` de `resumen_diario_v2` ya es "clientes que
+          // terminaron el día con plata puesta" (script 070), el mismo número
+          // que muestran el Resumen del Día y el Monitoreo. Y el total es la
+          // cartera del día, la misma que decide si se puede cerrar.
+          pagos: {
+            realizados: resumenDelDiaRuta?.pagaron ?? Number(r.cantidad_pagos ?? 0),
+            total: totalCartera || Number(r.cantidad_pagos ?? 0) + Number(r.cantidad_no_pagos ?? 0),
+          },
           frecuencia,
           cuotas,
           cartera,
@@ -260,7 +274,11 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
     }
 
     loadCierreData()
-  }, [rutaId])
+    // `totalCartera` entra en las dependencias porque el denominador de
+    // "Cant. Pagos" sale de ahi. Lo pone el OTRO efecto —el que decide si se
+    // puede cerrar— y llega un instante despues; sin esto, el cierre se
+    // quedaria con el total de respaldo del primer render.
+  }, [rutaId, totalCartera, resumenDelDiaRuta])
 
   const [cajaCerrada, setCajaCerrada] = useState(false)
   const [showModal, setShowModal] = useState(false)

@@ -23,7 +23,10 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { guardarCache, leerCache } from "@/lib/offline-cache"
-import { todayColombia, ayerColombia, resumenDelDia, COLUMNAS_GESTION, type Gestion } from "@/lib/gestion-core"
+import {
+  todayColombia, ayerColombia, resumenDelDia, etiquetaFrecuencia,
+  COLUMNAS_GESTION, type Gestion,
+} from "@/lib/gestion-core"
 
 export type LoanWithClient = {
   id: string
@@ -311,10 +314,19 @@ export { todayColombia }
  * mira quién tiene saldo y a quién le falta el evento del día. Que es lo que
  * el cobrador ve en pantalla.
  */
+export type FrecuenciaKey = "diario" | "semanal" | "quincenal" | "mensual"
+
 export async function clientesSinGestionarHoy(
   supabase: SupabaseClient,
   args: { rutaId: number; userId?: number | string | null; rol?: string | null },
-): Promise<{ total: number; sinGestionar: string[] }> {
+): Promise<{
+  total: number
+  sinGestionar: string[]
+  /** Clientes que terminaron el día con plata puesta. */
+  pagaron: number
+  /** Lo mismo, partido por frecuencia de pago del crédito. */
+  porFrecuencia: Record<FrecuenciaKey, { pagos: number; total: number }>
+}> {
   const datos = await loadDashboardPagos(supabase, args)
   const hoy = todayColombia()
 
@@ -334,13 +346,52 @@ export async function clientesSinGestionarHoy(
     datos.allPaymentPlans.filter((p) => p.fecha_pago <= hoy).map((p) => p.loan_id),
   )
 
+  // QUIEN TENIA ALGO QUE HACER HOY.
+  //
+  // Los que deben algo Y ya les tocaba, MAS quien tenga una gestión de hoy
+  // aunque su crédito ya no deba nada.
+  //
+  // Ese "aunque ya no deba nada" no es un caso raro: es justamente el que
+  // TERMINÓ de pagar hoy. Su saldo quedó en cero y el crédito en 'cancelado',
+  // así que filtrando solo por saldo desaparecía — y con él su pago.
+  //
+  // Pasó en la 190 el 25/08: alicia isabel sosa cerró un crédito con 130.000
+  // y el cierre contaba 30 pagos donde el libro contaba 31.
   const activos = datos.loans.filter(
-    (l) => (datos.saldoMap.get(l.id) ?? 0) > 0 && tieneAlgoQueCobrar.has(l.id),
+    (l) =>
+      ((datos.saldoMap.get(l.id) ?? 0) > 0 && tieneAlgoQueCobrar.has(l.id)) ||
+      resumenDelDia(datos.gestiones, l.id, hoy).gestionado,
   )
-  const faltan = activos.filter((l) => !resumenDelDia(datos.gestiones, l.id, hoy).gestionado)
+  const porFrecuencia: Record<FrecuenciaKey, { pagos: number; total: number }> = {
+    diario: { pagos: 0, total: 0 },
+    semanal: { pagos: 0, total: 0 },
+    quincenal: { pagos: 0, total: 0 },
+    mensual: { pagos: 0, total: 0 },
+  }
+
+  const faltan: typeof activos = []
+  let pagaron = 0
+
+  for (const l of activos) {
+    const dia = resumenDelDia(datos.gestiones, l.id, hoy)
+    if (!dia.gestionado) faltan.push(l)
+    // `monto` es el NETO de los eventos vivos del día: si el pago se anuló,
+    // queda en cero y no cuenta como pago. Es el mismo criterio de
+    // `resumen_diario_v2.cantidad_pagos` (script 070).
+    const pago = dia.monto > 0
+    if (pago) pagaron++
+
+    const key = etiquetaFrecuencia(l.frecuencia_pago).toLowerCase() as FrecuenciaKey
+    if (porFrecuencia[key]) {
+      porFrecuencia[key].total += 1
+      if (pago) porFrecuencia[key].pagos += 1
+    }
+  }
 
   return {
     total: activos.length,
+    pagaron,
+    porFrecuencia,
     sinGestionar: faltan
       .map((l) => l.clients?.nombre_completo || l.clients?.apodo || "Cliente")
       .sort((a, b) => a.localeCompare(b)),
