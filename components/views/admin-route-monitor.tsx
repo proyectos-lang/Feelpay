@@ -176,12 +176,73 @@ const COLUMNAS_MOVIMIENTO =
 // ────────────────────────────────────────────────────────────────────────────
 // Component
 // ────────────────────────────────────────────────────────────────────────────
-export function AdminRouteMonitor() {
+/** Quiénes ven TODAS las rutas. El resto ve las suyas y nada más. */
+const ROLES_QUE_VEN_TODO = new Set(["admin", "administrador"])
+
+interface AdminRouteMonitorProps {
+  /**
+   * Quién está mirando. Sin esto la pantalla mostraba todas las rutas a
+   * cualquiera que tuviera el módulo habilitado — ver `rutasPermitidas`.
+   */
+  currentUser?: { id: number | string; rol?: string | null } | null
+}
+
+export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
   const { toast } = useToast()
   const [fecha, setFecha] = useState<string>(todayColombia())
   const [rutas, setRutas] = useState<MonitoreoRuta[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  /**
+   * LAS RUTAS QUE ESTA PERSONA PUEDE VER.
+   *
+   * `null` = todas (es admin). Un arreglo = solo esas.
+   *
+   * Esta pantalla se escribió para el admin, que ve la operación entera, y la
+   * consulta salía sin filtro de ruta. Pero el módulo se puede habilitar por
+   * usuario, y al hacerlo un cobrador de la 190 veía también la 151: su
+   * recaudo, sus clientes y su cierre. Es el mismo agujero que el resto de la
+   * app cierra con `.eq('ruta', ...)`, que acá faltaba.
+   *
+   * El admin NO se filtra por sus rutas asignadas a propósito: los dos admins
+   * tienen rutas puestas (1,2 y 197) y filtrarlos los dejaría viendo dos
+   * rutas de diez.
+   */
+  const [rutasPermitidas, setRutasPermitidas] = useState<number[] | null>(null)
+  const [resolviendoPermiso, setResolviendoPermiso] = useState(true)
+
+  useEffect(() => {
+    let vigente = true
+    const resolver = async () => {
+      const rol = (currentUser?.rol ?? "").toLowerCase()
+      if (ROLES_QUE_VEN_TODO.has(rol)) {
+        if (vigente) { setRutasPermitidas(null); setResolviendoPermiso(false) }
+        return
+      }
+      if (!currentUser?.id) {
+        // Sin sesión identificable no se muestra nada. Antes se mostraba todo,
+        // que es exactamente al revés de como conviene equivocarse.
+        if (vigente) { setRutasPermitidas([]); setResolviendoPermiso(false) }
+        return
+      }
+      try {
+        const { data } = await createClient()
+          .from("usuario_rutas")
+          .select("ruta_id")
+          .eq("usuario_id", currentUser.id)
+        if (!vigente) return
+        setRutasPermitidas(((data ?? []) as { ruta_id: number }[]).map((r) => r.ruta_id))
+      } catch (e) {
+        console.error("[v0] No se pudieron leer las rutas del usuario:", e)
+        if (vigente) setRutasPermitidas([])
+      } finally {
+        if (vigente) setResolviendoPermiso(false)
+      }
+    }
+    resolver()
+    return () => { vigente = false }
+  }, [currentUser?.id, currentUser?.rol])
 
   // Dialog state
   const [selectedRuta, setSelectedRuta] = useState<MonitoreoRuta | null>(null)
@@ -208,20 +269,28 @@ export function AdminRouteMonitor() {
   const [cargandoCartera, setCargandoCartera] = useState<number | null>(null)
 
   // ── Load routes for the selected date ─────────────────────────────────────
-  // SELECT directo sobre `vista_monitoreo_admin` filtrado por fecha. La vista
-  // es de administracion (los admins ven TODAS las rutas en la fecha, sin
-  // filtro por ruta_id). RLS eliminado.
+  // SELECT sobre `vista_monitoreo_admin` por fecha Y POR LAS RUTAS QUE ESTA
+  // PERSONA PUEDE VER. No hay RLS: si no se filtra acá, no lo filtra nadie.
   const fetchRutas = useCallback(async () => {
+    // Todavía no se sabe qué puede ver: no se consulta. Un instante sin datos
+    // es preferible a un instante mostrando rutas ajenas.
+    if (resolviendoPermiso) return
     try {
       setLoading(true)
       setError(null)
       const supabase = createClient()
 
-      const { data, error } = await supabase
+      let consulta = supabase
         .from("vista_monitoreo_admin")
         .select("*")
         .eq("fecha", fecha)
         .order("ruta_id", { ascending: true })
+
+      // `null` = admin, ve todas. Un arreglo = solo esas. Vacío = ninguna, y
+      // `.in()` con lista vacía devuelve cero filas, que es lo correcto.
+      if (rutasPermitidas !== null) consulta = consulta.in("ruta_id", rutasPermitidas)
+
+      const { data, error } = await consulta
 
       if (error) {
         console.error("[v0] vista_monitoreo_admin error:", error.message)
@@ -238,7 +307,7 @@ export function AdminRouteMonitor() {
     } finally {
       setLoading(false)
     }
-  }, [fecha])
+  }, [fecha, rutasPermitidas, resolviendoPermiso])
 
   useEffect(() => {
     fetchRutas()

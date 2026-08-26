@@ -1007,7 +1007,7 @@ export default function Page() {
       case "general-config":
         return <GeneralConfig />
       case "admin-route-monitor":
-        return <AdminRouteMonitor />
+        return <AdminRouteMonitor currentUser={currentUser} />
       case "admin-dashboard":
         return <AdminDashboard currentUserId={currentUser?.id} />
       case "admin-route-detail":
