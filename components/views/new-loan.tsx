@@ -609,54 +609,116 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     })
   }
 
+  /**
+   * Cuánto se espera al escaneo antes de darlo por perdido.
+   *
+   * El servidor se toma hasta 60s (`maxDuration` en la ruta). Acá se corta
+   * antes, a 45: sin un tope, una red que se cae a mitad dejaba la promesa
+   * colgada para siempre, el botón en "Procesando…" y al cobrador sin forma
+   * de salir de ahí más que recargando la app.
+   */
+  const ESPERA_CEDULA_MS = 45000
+
   const handleCedulaCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onload = async (event) => {
-        const imageBase64 = event.target?.result as string
-        setCedulaImage(imageBase64)
-        
-        // Compress the image before processing
-        try {
-          setProcessandoCedula(true)
-          
-          const compressedImage = await compressImage(imageBase64)
-          
-          const response = await fetch("/api/escanear-cedula", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ imageBase64: compressedImage }),
-          })
+    // El input se limpia para que volver a elegir LA MISMA foto dispare el
+    // evento otra vez. Sin esto, un reintento sobre el mismo archivo no hace
+    // nada y parece que el botón se colgó.
+    e.target.value = ""
+    if (!file) return
 
-          const responseText = await response.text()
-          
-          let responseData
-          try {
-            responseData = JSON.parse(responseText)
-          } catch (parseError) {
-            throw new Error(`Respuesta inválida del servidor: ${responseText.substring(0, 100)}`)
-          }
-          
-          if (!response.ok) {
-            const errorMsg = responseData.details || responseData.error || "Error desconocido"
-            throw new Error(errorMsg)
-          }
-
-        setDocumento((responseData.numero_documento || "").toUpperCase())
-        setNombreCompleto((responseData.nombre_completo || "").toUpperCase())
-        } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : "Error desconocido"
-          alert(`Error al procesar la cédula: ${errorMsg}`)
-          setCedulaImage(null) // Clear image on error
-        } finally {
-          setProcessandoCedula(false)
-        }
-      }
-      reader.readAsDataURL(file)
+    const reader = new FileReader()
+    reader.onerror = () => {
+      toast({
+        title: "No se pudo leer la foto",
+        description: "Intenta tomarla de nuevo.",
+        variant: "destructive",
+      })
     }
+    reader.onload = async (event) => {
+      const imageBase64 = event.target?.result as string
+      setCedulaImage(imageBase64)
+
+      const control = new AbortController()
+      const reloj = setTimeout(() => control.abort(), ESPERA_CEDULA_MS)
+      try {
+        setProcessandoCedula(true)
+
+        const compressedImage = await compressImage(imageBase64)
+
+        const response = await fetch("/api/escanear-cedula", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imageBase64: compressedImage }),
+          signal: control.signal,
+        })
+
+        const responseText = await response.text()
+
+        let responseData
+        try {
+          responseData = JSON.parse(responseText)
+        } catch {
+          throw new Error(`Respuesta inválida del servidor: ${responseText.substring(0, 100)}`)
+        }
+
+        if (!response.ok) {
+          throw new Error(responseData.details || responseData.error || "Error desconocido")
+        }
+
+        const doc = String(responseData.numero_documento ?? "").trim().toUpperCase()
+        const nom = String(responseData.nombre_completo ?? "").trim().toUpperCase()
+
+        // LA IA CONTESTÓ, PERO SIN LEER NADA.
+        //
+        // Esto es lo que se reportaba como "no carga sus datos": con una foto
+        // borrosa, con reflejo o cortada, el modelo devuelve el JSON vacío, la
+        // ruta responde 200 tal cual, y acá se escribían dos cadenas vacías en
+        // los campos. Ni error ni aviso: la pantalla simplemente no hacía
+        // nada y no había forma de saber por qué.
+        //
+        // La foto NO se borra: sirve igual como respaldo, y así se pueden
+        // escribir los datos a mano sin tener que volver a fotografiar.
+        if (!doc && !nom) {
+          toast({
+            title: "No se pudo leer la cédula",
+            description:
+              "La foto quedó guardada. Vuelve a tomarla bien enfocada, sin reflejos y con la cédula completa dentro del cuadro — o escribe los datos a mano.",
+            variant: "destructive",
+          })
+          return
+        }
+
+        setDocumento(doc)
+        setNombreCompleto(nom)
+
+        // Leyó a medias. Se pone lo que vino y se dice qué falta, en vez de
+        // dejar que la persona descubra sola el campo vacío.
+        if (!doc || !nom) {
+          toast({
+            title: "Se leyó solo una parte",
+            description: `Falta ${!doc ? "el número de documento" : "el nombre"}. Complétalo a mano.`,
+          })
+        }
+      } catch (error) {
+        const abortado = error instanceof DOMException && error.name === "AbortError"
+        toast({
+          title: abortado ? "El escaneo tardó demasiado" : "Error al procesar la cédula",
+          description: abortado
+            ? "Revisa la señal e intenta de nuevo. La foto quedó guardada."
+            : error instanceof Error
+              ? error.message
+              : "Error desconocido",
+          variant: "destructive",
+        })
+        // La foto se conserva a propósito: borrarla obligaba a repetir la
+        // captura por un problema que casi siempre es de red, no de la foto.
+      } finally {
+        clearTimeout(reloj)
+        setProcessandoCedula(false)
+      }
+    }
+    reader.readAsDataURL(file)
   }
 
   const clearCedulaImage = () => {
