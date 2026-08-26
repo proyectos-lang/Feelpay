@@ -33,6 +33,46 @@ import { createClient } from "@/lib/supabase/client"
 /** Cuántos intentos seguidos antes de mandar a la persona al login completo. */
 export const INTENTOS_MAX = 10
 
+// ── Cuando la app misma abre algo del sistema ───────────────────────────────
+//
+// Tomar la foto de una cédula manda la app a segundo plano: se abre la cámara
+// del teléfono. Pero la persona NO se fue — está en mitad de una venta, con el
+// formulario abierto, haciendo lo que la app le pidió. Pedirle el PIN ahí es
+// como pedírselo por pasar de una pantalla a otra.
+//
+// Así que la app avisa antes de abrir la cámara y esa salida queda exenta.
+// No es un margen de tiempo general: es UNA salida, la que la app provocó, y
+// se consume al usarla. Cualquier otra sigue pidiendo el PIN.
+//
+// El tope de dos minutos es la red de seguridad: si alguien abre la cámara y
+// se va a hacer otra cosa con el teléfono, al volver el PIN aparece igual.
+// Tomar una foto no toma dos minutos; irse sí.
+const MAX_FUERA_MS = 2 * 60 * 1000
+
+let exencionPendiente = false
+let salioEn = 0
+
+/** La app está por abrir la cámara. La próxima salida no cuenta como irse. */
+export function abriendoAlgoDelSistema(): void {
+  exencionPendiente = true
+}
+
+/** ¿Esta salida está exenta? La consume: solo vale una vez. */
+export function salidaExenta(): boolean {
+  if (!exencionPendiente) return false
+  exencionPendiente = false
+  salioEn = Date.now()
+  return true
+}
+
+/** Volviendo de una salida exenta: ¿se tardó más de lo que toma una foto? */
+export function volvioTarde(): boolean {
+  if (!salioEn) return false
+  const tarde = Date.now() - salioEn > MAX_FUERA_MS
+  salioEn = 0
+  return tarde
+}
+
 export interface ResultadoPin {
   ok: boolean
   /** Se pasó de intentos: solo sale entrando con usuario y contraseña. */

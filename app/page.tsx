@@ -46,6 +46,7 @@ import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
 import { LoginView, type AuthenticatedUser } from "@/components/views/login-view"
 import { LoginSplash } from "@/components/login-splash"
 import { PinLockView } from "@/components/views/pin-lock-view"
+import { abriendoAlgoDelSistema, salidaExenta, volvioTarde } from "@/lib/pin-lock"
 import { SESSION_LOST_EVENT, getSupabaseSafe } from "@/lib/api-helper"
 import { limpiarCache } from "@/lib/offline-cache"
 import { createClient } from "@/lib/supabase/client"
@@ -544,11 +545,39 @@ export default function Page() {
    */
   useEffect(() => {
     if (!currentUser) return
-    const alOcultarse = () => {
-      if (document.visibilityState === "hidden") setBloqueado(true)
+    const alCambiarVisibilidad = () => {
+      if (document.visibilityState === "hidden") {
+        // Salida que provoco la app misma (abrir la camara para la cedula o
+        // la foto del pago): la persona no se fue, esta en mitad de lo suyo.
+        // `salidaExenta` la consume, asi que solo vale para esa.
+        if (salidaExenta()) return
+        setBloqueado(true)
+      } else if (volvioTarde()) {
+        // Volvio de una salida exenta, pero tardo mas de lo que toma una
+        // foto. Se fue a otra cosa con el telefono: el candado se arma.
+        setBloqueado(true)
+      }
     }
-    document.addEventListener("visibilitychange", alOcultarse)
-    return () => document.removeEventListener("visibilitychange", alOcultarse)
+    // CUALQUIER `<input type="file">` abre algo del sistema: la camara o la
+    // galeria. Se escucha en el documento y no en cada input porque hay TRECE
+    // repartidos por la app —cedula, foto del pago, del no pago, gastos,
+    // reportes, chat, documentos, perfil— y el catorce se le olvidaria a
+    // cualquiera. Asi queda cubierto el que exista y el que se agregue.
+    //
+    // En fase de captura para que nadie pueda detenerlo antes con un
+    // `stopPropagation`. Sirve igual si al input lo dispara un `<label>` o un
+    // `.click()` desde codigo: los dos despachan el evento sobre el input.
+    const alHacerClic = (e: MouseEvent) => {
+      const t = e.target
+      if (t instanceof HTMLInputElement && t.type === "file") abriendoAlgoDelSistema()
+    }
+
+    document.addEventListener("visibilitychange", alCambiarVisibilidad)
+    document.addEventListener("click", alHacerClic, true)
+    return () => {
+      document.removeEventListener("visibilitychange", alCambiarVisibilidad)
+      document.removeEventListener("click", alHacerClic, true)
+    }
   }, [currentUser])
 
   const handleLogout = useCallback(() => {
@@ -1027,19 +1056,9 @@ export default function Page() {
     return <LoginView onLoginSuccess={handleLoginSuccess} />
   }
 
-  // 2) Hay sesion pero la app estuvo fuera de vista (o se acaba de abrir) →
-  //    el PIN. Va ANTES de cualquier otra rama: ni la pantalla de carga ni el
-  //    dashboard se llegan a dibujar, asi que no hay un instante en el que
-  //    alguien alcance a leer algo.
-  if (bloqueado) {
-    return (
-      <PinLockView
-        user={currentUser}
-        onDesbloqueado={() => setBloqueado(false)}
-        onSalir={handleLogout}
-      />
-    )
-  }
+  // El PIN NO se devuelve acá con un `return`, aunque sea lo primero que uno
+  // escribiria. Va como capa ENCIMA, al final del render. Ver el porque
+  // junto al overlay.
 
   // Render principal: loading / error / dashboard
   let mainContent: React.ReactNode
@@ -1122,6 +1141,28 @@ export default function Page() {
   return (
     <>
       {mainContent}
+
+      {/* EL PIN VA ENCIMA, NO EN LUGAR DE.
+          Antes esto era un `return <PinLockView/>` antes del dashboard, y por
+          eso se perdia el trabajo a medias: al reemplazar el arbol, React
+          desmontaba el formulario y con el se iba TODO su estado. El caso que
+          lo destapo: tomar la foto de la cedula en Nueva Venta. La camara
+          manda la app a segundo plano, al volver aparecia el PIN, y la foto
+          recien tomada ya no existia.
+          Como capa, el formulario sigue montado detras y al desbloquear la
+          persona vuelve exactamente a donde estaba, con su foto.
+          Es opaca y va por encima de todo (los dialogos de Radix usan z-50),
+          asi que quien levanta el telefono no alcanza a ver nada. */}
+      {bloqueado && (
+        <div className="fixed inset-0 z-[200] overflow-y-auto bg-background">
+          <PinLockView
+            user={currentUser}
+            onDesbloqueado={() => setBloqueado(false)}
+            onSalir={handleLogout}
+          />
+        </div>
+      )}
+
       {showSplash && (
         <LoginSplash
           userName={currentUser.nombre}
