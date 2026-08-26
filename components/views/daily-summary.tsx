@@ -11,6 +11,7 @@ import { getResumenDia } from "@/lib/resumen-dia"
 import { todayColombia, bandaCartera, etiquetaFrecuencia } from "@/lib/gestion-core"
 import { getRutaUmbrales } from "@/lib/ruta-umbrales"
 import { DetalleClientesDialog } from "@/components/detalle-clientes-dialog"
+import { PagosDelDiaDialog } from "@/components/pagos-del-dia-dialog"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
@@ -80,6 +81,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
   const [metaAmount, setMetaAmount] = useState(0)
   const [cantidadPagos, setCantidadPagos] = useState(0)
   const [cantidadNoPagos, setCantidadNoPagos] = useState(0)
+  const [verPagosDelDia, setVerPagosDelDia] = useState(false)
   const [valorIngresos, setValorIngresos] = useState(0)
   const [valorGastos, setValorGastos] = useState(0)
   const [valorRetiros, setValorRetiros] = useState(0)
@@ -885,6 +887,12 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     <CheckCircle className="h-6 w-6 text-success" />
                     <span className="text-base text-muted-foreground">Pagos:</span>
                     <span className="text-base font-bold text-success">{cantidadPagos}</span>
+                    {/* El ojito de los pagos del día: quién pagó, cuánto, y
+                        cuántas cuotas alcanzó a cubrir. */}
+                    <Ojito
+                      disabled={cantidadPagos === 0}
+                      onClick={() => setVerPagosDelDia(true)}
+                    />
                   </div>
                   <div className="flex items-center gap-1.5">
                     <XCircle className="h-6 w-6 text-destructive" />
@@ -1358,6 +1366,15 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         marcados={detalleClientes?.marcados}
         mostrarValorVenta={detalleClientes?.mostrarValorVenta}
         ocultarFicha={detalleClientes?.ocultarFicha}
+      />
+
+      {/* Los pagos del dia. Va aca por la misma razon que el de arriba:
+          dentro de una cara de la tarjeta lo rotaria el `preserve-3d`. */}
+      <PagosDelDiaDialog
+        open={verPagosDelDia}
+        onOpenChange={setVerPagosDelDia}
+        rutaId={rutaId}
+        fecha={todayColombia()}
       />
 
       {/* Dialog para detalle de Ingresos/Gastos/Retiros */}
