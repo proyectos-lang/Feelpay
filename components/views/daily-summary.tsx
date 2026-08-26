@@ -310,7 +310,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
       mensual: { pagos: 0, total: 0 },
       intereses: { pagos: 0, total: 0 },
     },
-    installmentsByClient: { small: 0, large: 0 },
+    installmentsByClient: { small: 0, large: 0, fuera: 0 },
     salesReport: { nuevas: 0, renovaciones: 0, total: 0 },
     portfolioStatus: { alDia: 0, mora: 0, vencidos: 0 },
   })
@@ -340,6 +340,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
     marcados?: Set<string>
     mostrarValorVenta?: boolean
     ocultarFicha?: boolean
+    enfocarCuotasPagas?: boolean
   } | null>(null)
 
   const abrirDetalle = (
@@ -350,6 +351,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
       marcados?: Set<string>
       mostrarValorVenta?: boolean
       ocultarFicha?: boolean
+      enfocarCuotasPagas?: boolean
     },
   ) => setDetalleClientes({ titulo, ids, ...extra })
 
@@ -491,7 +493,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
 
         // Cartera + cuotas PAGADAS por cliente (prestamos activos de la ruta)
         const loanIds = ((activosRes.data ?? []) as { id: string }[]).map((l) => l.id)
-        const installmentsByClient = { small: 0, large: 0 }
+        const installmentsByClient = { small: 0, large: 0, fuera: 0 }
         const portfolioStatus = { alDia: 0, mora: 0, vencidos: 0 }
         const idsCuotas = { small: [] as string[], large: [] as string[] }
         const idsCartera = { alDia: [] as string[], mora: [] as string[], vencidos: [] as string[] }
@@ -512,8 +514,19 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
             moraPorLoan.set(f.loan_id, Number(f.cuotas_mora ?? 0))
           }
           for (const id of loanIds) {
-            if ((pagadasPorLoan.get(id) ?? 0) > 3) { installmentsByClient.large += 1; idsCuotas.large.push(id) }
-            else { installmentsByClient.small += 1; idsCuotas.small.push(id) }
+            // Las dos bandas que pidió el dueño: "de 0,1 a 3" y "más de 7".
+            // Con cuotas SALDADAS nunca hay decimales —una visita cierra una
+            // cuota, regla del script 075— así que "0,1 a 3" y "1 a 3" son
+            // exactamente los mismos clientes.
+            //
+            // Los demás quedan FUERA de los dos grupos a propósito: se le
+            // mostró que 42 de los 138 clientes no aparecerían en ninguna
+            // fila y aun así eligió estas dos bandas. Se cuentan en `fuera`
+            // para poder decirlo en el pie en vez de que el total mienta.
+            const pag = pagadasPorLoan.get(id) ?? 0
+            if (pag >= 1 && pag <= 3) { installmentsByClient.small += 1; idsCuotas.small.push(id) }
+            else if (pag > 7) { installmentsByClient.large += 1; idsCuotas.large.push(id) }
+            else { installmentsByClient.fuera += 1 }
             // Las bandas las decide `bandaCartera()`, no una escalera local.
             const banda = bandaCartera(moraPorLoan.get(id) ?? 0)
             if (banda === "al_dia") { portfolioStatus.alDia += 1; idsCartera.alDia.push(id) }
@@ -1185,16 +1198,25 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                   Empezó midiendo cuotas vencidas y el dueño lo corrigió: es
                   cuánto lleva pagado cada cliente, como decía el mockup.
 
-                  El grupo dice "0 a 3" y no "1 a 3" como el mockup porque hay
-                  11 clientes con CERO cuotas pagadas —ventas de ayer, sobre
-                  todo— y con "1 a 3" no aparecerían en ninguno de los dos
-                  grupos: la tarjeta sumaría menos clientes de los que tiene
-                  la ruta.
+                  Las bandas son las dos que pidió el dueño: de 1 a 3 cuotas
+                  pagas y más de 7. NO cubren a todos los clientes de la ruta
+                  —quedan fuera los que no han pagado nada y los que van entre
+                  4 y 7— y eso es deliberado: se le mostró que 42 de los 138
+                  se caían de la tarjeta y aun así las eligió. Por eso el pie
+                  dice cuántos quedaron fuera, para que 32 + 64 no se lea como
+                  la cartera entera.
 
-                  Los colores van al revés de antes: llevar pocas cuotas
-                  pagadas ya no es lo verde. Pero tampoco es una alarma —una
-                  venta de ayer arranca en cero sin que nada esté mal— así que
-                  el primer grupo es azul informativo, no naranja. */}
+                  Dice "1 a 3" y no "0,1 a 3" como se pidió literal porque la
+                  cuenta es por cuotas SALDADAS, que nunca traen decimales
+                  (una visita cierra una cuota, script 075): son exactamente
+                  los mismos clientes, y el "0,1" haría creer que existen
+                  fracciones que acá no existen.
+
+                  Los colores van al revés de cuando esto medía vencidas:
+                  llevar pocas cuotas pagadas ya no es lo verde. Pero tampoco
+                  es una alarma —una venta reciente lleva pocas sin que nada
+                  esté mal— así que el primer grupo es azul informativo, no
+                  naranja. */}
               <Card className="bg-card shadow-sm border-0">
                 <CardContent className="p-3">
                   <div className="mb-2 flex items-start gap-2">
@@ -1211,10 +1233,10 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
 
                   <div className="divide-y divide-border rounded-xl border border-border">
                     {([
-                      { key: "small", badge: "0-3", label: "De 0 a 3 cuotas pagas",
+                      { key: "small", badge: "1-3", label: "De 1 a 3 cuotas pagas",
                         anillo: "bg-info-light text-info", barra: "bg-info",
                         n: reportData.installmentsByClient.small, ids: backIds.cuotas.small },
-                      { key: "large", badge: "+3", label: "Más de 3 cuotas pagas",
+                      { key: "large", badge: "+7", label: "Más de 7 cuotas pagas",
                         anillo: "bg-success-light text-success", barra: "bg-success",
                         n: reportData.installmentsByClient.large, ids: backIds.cuotas.large },
                     ] as const).map(({ key, badge, label, anillo, barra, n, ids }) => {
@@ -1235,8 +1257,12 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                               <Ojito
                                 disabled={ids.length === 0}
                                 onClick={() =>
-                                  abrirDetalle(`Cuotas pagas: ${label.toLowerCase()}`, [...ids], {
+                                  abrirDetalle(label, [...ids], {
                                     subtitulo: `${n} ${n === 1 ? "cliente" : "clientes"}`,
+                                    // El ojito de ESTA tarjeta no muestra
+                                    // mora: se pidió ver cuántas cuotas lleva
+                                    // paga cada cliente, no cuántas debe.
+                                    enfocarCuotasPagas: true,
                                   })
                                 }
                               />
@@ -1257,12 +1283,24 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     })}
                   </div>
 
-                  <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-success-light/50 px-2.5 py-1.5">
+                  {/* El total es el de la RUTA, no la suma de las dos filas.
+                      Con estas bandas hay clientes que no caen en ninguna, y
+                      poner ahí la suma haría que la tarjeta se leyera como si
+                      la ruta tuviera menos clientes de los que tiene. */}
+                  <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-lg bg-success-light/50 px-2.5 py-1.5">
                     <Users className="h-3 w-3 text-icon-users" />
                     <span className="text-[11px] text-muted-foreground">Total clientes:</span>
                     <span className="text-[11px] font-bold text-success">
-                      {reportData.installmentsByClient.small + reportData.installmentsByClient.large}
+                      {reportData.installmentsByClient.small +
+                        reportData.installmentsByClient.large +
+                        reportData.installmentsByClient.fuera}
                     </span>
+                    {/* Sin esta línea, 32 + 64 se lee como toda la cartera. */}
+                    {reportData.installmentsByClient.fuera > 0 && (
+                      <span className="text-[11px] text-muted-foreground">
+                        · {reportData.installmentsByClient.fuera} fuera de estos grupos
+                      </span>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -1365,6 +1403,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         marcados={detalleClientes?.marcados}
         mostrarValorVenta={detalleClientes?.mostrarValorVenta}
         ocultarFicha={detalleClientes?.ocultarFicha}
+        enfocarCuotasPagas={detalleClientes?.enfocarCuotasPagas}
       />
 
       {/* Los pagos del dia. Va aca por la misma razon que el de arriba:

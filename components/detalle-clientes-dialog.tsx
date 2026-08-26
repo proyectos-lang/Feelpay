@@ -58,6 +58,17 @@ export interface DetalleClientesDialogProps {
    * Se sigue pudiendo buscar por documento aunque no se vea.
    */
   ocultarFicha?: boolean
+  /**
+   * Cambia la última columna: en vez de la MORA muestra cuántas cuotas lleva
+   * pagas el cliente.
+   *
+   * Lo usa el ojito de "Cuotas Clientes". Esa tarjeta agrupa por cuotas
+   * pagadas, y abrirla para encontrarse una columna de cuotas vencidas es
+   * justo lo que el dueño pidió quitar: "el objetivo es que se vean la
+   * cantidad de clientes que pagaron X cuotas, y no mostrar lo que se muestra
+   * actualmente que dice es Cuotas Vencidas".
+   */
+  enfocarCuotasPagas?: boolean
 }
 
 const TONO_MORA: Record<string, string> = {
@@ -76,6 +87,7 @@ export function DetalleClientesDialog({
   etiquetaMarcado = "Pagó",
   mostrarValorVenta = false,
   ocultarFicha = false,
+  enfocarCuotasPagas = false,
 }: DetalleClientesDialogProps) {
   const [filas, setFilas] = useState<ClienteDetalleRow[]>([])
   const [cargando, setCargando] = useState(false)
@@ -167,7 +179,9 @@ export function DetalleClientesDialog({
                     <th className="py-1.5 px-2 font-medium text-center">Cuotas</th>
                     <th className="py-1.5 px-2 font-medium text-right">Saldo</th>
                     <th className="py-1.5 px-2 font-medium">Último pago</th>
-                    <th className="py-1.5 pl-2 font-medium text-right">Mora</th>
+                    <th className="py-1.5 pl-2 font-medium text-right">
+                      {enfocarCuotasPagas ? "Cuotas pagas" : "Mora"}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -201,9 +215,18 @@ export function DetalleClientesDialog({
                       </td>
                       <td className="py-1.5 px-2 text-right font-semibold tabular-nums">{fmtMoneda(f.saldo)}</td>
                       <td className="py-1.5 px-2 text-xs">{f.ultimoPago ? fmtFecha(f.ultimoPago) : "—"}</td>
-                      <td className={`py-1.5 pl-2 text-right text-xs font-medium ${TONO_MORA[colorMora(f.cuotasMora)]}`}>
-                        {f.cuotasMora > 0 ? etiquetaMora(f.cuotasMora) : "al día"}
-                      </td>
+                      {enfocarCuotasPagas ? (
+                        <td className="py-1.5 pl-2 text-right text-xs font-bold tabular-nums text-green-700">
+                          {f.cuotasCubiertas}
+                          <span className="ml-1 font-normal text-muted-foreground">
+                            de {f.cuotasTotales}
+                          </span>
+                        </td>
+                      ) : (
+                        <td className={`py-1.5 pl-2 text-right text-xs font-medium ${TONO_MORA[colorMora(f.cuotasMora)]}`}>
+                          {f.cuotasMora > 0 ? etiquetaMora(f.cuotasMora) : "al día"}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -232,9 +255,15 @@ export function DetalleClientesDialog({
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-sm font-bold tabular-nums">{fmtMoneda(f.saldo)}</p>
-                        <p className={`text-[10px] font-medium ${TONO_MORA[colorMora(f.cuotasMora)]}`}>
-                          {f.cuotasMora > 0 ? `${etiquetaMora(f.cuotasMora)} en mora` : "al día"}
-                        </p>
+                        {enfocarCuotasPagas ? (
+                          <p className="text-[10px] font-bold text-green-700">
+                            {f.cuotasCubiertas} {f.cuotasCubiertas === 1 ? "cuota paga" : "cuotas pagas"}
+                          </p>
+                        ) : (
+                          <p className={`text-[10px] font-medium ${TONO_MORA[colorMora(f.cuotasMora)]}`}>
+                            {f.cuotasMora > 0 ? `${etiquetaMora(f.cuotasMora)} en mora` : "al día"}
+                          </p>
+                        )}
                       </div>
                     </div>
                     <p className="text-[10px] text-muted-foreground mt-0.5">
