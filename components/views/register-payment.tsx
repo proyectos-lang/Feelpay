@@ -2378,20 +2378,58 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
    * varias filas del mismo día (la cuota + una línea extra) podía devolver la
    * equivocada. Un evento es una unidad: no hay ambigüedad.
    */
+  /**
+   * La gestión de hoy que TODAVÍA ESTÁ EN PIE.
+   *
+   * Antes esto tomaba la más reciente del día y ya. El problema: una gestión
+   * ya anulada sigue siendo un evento aplicado, y si era la última, era la que
+   * salía elegida. Cada intento de anular volvía a apuntarle a ella, el
+   * servidor respondía "esa gestión ya fue reversada" y la mandaba a revisión,
+   * mientras el pago que SÍ estaba vivo seguía intacto y el cliente seguía en
+   * Gestionados.
+   *
+   * Pasó de verdad: MARTINEZ EMILCE, ruta 197, el 25/08. El día tenía un pago
+   * de 48.000 (anulado), uno de 192.000 (vivo) y uno de 9.600 (anulado). El
+   * de 9.600 era el último, así que las VEINTE anulaciones que se intentaron
+   * le pegaron a él, y las veinte se apilaron en la bandeja de secretaría.
+   *
+   * Se traen TODOS los eventos aplicados del préstamo, no solo los de hoy: una
+   * reversa puede llevar la fecha de la cuota que corrige y no la de hoy
+   * (`ajustar_cuota_control_pagos`), y filtrando por fecha se escapaba.
+   */
   const resolveGestionHoy = async (m: ManagedClient): Promise<Gestion | null> => {
     try {
       const supabase = await getSupabaseSafe()
       const { data } = await supabase
         .from("gestiones")
-        .select("id, loan_id, tipo, monto, fecha_gestion, cuota_objetivo, num_cuotas, metodo_pago")
+        .select(
+          "id, loan_id, tipo, monto, fecha_gestion, cuota_objetivo, num_cuotas, " +
+            "metodo_pago, referencia_gestion_id, fecha_hora",
+        )
         .eq("loan_id", m.loanId)
-        .eq("fecha_gestion", todayColombia())
         .eq("estado", "aplicada")
-        .in("tipo", ["pago", "no_pago", "cancelacion"])
         .order("fecha_hora", { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      return (data as unknown as Gestion) ?? null
+
+      const filas = (data ?? []) as unknown as (Gestion & { referencia_gestion_id: string | null })[]
+
+      // Las que ya tienen una reversa aplicada apuntándoles. Solo cuentan las
+      // reversas APLICADAS: una en revisión todavía no anuló nada.
+      const anuladas = new Set(
+        filas
+          .filter((g) => g.tipo === "reversa" && g.referencia_gestion_id)
+          .map((g) => g.referencia_gestion_id as string),
+      )
+
+      // La más reciente de HOY que sea una visita y siga en pie.
+      const hoy = todayColombia()
+      return (
+        filas.find(
+          (g) =>
+            g.fecha_gestion === hoy &&
+            (g.tipo === "pago" || g.tipo === "no_pago" || g.tipo === "cancelacion") &&
+            !anuladas.has(g.id),
+        ) ?? null
+      )
     } catch (_e) {
       return null
     }
