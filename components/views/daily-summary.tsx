@@ -1091,17 +1091,35 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                       <span className="text-base font-bold text-brand">{Math.round(paymentPercentage)}%</span>
                     </div>
                   </div>
-                  {/* Pagos stats */}
+                  {/* Pagos stats.
+                      LAS DOS CANTIDADES, NO UNA CONTRA OTRA. Antes decía
+                      "8 / 12", que se lee como "8 de 12 clientes" — y no era
+                      eso: el 12 eran los gestionados, no la cartera. Ahora se
+                      muestran los dos números por separado, con el color que
+                      cada uno tiene en toda la app: pagos en verde, no pagos
+                      en rojo. */}
                   <div className="flex-1 pl-4">
                     <p className="text-sm text-muted-foreground font-medium">Pagos Realizados</p>
-                    <p className="text-3xl font-bold text-foreground">
-                      {reportData.totalPayments} <span className="text-muted-foreground text-xl font-normal">/ {reportData.totalPending}</span>
-                    </p>
-                    <div className="w-full bg-muted rounded-full h-2 mt-1 overflow-hidden">
-                      <div
-                        className="bg-success h-full rounded-full transition-all"
-                        style={{ width: `${paymentPercentage}%` }}
-                      />
+                    <div className="flex items-baseline gap-4">
+                      <div>
+                        <span className="text-3xl font-bold text-success tabular-nums">
+                          {cantidadPagos}
+                        </span>
+                        <span className="ml-1 text-xs text-muted-foreground">pagos</span>
+                      </div>
+                      <div>
+                        <span className="text-3xl font-bold text-destructive tabular-nums">
+                          {cantidadNoPagos}
+                        </span>
+                        <span className="ml-1 text-xs text-muted-foreground">no pagos</span>
+                      </div>
+                    </div>
+                    <div className="mt-1 flex h-2 w-full overflow-hidden rounded-full bg-muted">
+                      {/* La barra reparte los dos, no mide un avance contra un
+                          total: si hoy hubo 8 pagos y 4 no pagos, se ve dos
+                          tercios verde y un tercio rojo. */}
+                      <div className="bg-success h-full transition-all" style={{ width: `${paymentPercentage}%` }} />
+                      <div className="bg-destructive h-full transition-all" style={{ width: `${100 - paymentPercentage}%` }} />
                     </div>
                   </div>
                 </div>

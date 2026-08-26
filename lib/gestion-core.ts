@@ -351,11 +351,22 @@ export function colorMora(cuotasMora: number): "verde" | "amarillo" | "rojo" {
   return "rojo"
 }
 
-/** Bandas de cartera de los informes (resumen del día y cierre de caja). */
+/**
+ * Bandas de cartera de los informes (resumen del día y cierre de caja).
+ *
+ * SON LAS MISMAS QUE LOS COLORES DE LA LISTA DE COBRO, y se derivan de ellos
+ * para que no puedan separarse. Antes tenían umbrales distintos: la lista
+ * pintaba verde hasta 4, pero el informe solo contaba "al día" con CERO. El
+ * mismo cliente salía verde en el teléfono del cobrador y "en mora" en el
+ * informe de la oficina.
+ *
+ *   al día   hasta 4    (verde)
+ *   mora     de 5 a 8   (amarillo)
+ *   vencido  más de 8   (rojo)
+ */
 export function bandaCartera(cuotasMora: number): "al_dia" | "mora" | "vencido" {
-  if (cuotasMora <= 0) return "al_dia"
-  if (cuotasMora <= 8) return "mora"
-  return "vencido"
+  const color = colorMora(cuotasMora)
+  return color === "verde" ? "al_dia" : color === "amarillo" ? "mora" : "vencido"
 }
 
 /** Etiqueta corta para la UI: "3 cuotas" / "1 cuota" / "al día". */
