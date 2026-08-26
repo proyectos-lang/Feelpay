@@ -281,6 +281,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
   const [editingManaged, setEditingManaged] = useState<ManagedClient | null>(null)
   const [editMonto, setEditMonto] = useState("")
+  /** A que se quiere convertir la gestion abierta en el editor. */
+  const [editTipo, setEditTipo] = useState<"pago" | "no_pago">("pago")
   const [savingManaged, setSavingManaged] = useState(false)
   // Gestión que se está por anular. Se pide confirmación porque deshace un
   // movimiento de plata y devuelve el cliente a la lista de cobro.
@@ -2436,20 +2438,48 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   }
 
   /**
-   * Corregir el monto de una gestión de hoy = anular la anterior y registrar
-   * la corregida. El evento original nunca se modifica: queda en el historial
-   * junto con su anulación, así que la Auditoría 360 puede mostrar qué se
-   * cambió, cuándo y por quién.
+   * Corregir la gestión de hoy = anular la anterior y registrar la corregida.
+   * Sirve para las tres correcciones:
+   *
+   *   · pago → pago      cambiar el monto
+   *   · pago → no pago   se marcó pago y el cliente no pagó
+   *   · no pago → pago   se marcó no pago y el cliente sí pagó
+   *
+   * Las dos últimas antes obligaban a anular y volver a gestionar al cliente
+   * entero, con el viaje a Pendientes de por medio.
+   *
+   * EL EVENTO ORIGINAL NUNCA SE MODIFICA. Se registra su reversa y después el
+   * evento nuevo, que es la única forma de escribir plata en este sistema: en
+   * el historial quedan los tres y la Auditoría 360 puede mostrar qué se
+   * cambió, cuándo y por quién. Cambiar `gestiones.tipo` con un UPDATE haría
+   * desaparecer el error sin dejar rastro, y de todos modos el trigger
+   * `trg_gestiones_inmutables` lo rechaza.
    */
   const handleEditManagedSave = async () => {
     if (!editingManaged) return
-    const newMonto = Number.parseFloat(editMonto)
-    if (isNaN(newMonto) || newMonto <= 0) return
     const m = editingManaged
+    const destino = editTipo
+    const newMonto = destino === "pago" ? Number.parseFloat(editMonto) : 0
+    if (destino === "pago" && (isNaN(newMonto) || newMonto <= 0)) return
+
+    // Sin cambios no se escribe nada: dos eventos de más en el libro por un
+    // "Guardar" sin querer ensucian el historial y no corrigen nada.
+    const igual =
+      destino === m.gestionTipo &&
+      (destino === "no_pago" || newMonto === (m.valorAbonado ?? 0))
+    if (igual) { setEditingManaged(null); return }
+
     setSavingManaged(true)
     try {
       const original = await resolveGestionHoy(m)
       if (!original) throw new Error("No se encontró la gestión de hoy de este cliente")
+
+      const queCambio =
+        destino === m.gestionTipo
+          ? "Monto corregido desde el módulo de pagos"
+          : destino === "pago"
+            ? "Corregido de no pago a pago desde el módulo de pagos"
+            : "Corregido de pago a no pago desde el módulo de pagos"
 
       const idReversa = nuevaGestionId()
       await enviarOEncolar({
@@ -2465,7 +2495,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           fecha_gestion: todayColombia(),
           fecha_hora: ahoraColombiaISO(),
           cliente_nombre: m.nombre,
-          observacion: "Corrección del monto desde el módulo de pagos",
+          observacion: queCambio,
         },
       })
 
@@ -2473,33 +2503,59 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       await enviarOEncolar({
         tipo: "gestion",
         id: idNuevo,
-        descripcion: `Pago corregido — ${m.nombre} ($${newMonto.toLocaleString()})`,
+        descripcion:
+          destino === "pago"
+            ? `Pago corregido — ${m.nombre} ($${newMonto.toLocaleString()})`
+            : `No pago corregido — ${m.nombre}`,
         payload: {
           id: idNuevo,
-          tipo: "pago",
+          tipo: destino,
           loan_id: m.loanId,
           client_id: m.clientId,
           monto: newMonto,
-          num_cuotas: original.num_cuotas ?? 1,
+          // Al convertir a no pago la gestión vale por UNA visita, no por las
+          // cuotas que cubría el pago que se está deshaciendo.
+          num_cuotas: destino === "pago" ? (original.num_cuotas ?? 1) : 1,
           fecha_gestion: todayColombia(),
           fecha_hora: ahoraColombiaISO(),
           cuota_objetivo: original.cuota_objetivo,
-          metodo_pago: original.metodo_pago,
+          metodo_pago: destino === "pago" ? original.metodo_pago : null,
+          // A propósito en `false`. Un no pago registrado en la calle puede
+          // alargar el cronograma si el cliente iba en su última cuota, y esa
+          // decisión la toma el cobrador con la casilla del formulario. Una
+          // corrección hecha después no puede alargarle el plan al cliente de
+          // callada: si hace falta esa cuota, se anula y se gestiona de nuevo.
+          generar_cuota_si_debe: false,
           cliente_nombre: m.nombre,
-          observacion: "Monto corregido desde el módulo de pagos",
+          observacion: queCambio,
         },
       })
 
       setEditingManaged(null)
       setManagedToday((prev) =>
-        prev.map((x) => (x.loanId === m.loanId ? { ...x, valorAbonado: newMonto } : x)),
+        prev.map((x) =>
+          x.loanId === m.loanId
+            ? {
+                ...x,
+                gestionTipo: destino,
+                valorAbonado: newMonto,
+                cuotasAbonadas: destino === "pago" ? x.cuotasAbonadas : 0,
+              }
+            : x,
+        ),
       )
-      toast({ title: "Pago corregido", description: `Monto actualizado a $${newMonto.toLocaleString()}` })
+      toast({
+        title: destino === "pago" ? "Marcado como pago" : "Marcado como no pago",
+        description:
+          destino === "pago"
+            ? `${m.nombre} — $${newMonto.toLocaleString()}`
+            : `${m.nombre} queda como no pago del día`,
+      })
       void fetchData({ silent: true })
     } catch (e) {
       toast({
         title: "Error",
-        description: e instanceof Error ? e.message : "No se pudo corregir el pago",
+        description: e instanceof Error ? e.message : "No se pudo corregir la gestión",
         variant: "destructive",
       })
     } finally {
@@ -3489,19 +3545,33 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                             <span className="text-[11px] text-muted-foreground">Saldo: <span className="font-semibold text-warning">${Math.round(m.saldo).toLocaleString()}</span></span>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
-                            {m.gestionTipo === "pago" && (
-                              <Button
-                                size="icon"
-                                variant="outline"
-                                title="Editar el valor abonado"
-                                aria-label="Editar el valor abonado"
-                                className="h-10 w-10 border-info/40 text-info hover:text-info hover:bg-info-light"
-                                onClick={() => { setEditingManaged(m); setEditMonto((m.valorAbonado ?? 0).toString()) }}
-                                disabled={savingManaged}
-                              >
-                                <Pencil className="h-5 w-5" />
-                              </Button>
-                            )}
+                            {/* El lápiz sale TAMBIÉN en los no pagos. Antes
+                                solo editaba el monto de un pago; ahora es el
+                                único sitio donde se cambia pago ↔ no pago, que
+                                obligaba a anular y volver a gestionar al
+                                cliente entero pasando por Pendientes. */}
+                            <Button
+                              size="icon"
+                              variant="outline"
+                              title="Editar esta gestión"
+                              aria-label="Editar esta gestión"
+                              className="h-10 w-10 border-info/40 text-info hover:text-info hover:bg-info-light"
+                              onClick={() => {
+                                setEditingManaged(m)
+                                setEditTipo(m.gestionTipo)
+                                // Viniendo de un no pago no hay monto anterior
+                                // que proponer: se ofrece la cuota, que es lo
+                                // que el cliente debía ese día.
+                                setEditMonto(
+                                  m.gestionTipo === "pago"
+                                    ? (m.valorAbonado ?? 0).toString()
+                                    : (m.valorCuota ?? 0).toString(),
+                                )
+                              }}
+                              disabled={savingManaged}
+                            >
+                              <Pencil className="h-5 w-5" />
+                            </Button>
                             {/* El icono es un basurero rojo porque es lo que el
                                 cobrador busca cuando quiere deshacer algo. Pero
                                 OJO al tocar este flujo: por dentro NO borra
@@ -4231,19 +4301,65 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       <Dialog open={!!editingManaged} onOpenChange={(open) => { if (!open) setEditingManaged(null) }}>
         <DialogContent className="p-4 md:p-6 max-w-[90vw] md:max-w-sm">
           <DialogHeader>
-            <DialogTitle className="text-sm md:text-lg">Editar pago — {editingManaged?.nombre}</DialogTitle>
+            <DialogTitle className="text-sm md:text-lg">Editar gestión — {editingManaged?.nombre}</DialogTitle>
+            <DialogDescription className="text-[11px] md:text-sm">
+              No se borra nada: se anula la gestión anterior y queda la
+              corrección, las dos en el historial.
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-1.5">
-            <label className="text-xs md:text-sm text-muted-foreground">Nuevo monto abonado</label>
-            <Input
-              type="number"
-              step="0.01"
-              value={editMonto}
-              onChange={(e) => setEditMonto(e.target.value)}
-              className="h-9 text-sm"
-              autoFocus
-            />
+
+          {/* Los dos estados como botones grandes y no como un desplegable:
+              se usa con el pulgar y en la calle. 44px de alto es el mínimo
+              para un dedo; un <select> nativo queda en 20. */}
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setEditTipo("pago")}
+              className={`flex items-center justify-center gap-1.5 rounded-lg border-2 py-2.5 text-sm font-bold transition-colors ${
+                editTipo === "pago"
+                  ? "border-green-500 bg-green-100 text-green-700"
+                  : "border-border bg-card text-muted-foreground"
+              }`}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Pago
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditTipo("no_pago")}
+              className={`flex items-center justify-center gap-1.5 rounded-lg border-2 py-2.5 text-sm font-bold transition-colors ${
+                editTipo === "no_pago"
+                  ? "border-red-500 bg-red-100 text-red-700"
+                  : "border-border bg-card text-muted-foreground"
+              }`}
+            >
+              <XCircle className="h-4 w-4" />
+              No pago
+            </button>
           </div>
+
+          {editTipo === "pago" ? (
+            <div className="space-y-1.5">
+              <label className="text-xs md:text-sm text-muted-foreground">
+                {editingManaged?.gestionTipo === "pago" ? "Nuevo monto abonado" : "Monto que pagó"}
+              </label>
+              <Input
+                type="number"
+                step="0.01"
+                value={editMonto}
+                onChange={(e) => setEditMonto(e.target.value)}
+                className="h-9 text-sm"
+                autoFocus
+              />
+            </div>
+          ) : (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-[11px] leading-snug text-red-700">
+              Queda como visita sin pago.
+              {editingManaged?.gestionTipo === "pago" &&
+                ` Se anula el pago de $${(editingManaged?.valorAbonado ?? 0).toLocaleString()}.`}
+            </p>
+          )}
+
           <div className="flex gap-2 justify-end pt-2">
             <Button variant="outline" size="sm" onClick={() => setEditingManaged(null)}>Cancelar</Button>
             <Button size="sm" onClick={handleEditManagedSave} disabled={savingManaged}>
