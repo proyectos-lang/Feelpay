@@ -1034,7 +1034,7 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
             key={ventaRuta}
             currentRutaId={ventaRuta}
             rutaPais={rutaElegida?.pais ?? ""}
-            rutaFija
+            comoSecretaria
             fechaVenta={ventaFecha}
             onCreated={() => setRecargaLista((n) => n + 1)}
             onCancel={() => setCreandoVenta(false)}

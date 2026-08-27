@@ -137,21 +137,31 @@ type NewLoanProps = {
    */
   fechaVenta?: string
   /**
-   * Registrar en `currentRutaId` y no en la ruta de la sesión.
+   * Quien registra es SECRETARÍA desde Control Total, no un cobrador en la
+   * calle. Es una sola cosa con dos consecuencias, y por eso es una sola
+   * bandera y no dos que haya que acordarse de poner juntas:
    *
-   * El formulario siempre leyó `localStorage.selectedRuta` justo antes de
-   * enviar, porque en la calle la ruta de la sesión ES la ruta de la venta.
-   * Secretaría cuadrando cajas hace lo contrario: elige la ruta de otro. Sin
-   * esta bandera, esa venta se iría a la ruta de la secretaria.
+   *   · LA RUTA la elige quien registra. El formulario siempre leyó
+   *     `localStorage.selectedRuta` justo antes de enviar, porque en la calle
+   *     la ruta de la sesión ES la ruta de la venta. Secretaría hace lo
+   *     contrario: elige la de otro. Sin esto, esa venta se iría a la ruta de
+   *     la secretaria.
+   *
+   *   · EL UMBRAL no aplica. El tope existe para que un cobrador no preste
+   *     por encima sin que alguien firme, y quien firma es secretaría:
+   *     mandarla a la bandeja solo crea una solicitud que ella misma aprueba
+   *     dos clics después. Quien decide de verdad es el servidor
+   *     (`registrar_venta`, script 079), y lo hace con el rol REAL del
+   *     usuario; esta bandera sola no abre nada.
    */
-  rutaFija?: boolean
+  comoSecretaria?: boolean
   /** Se llama después de cada venta registrada, para refrescar lo de afuera. */
   onCreated?: () => void
 }
 
 export function NewLoan({
   preSelectedClientId, currentRutaId = 1, rutaPais = "", onCancel,
-  fechaVenta, rutaFija = false, onCreated,
+  fechaVenta, comoSecretaria = false, onCreated,
 }: NewLoanProps) {
   const { toast } = useToast()
   const [rutaId] = useState<number>(currentRutaId)
@@ -1289,6 +1299,10 @@ export function NewLoan({
         // medianoche, la venta queda en el día que decía la pantalla y no en
         // el que amaneció.
         ...(fechaVenta ? { fecha_venta: fechaVenta } : {}),
+        // SIN TOPE. Lo lee `registrar_venta` (script 079) y solo le hace caso
+        // si el rol REAL de quien registra es secretaría o admin, así que
+        // mandarla desde otro lado no abre nada.
+        ...(comoSecretaria ? { omitir_umbral: true } : {}),
         // Historia de la venta homologada (vacío en una venta normal).
         historial,
         // Abono inicial ("Pago adelantado"). Viaja DENTRO de p_loan igual que
@@ -1319,9 +1333,9 @@ export function NewLoan({
           p_user_id = parsed?.id ?? null
           p_rol = parsed?.rol ?? null
         }
-        // `rutaFija` = la ruta la eligió quien registra (Control Total) y no
-        // se pisa con la de la sesión.
-        if (!rutaFija) {
+        // La ruta la eligió quien registra (Control Total) y no se pisa con
+        // la de la sesión.
+        if (!comoSecretaria) {
           const rawRuta = typeof window !== "undefined" ? localStorage.getItem("selectedRuta") : null
           if (rawRuta) {
             const parsedRuta = JSON.parse(rawRuta)
@@ -1401,9 +1415,18 @@ export function NewLoan({
       // lectura falla, `getRutaUmbrales` devuelve todo deshabilitado, o sea
       // "ninguna venta necesita revisión", y la venta entraba sin revisión sin
       // dejar rastro. Ahora eso lo atrapa `registrar_venta` en el servidor.
-      const umbrales = await getRutaUmbrales(p_ruta_id)
-      const ventaHabilitada = esRenovacion ? umbrales.venta_renovacion_habilitado : umbrales.venta_nueva_habilitado
-      const ventaUmbral = esRenovacion ? umbrales.venta_renovacion_umbral : umbrales.venta_nueva_umbral
+      //
+      // Y no corre para secretaría: preguntarle "¿la mando a revisión?" a la
+      // persona que atiende la bandeja de revisiones no tiene a quién
+      // consultarle. Se salta la lectura entera, no solo la pregunta, porque
+      // es una vuelta a la red que ya no decide nada.
+      const umbrales = comoSecretaria ? null : await getRutaUmbrales(p_ruta_id)
+      const ventaHabilitada = umbrales
+        ? (esRenovacion ? umbrales.venta_renovacion_habilitado : umbrales.venta_nueva_habilitado)
+        : false
+      const ventaUmbral = umbrales
+        ? (esRenovacion ? umbrales.venta_renovacion_umbral : umbrales.venta_nueva_umbral)
+        : null
 
       if (excedeUmbral(ventaHabilitada, ventaUmbral, valorNum)) {
         const confirmado = await confirmRevision()

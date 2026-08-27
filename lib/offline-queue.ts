@@ -34,6 +34,7 @@
 import { openDB, type IDBPDatabase } from "idb"
 import { createClient } from "@/lib/supabase/client"
 import { getSessionIdentity, NetworkUnavailableError, type AtomicRpcResult } from "@/lib/api-helper"
+import { todayColombia, tsToColombiaDate } from "@/lib/colombia-date"
 
 const DB_NAME = "feelpay-offline"
 const DB_VERSION = 1
@@ -51,6 +52,43 @@ const STORE = "cola"
 //              `registrar_pago_atomico` (script 044).
 // "revision" = una fila para solicitudes_revision (un movimiento que supero
 //              el umbral de su ruta y necesita el visto bueno de secretaria).
+/**
+ * EL DÍA AL QUE PERTENECE UNA VENTA QUE ESTUVO EN LA COLA.
+ *
+ * Una venta capturada sin señal el lunes y sincronizada el miércoles caía en
+ * el MIÉRCOLES: el servidor la fechaba con su propio NOW(). Su abono inicial,
+ * en cambio, ya caía en el lunes —viaja con `fecha_dispositivo` desde el
+ * script 040—, así que la misma venta quedaba partida en dos días: el capital
+ * saliendo de una caja y la plata que el cliente entregó entrando en otra.
+ *
+ * Se manda `fecha_venta` (script 078) con el MISMO día que ya fecha el abono,
+ * y las dos mitades vuelven a coincidir por construcción.
+ *
+ * NO se manda si:
+ *   · ya trae `fecha_venta` — Control Total eligió el día y ese manda;
+ *   · el día es hoy — el caso normal, no hay nada que aclarar;
+ *   · pasaron más de 30 días — un reloj muy corrido o un item olvidado en la
+ *     cola. El servidor rechaza más de 60 y una venta rechazada se PIERDE;
+ *     antes que eso, que caiga en hoy como caía siempre.
+ */
+function diaDeLaVentaEncolada(
+  p_loan: Record<string, unknown>,
+  capturadoEn: string,
+): string | null {
+  if (p_loan.fecha_venta) return null
+  // `fecha_dispositivo` primero: es literalmente el día con el que se fecha el
+  // abono de esta misma venta. `capturadoEn` es el respaldo para payloads de
+  // versiones que no lo mandaban.
+  const dia =
+    typeof p_loan.fecha_dispositivo === "string" && p_loan.fecha_dispositivo
+      ? p_loan.fecha_dispositivo
+      : tsToColombiaDate(capturadoEn)
+  const hoy = todayColombia()
+  if (!dia || dia >= hoy) return null
+  const diasAtras = Math.round((Date.parse(hoy) - Date.parse(dia)) / 86_400_000)
+  return diasAtras > 30 ? null : dia
+}
+
 export type TipoOperacion =
   | "gestion" | "rpc" | "pago" | "no_pago" | "transaccion" | "venta" | "revision"
 
@@ -230,12 +268,21 @@ async function enviarItem(item: ItemCola): Promise<AtomicRpcResult> {
     // cache; una venta capturada sin senal en un telefono que nunca alcanzo a
     // leer los umbrales entraba directo sin pasar por nadie.
     const p = item.payload as { p_cliente: unknown; p_loan: Record<string, unknown>; p_payment_plan: unknown }
+    // La venta se cuenta en el día en que se hizo, no en el que alcanzó señal.
+    const diaVenta = diaDeLaVentaEncolada(p.p_loan, item.capturadoEn)
+    if (diaVenta) {
+      console.log(`[v0] Venta encolada el ${diaVenta}: se cuenta en ese día, no en hoy.`)
+    }
     const args = {
       p_user_id: item.identidad.user_id,
       p_ruta_id: item.identidad.ruta_id,
       p_rol: item.identidad.rol,
       p_cliente: p.p_cliente,
-      p_loan: { ...p.p_loan, idempotency_key: item.id },
+      p_loan: {
+        ...p.p_loan,
+        idempotency_key: item.id,
+        ...(diaVenta ? { fecha_venta: diaVenta } : {}),
+      },
       p_payment_plan: p.p_payment_plan,
     }
     const { data, error } = await supabase.rpc("registrar_venta", args)
