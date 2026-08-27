@@ -34,6 +34,8 @@ export interface PagoDelDiaRow {
    * entero escondería justo lo que la columna existe para mostrar.
    */
   cuotasPagas: number
+  /** Cuántas cuotas tiene el crédito en total. Se usa en el modo grupo. */
+  cuotasTotales: number
   /** 'Cancelada' cuando el crédito quedó en cero; si no, 'Abono'. */
   movimiento: "Abono" | "Cancelada"
   saldo: number
@@ -86,22 +88,25 @@ export async function getPagosDelDia(
         .from("loans")
         .select("id, client_id, valor_cuota, clients:clients(nombre_completo, apodo)")
         .in("id", loanIds),
-      supabase.from("v_loan_financiero").select("loan_id, saldo").in("loan_id", loanIds),
+      supabase
+        .from("v_loan_financiero")
+        .select("loan_id, saldo, cuotas_totales")
+        .in("loan_id", loanIds),
     ])
 
     const info = new Map(
       ((prestamos.data ?? []) as Record<string, any>[]).map((l) => [String(l.id), l]),
     )
-    const saldos = new Map(
-      ((financiero.data ?? []) as { loan_id: string; saldo: number }[])
-        .map((f) => [f.loan_id, Number(f.saldo) || 0]),
+    const fin = new Map(
+      ((financiero.data ?? []) as { loan_id: string; saldo: number; cuotas_totales: number }[])
+        .map((f) => [f.loan_id, f]),
     )
 
     return filas
       .map((f) => {
         const l = info.get(f.loanId)
         const valorCuota = Number(l?.valor_cuota) || 0
-        const saldo = saldos.get(f.loanId) ?? 0
+        const saldo = Number(fin.get(f.loanId)?.saldo) || 0
         return {
           loanId: f.loanId,
           clientId: String(l?.client_id ?? ""),
@@ -112,6 +117,7 @@ export async function getPagosDelDia(
           // Sin valor de cuota no se puede dividir; se muestra 0 en vez de
           // inventar un número o reventar con una división por cero.
           cuotasPagas: valorCuota > 0 ? f.neto / valorCuota : 0,
+          cuotasTotales: Number(fin.get(f.loanId)?.cuotas_totales) || 0,
           movimiento: (saldo <= 0 ? "Cancelada" : "Abono") as "Abono" | "Cancelada",
           saldo,
         }
@@ -121,6 +127,73 @@ export async function getPagosDelDia(
     console.error("[v0] getPagosDelDia:", err)
     // Nunca lanza: un detalle que revienta no puede tumbar la tarjeta que lo
     // abrió. Mismo criterio que `getDetalleClientes`.
+    return []
+  }
+}
+
+/**
+ * Los mismos datos, pero para un GRUPO DE CRÉDITOS en vez de un día.
+ *
+ * Lo usa el ojito de "Cuotas Clientes", que agrupa clientes por cuántas
+ * cuotas llevan pagas. Devuelve la misma forma de fila para que la tabla sea
+ * literalmente la misma —una sola tabla, un solo sitio donde arreglarla— y
+ * cambia lo que significa cada número, que es lo único que cambia de verdad:
+ *
+ *   `pago`        lo que el cliente lleva pagado del crédito ENTERO, no lo
+ *                 de hoy: en esta lista la mayoría no pagó hoy, y una
+ *                 columna de ceros no dice nada.
+ *   `cuotasPagas` las cuotas SALDADAS (`cuotas_cubiertas`), que es el número
+ *                 con el que la tarjeta arma los grupos. Sin decimales.
+ *
+ * NO SE CONSULTA POR CRITERIO, SE CONSULTA POR `loan_id`: quien pinta el
+ * contador ya sabe qué créditos lo componen. Repetir el criterio acá dejaría
+ * que la lista y el número se separaran.
+ */
+export async function getCreditosComoFilas(
+  supabase: SupabaseClient,
+  loanIds: string[],
+): Promise<PagoDelDiaRow[]> {
+  const ids = Array.from(new Set(loanIds.filter(Boolean)))
+  if (ids.length === 0) return []
+  try {
+    const filas: PagoDelDiaRow[] = []
+    // Por tandas: un `.in()` con doscientos y pico UUID revienta la URL de
+    // PostgREST, y revienta en silencio. Mismo criterio que detalle-clientes.
+    for (let i = 0; i < ids.length; i += 150) {
+      const tanda = ids.slice(i, i + 150)
+      const [prestamos, financiero] = await Promise.all([
+        supabase
+          .from("loans")
+          .select("id, client_id, valor_cuota, clients:clients(nombre_completo, apodo)")
+          .in("id", tanda),
+        supabase
+          .from("v_loan_financiero")
+          .select("loan_id, saldo, total_pagado, cuotas_cubiertas, cuotas_totales")
+          .in("loan_id", tanda),
+      ])
+      const fin = new Map(
+        ((financiero.data ?? []) as Record<string, unknown>[]).map((f) => [String(f.loan_id), f]),
+      )
+      for (const l of (prestamos.data ?? []) as Record<string, any>[]) {
+        const f = fin.get(String(l.id)) ?? {}
+        const saldo = Number(f.saldo) || 0
+        filas.push({
+          loanId: String(l.id),
+          clientId: String(l.client_id ?? ""),
+          nombre: l.clients?.nombre_completo ?? "Cliente",
+          apodo: l.clients?.apodo ?? null,
+          pago: Number(f.total_pagado) || 0,
+          valorCuota: Number(l.valor_cuota) || 0,
+          cuotasPagas: Number(f.cuotas_cubiertas) || 0,
+          cuotasTotales: Number(f.cuotas_totales) || 0,
+          movimiento: saldo <= 0 ? "Cancelada" : "Abono",
+          saldo,
+        })
+      }
+    }
+    return filas.sort((a, b) => (a.apodo || a.nombre).localeCompare(b.apodo || b.nombre, "es"))
+  } catch (err) {
+    console.error("[v0] getCreditosComoFilas:", err)
     return []
   }
 }

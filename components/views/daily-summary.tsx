@@ -11,7 +11,7 @@ import { getResumenDia } from "@/lib/resumen-dia"
 import { todayColombia, bandaCartera, etiquetaFrecuencia } from "@/lib/gestion-core"
 import { getRutaUmbrales } from "@/lib/ruta-umbrales"
 import { DetalleClientesDialog } from "@/components/detalle-clientes-dialog"
-import { PagosDelDiaDialog } from "@/components/pagos-del-dia-dialog"
+import { PagosDelDiaDialog, type FuentePagos } from "@/components/pagos-del-dia-dialog"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
@@ -81,7 +81,15 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
   const [metaAmount, setMetaAmount] = useState(0)
   const [cantidadPagos, setCantidadPagos] = useState(0)
   const [cantidadNoPagos, setCantidadNoPagos] = useState(0)
-  const [verPagosDelDia, setVerPagosDelDia] = useState(false)
+  /**
+   * Qué le toca mostrar a la tabla de clientes, o `null` si está cerrada.
+   *
+   * Se guarda el OBJETO en el estado y no un booleano: el efecto que carga los
+   * datos depende de él, así que construirlo en línea en el JSX crearía uno
+   * nuevo en cada render y la consulta entraría en bucle. Creado una vez al
+   * hacer clic, la identidad no cambia mientras el diálogo está abierto.
+   */
+  const [pagosDialog, setPagosDialog] = useState<FuentePagos | null>(null)
   const [valorIngresos, setValorIngresos] = useState(0)
   const [valorGastos, setValorGastos] = useState(0)
   const [valorRetiros, setValorRetiros] = useState(0)
@@ -340,7 +348,6 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
     marcados?: Set<string>
     mostrarValorVenta?: boolean
     ocultarFicha?: boolean
-    enfocarCuotasPagas?: boolean
   } | null>(null)
 
   const abrirDetalle = (
@@ -351,7 +358,6 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
       marcados?: Set<string>
       mostrarValorVenta?: boolean
       ocultarFicha?: boolean
-      enfocarCuotasPagas?: boolean
     },
   ) => setDetalleClientes({ titulo, ids, ...extra })
 
@@ -899,7 +905,9 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                         cuántas cuotas alcanzó a cubrir. */}
                     <Ojito
                       disabled={cantidadPagos === 0}
-                      onClick={() => setVerPagosDelDia(true)}
+                      onClick={() =>
+                        setPagosDialog({ tipo: "dia", rutaId, fecha: todayColombia() })
+                      }
                     />
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -1257,16 +1265,20 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                             <div className="flex items-center gap-1">
                               {/* El ojito va POR GRUPO y no uno solo arriba:
                                   se pidió poder ver los clientes de cierta
-                                  cantidad de cuotas, y eso es por grupo. */}
+                                  cantidad de cuotas, y eso es por grupo.
+
+                                  Abre la MISMA tabla que el ojito de Pagos en
+                                  el Resumen —nombre con apodo, la plata en
+                                  verde, las cuotas, el saldo y el ojo de
+                                  historial— en vez del detalle genérico, que
+                                  es lo que se pidió. */}
                               <Ojito
                                 disabled={ids.length === 0}
                                 onClick={() =>
-                                  abrirDetalle(label, [...ids], {
-                                    subtitulo: `${n} ${n === 1 ? "cliente" : "clientes"}`,
-                                    // El ojito de ESTA tarjeta no muestra
-                                    // mora: se pidió ver cuántas cuotas lleva
-                                    // paga cada cliente, no cuántas debe.
-                                    enfocarCuotasPagas: true,
+                                  setPagosDialog({
+                                    tipo: "creditos",
+                                    loanIds: [...ids],
+                                    titulo: label,
                                   })
                                 }
                               />
@@ -1407,16 +1419,14 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         marcados={detalleClientes?.marcados}
         mostrarValorVenta={detalleClientes?.mostrarValorVenta}
         ocultarFicha={detalleClientes?.ocultarFicha}
-        enfocarCuotasPagas={detalleClientes?.enfocarCuotasPagas}
       />
 
       {/* Los pagos del dia. Va aca por la misma razon que el de arriba:
           dentro de una cara de la tarjeta lo rotaria el `preserve-3d`. */}
       <PagosDelDiaDialog
-        open={verPagosDelDia}
-        onOpenChange={setVerPagosDelDia}
-        rutaId={rutaId}
-        fecha={todayColombia()}
+        open={pagosDialog !== null}
+        onOpenChange={(v) => { if (!v) setPagosDialog(null) }}
+        fuente={pagosDialog}
       />
 
       {/* Dialog para detalle de Ingresos/Gastos/Retiros */}

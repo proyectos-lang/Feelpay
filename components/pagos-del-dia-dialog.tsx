@@ -1,15 +1,24 @@
 "use client"
 
 /**
- * Los pagos del día, cliente por cliente.
- *
- * Se abre desde el ojito de "Pagos" en el Resumen del Día y muestra las
- * columnas que pidió Ivonne: nombre con apodo debajo, el pago en verde,
- * cuántas cuotas alcanzó a cubrir, si fue abono o canceló, el saldo, y un
+ * La tabla de clientes con el formato que pidió Ivonne: nombre con apodo
+ * debajo, la plata en una píldora verde, cuántas cuotas, el saldo, y un
  * segundo ojo con la venta completa y su historial.
  *
- * La lista sale del LIBRO, igual que el contador que la abre, así que el
- * número de filas no puede discrepar del "8 pagos" de la tarjeta.
+ * SIRVE PARA DOS OJITOS, con la misma tabla:
+ *
+ *   tipo "dia"       los pagos de hoy en una ruta — el ojito de "Pagos" en el
+ *                    Resumen del Día. La lista sale del LIBRO, igual que el
+ *                    contador que la abre, así que el número de filas no
+ *                    puede discrepar del "8 pagos" de la tarjeta.
+ *
+ *   tipo "creditos"  un grupo de créditos — los ojitos de "Cuotas Clientes".
+ *                    Ahí "Pago" es lo que el cliente lleva pagado del crédito
+ *                    entero, no lo de hoy: en esa lista la mayoría no pagó
+ *                    hoy y una columna de ceros no diría nada.
+ *
+ * SE COMPARTE EL COMPONENTE, NO SE COPIA. Dos tablas iguales son dos tablas
+ * que se separan al primer arreglo que se haga en una sola.
  */
 
 import { useEffect, useState } from "react"
@@ -21,15 +30,27 @@ import { ChevronLeft, Eye, Loader2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { fmtMoneda, fmtFecha, etiquetaFrecuencia } from "@/lib/gestion-core"
 import {
-  getPagosDelDia, getHistorialCredito,
+  getPagosDelDia, getCreditosComoFilas, getHistorialCredito,
   type PagoDelDiaRow, type HistorialCredito,
 } from "@/lib/pagos-del-dia"
+
+/** De dónde salen las filas. */
+export type FuentePagos =
+  | { tipo: "dia"; rutaId: number; fecha: string }
+  | { tipo: "creditos"; loanIds: string[]; titulo: string }
 
 interface Props {
   open: boolean
   onOpenChange: (v: boolean) => void
-  rutaId: number
-  fecha: string
+  /**
+   * `null` mientras el diálogo está cerrado.
+   *
+   * OJO al cambiar esto: el efecto que carga los datos depende de este objeto.
+   * Si el padre lo construye en línea (`fuente={{tipo:"dia", ...}}`), cada
+   * render crea uno nuevo, el efecto se vuelve a disparar y la consulta entra
+   * en bucle. Se guarda en un `useState` del padre justo por eso.
+   */
+  fuente: FuentePagos | null
 }
 
 /** "2,05" · "0,67" · "1" — sin decimales cuando es redondo. */
@@ -41,7 +62,7 @@ function fmtCuotas(n: number): string {
     : n.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-export function PagosDelDiaDialog({ open, onOpenChange, rutaId, fecha }: Props) {
+export function PagosDelDiaDialog({ open, onOpenChange, fuente }: Props) {
   const [filas, setFilas] = useState<PagoDelDiaRow[]>([])
   const [cargando, setCargando] = useState(false)
   // Cuando hay un crédito abierto, el diálogo muestra su historial en vez de
@@ -51,15 +72,22 @@ export function PagosDelDiaDialog({ open, onOpenChange, rutaId, fecha }: Props) 
   const [historial, setHistorial] = useState<HistorialCredito | null>(null)
   const [cargandoHistorial, setCargandoHistorial] = useState(false)
 
+  const porDia = fuente?.tipo === "dia"
+
   useEffect(() => {
-    if (!open) { setVerHistorialDe(null); setHistorial(null); return }
+    if (!open || !fuente) { setVerHistorialDe(null); setHistorial(null); return }
     let vigente = true
     setCargando(true)
-    getPagosDelDia(createClient(), rutaId, fecha)
+    const sb = createClient()
+    const pedir =
+      fuente.tipo === "dia"
+        ? getPagosDelDia(sb, fuente.rutaId, fuente.fecha)
+        : getCreditosComoFilas(sb, fuente.loanIds)
+    pedir
       .then((d) => { if (vigente) setFilas(d) })
       .finally(() => { if (vigente) setCargando(false) })
     return () => { vigente = false }
-  }, [open, rutaId, fecha])
+  }, [open, fuente])
 
   useEffect(() => {
     if (!verHistorialDe) return
@@ -88,12 +116,18 @@ export function PagosDelDiaDialog({ open, onOpenChange, rutaId, fecha }: Props) 
                 <ChevronLeft className="h-4 w-4" />
               </Button>
             )}
-            {verHistorialDe ? verHistorialDe.nombre : "Pagos del día"}
+            {verHistorialDe
+              ? verHistorialDe.nombre
+              : porDia
+                ? "Pagos del día"
+                : (fuente?.tipo === "creditos" ? fuente.titulo : "Clientes")}
           </DialogTitle>
           <DialogDescription className="text-xs">
             {verHistorialDe
               ? "La venta completa y su historial de pagos"
-              : `${filas.length} ${filas.length === 1 ? "cliente pagó" : "clientes pagaron"} · ${fmtMoneda(totalPagado)}`}
+              : porDia
+                ? `${filas.length} ${filas.length === 1 ? "cliente pagó" : "clientes pagaron"} · ${fmtMoneda(totalPagado)}`
+                : `${filas.length} ${filas.length === 1 ? "cliente" : "clientes"} · ${fmtMoneda(totalPagado)} pagado`}
           </DialogDescription>
         </DialogHeader>
 
@@ -161,7 +195,9 @@ export function PagosDelDiaDialog({ open, onOpenChange, rutaId, fecha }: Props) 
           </div>
         ) : filas.length === 0 ? (
           <p className="py-8 text-center text-xs text-muted-foreground">
-            Todavía no hay pagos registrados hoy en esta ruta.
+            {porDia
+              ? "Todavía no hay pagos registrados hoy en esta ruta."
+              : "No hay clientes en este grupo."}
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -169,9 +205,15 @@ export function PagosDelDiaDialog({ open, onOpenChange, rutaId, fecha }: Props) 
               <thead className="sticky top-0 bg-background">
                 <tr className="border-b border-border text-left text-muted-foreground">
                   <th className="py-1.5 pr-2 font-medium">Nombre / Apodo</th>
-                  <th className="py-1.5 px-2 font-medium text-right">Pago</th>
+                  <th className="py-1.5 px-2 font-medium text-right">
+                    {porDia ? "Pago" : "Pagado"}
+                  </th>
                   <th className="py-1.5 px-2 font-medium text-center">Cuotas pagas</th>
-                  <th className="py-1.5 px-2 font-medium text-center">Movimiento</th>
+                  {/* "Movimiento" solo en el día. En un grupo de créditos
+                      activos el saldo nunca es cero, así que las 139 filas
+                      dirían "Abono": una columna entera repitiendo la misma
+                      palabra. */}
+                  {porDia && <th className="py-1.5 px-2 font-medium text-center">Movimiento</th>}
                   <th className="py-1.5 px-2 font-medium text-right">Saldo</th>
                   <th className="py-1.5 pl-2 font-medium text-center">Historial</th>
                 </tr>
@@ -194,12 +236,22 @@ export function PagosDelDiaDialog({ open, onOpenChange, rutaId, fecha }: Props) 
                     </td>
                     <td className="px-2 py-2 text-center font-semibold tabular-nums text-foreground">
                       {fmtCuotas(f.cuotasPagas)}
+                      {/* En el grupo se agrega "de N": ahí la gracia es ver
+                          qué tan avanzado va cada crédito, no solo cuántas
+                          cuotas lleva. */}
+                      {!porDia && f.cuotasTotales > 0 && (
+                        <span className="ml-1 font-normal text-muted-foreground">
+                          de {f.cuotasTotales}
+                        </span>
+                      )}
                     </td>
-                    <td className={`px-2 py-2 text-center font-semibold ${
-                      f.movimiento === "Cancelada" ? "text-destructive" : "text-muted-foreground"
-                    }`}>
-                      {f.movimiento}
-                    </td>
+                    {porDia && (
+                      <td className={`px-2 py-2 text-center font-semibold ${
+                        f.movimiento === "Cancelada" ? "text-destructive" : "text-muted-foreground"
+                      }`}>
+                        {f.movimiento}
+                      </td>
+                    )}
                     <td className="px-2 py-2 text-right tabular-nums text-foreground">
                       {f.saldo > 0 ? fmtMoneda(f.saldo) : "—"}
                     </td>
