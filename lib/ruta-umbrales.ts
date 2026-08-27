@@ -38,6 +38,18 @@ export interface RutaUmbrales {
   // equivocarse: el vendedor tenía que acordarse del correcto en cada venta.
   amortizaciones_habilitadas: string[]
   amortizacion_default: string | null
+  // ¿Hace falta fotografiar la cédula para registrar un cliente nuevo?
+  //
+  // Es la única bandera de esta interfaz que arranca ENCENDIDA, y a propósito:
+  // las demás son restricciones que se activan, y esta ya está activa en el
+  // código de hoy —el formulario de venta no deja escribir el documento a
+  // mano—. El default `true` es lo que hace que apagar el interruptor sea una
+  // decisión y no un efecto secundario.
+  //
+  // Y por eso FALLA CERRADA: sin fila, con error de red o con un cache viejo,
+  // vale `true`. Una restricción que se afloja sola cuando algo sale mal no
+  // protege nada.
+  cedula_obligatoria: boolean
 }
 
 const DEFAULT_UMBRALES: RutaUmbrales = {
@@ -51,6 +63,7 @@ const DEFAULT_UMBRALES: RutaUmbrales = {
   // Sin configurar, la ruta sigue viendo los dos como hasta hoy.
   amortizaciones_habilitadas: ["aleman", "americano"],
   amortizacion_default: null,
+  cedula_obligatoria: true,
 }
 
 // Cache local de los umbrales por ruta.
@@ -85,15 +98,34 @@ function guardarCache(rutaId: number, u: RutaUmbrales): void {
   }
 }
 
+// Las columnas que existían antes del script 080, y esa lista más la columna
+// que ese script agrega.
+//
+// POR QUÉ SON DOS Y NO UNA.
+// PostgREST no ignora una columna que no existe: tumba la consulta ENTERA con
+// «column ... does not exist» (42703). Como el despliegue de la app y la
+// corrida del script son dos actos separados, pedir la columna nueva sin más
+// dejaba una ventana —entre uno y otro— en la que ESTA función fallaba para
+// todas las rutas, y con ella se caían la geocerca, los umbrales y los métodos
+// de interés. Se pide la columna nueva y, si la base todavía no la tiene, se
+// reintenta sin ella. El reintento desaparece solo en cuanto el script corra.
+const COLUMNAS_BASE =
+  "venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral_cuotas, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas, logo_url, geocerca_habilitada, geocerca_radio_metros, amortizaciones_habilitadas, amortizacion_default"
+const COLUMNAS = `${COLUMNAS_BASE}, cedula_obligatoria`
+
 // Si la ruta no tiene fila configurada, no hay revisión (falla abierta hacia
 // "sin revisión" para no bloquear la operación normal si algo sale mal).
 export async function getRutaUmbrales(rutaId: number): Promise<RutaUmbrales> {
   try {
-    const { data, error } = await createClient()
-      .from("ruta_config_umbrales")
-      .select("venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral_cuotas, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas, logo_url, geocerca_habilitada, geocerca_radio_metros, amortizaciones_habilitadas, amortizacion_default")
-      .eq("ruta_id", rutaId)
-      .maybeSingle()
+    const supabase = createClient()
+    const pedir = (columnas: string) =>
+      supabase.from("ruta_config_umbrales").select(columnas).eq("ruta_id", rutaId).maybeSingle()
+
+    let { data, error } = await pedir(COLUMNAS)
+    if (error?.code === "42703") {
+      console.warn("[v0] `cedula_obligatoria` no existe todavía — corre scripts/080. Se pide sin ella.")
+      ;({ data, error } = await pedir(COLUMNAS_BASE))
+    }
     if (error) return leerCache(rutaId) ?? DEFAULT_UMBRALES
     if (!data) return DEFAULT_UMBRALES
     const fila = data as Partial<RutaUmbrales>
@@ -106,6 +138,11 @@ export async function getRutaUmbrales(rutaId: number): Promise<RutaUmbrales> {
         fila.amortizaciones_habilitadas && fila.amortizaciones_habilitadas.length > 0
           ? fila.amortizaciones_habilitadas
           : DEFAULT_UMBRALES.amortizaciones_habilitadas,
+      // Explícito, y no por el spread: en el reintento sin la columna la clave
+      // no viene, y el spread dejaría `undefined` donde tiene que haber `true`.
+      // La cédula dejaría de pedirse en todas las rutas por un script que
+      // falta correr.
+      cedula_obligatoria: fila.cedula_obligatoria ?? DEFAULT_UMBRALES.cedula_obligatoria,
     }
     guardarCache(rutaId, umbrales)
     return umbrales

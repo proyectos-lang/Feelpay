@@ -471,6 +471,7 @@ type RutaConfigRow = {
   geocerca_radio_metros: number | null
   amortizaciones_habilitadas: string[] | null
   amortizacion_default: string | null
+  cedula_obligatoria: boolean
 }
 
 /**
@@ -529,6 +530,8 @@ function RutasTab() {
   const [fAbonoUmbralCuotas, setFAbonoUmbralCuotas] = useState("")
   const [fGeocercaHab, setFGeocercaHab] = useState(false)
   const [fGeocercaRadio, setFGeocercaRadio] = useState("100")
+  // Encendida por defecto: es como se comportó siempre la app.
+  const [fCedulaObligatoria, setFCedulaObligatoria] = useState(true)
   // Métodos de interés que usa la unidad, y cuál llega preseleccionado en la
   // venta. Antes el formulario ofrecía siempre los dos y ninguno marcado.
   const [fAmortizaciones, setFAmortizaciones] = useState<string[]>(AMORTIZACIONES_DEFAULT)
@@ -579,6 +582,7 @@ function RutasTab() {
     setFAbonoUmbralCuotas(c?.abono_umbral_cuotas?.toString() ?? "")
     setFGeocercaHab(c?.geocerca_habilitada ?? false)
     setFGeocercaRadio(c?.geocerca_radio_metros?.toString() ?? "100")
+    setFCedulaObligatoria(c?.cedula_obligatoria ?? true)
     const amort = c?.amortizaciones_habilitadas
     setFAmortizaciones(amort && amort.length > 0 ? amort : AMORTIZACIONES_DEFAULT)
     setFAmortizacionDefault(c?.amortizacion_default ?? "")
@@ -709,6 +713,7 @@ function RutasTab() {
         abono_habilitado: fAbonoHab,
         abono_umbral_cuotas: fAbonoUmbralCuotas ? Number.parseInt(fAbonoUmbralCuotas, 10) : null,
         geocerca_habilitada: fGeocercaHab,
+        cedula_obligatoria: fCedulaObligatoria,
         // La columna es NOT NULL: si el campo queda vacio se guarda el
         // default en vez de mandar null y romper el upsert.
         geocerca_radio_metros: Number.parseInt(fGeocercaRadio, 10) || 100,
@@ -1163,6 +1168,33 @@ function RutasTab() {
                   })}
                 </Accordion>
               )}
+            </div>
+
+            {/* ── Cédula ────────────────────────────────────────────────── */}
+            {/* El interruptor dice lo que EXIGE, no lo que permite, igual que
+                todos los de esta pantalla: encendido = la restricción está
+                puesta. Apagarlo es lo que abre la puerta. */}
+            <div className="space-y-1.5 border-t pt-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm">Exigir foto de la cédula para clientes nuevos</Label>
+                <Switch checked={fCedulaObligatoria} onCheckedChange={setFCedulaObligatoria} />
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                {fCedulaObligatoria ? (
+                  <>
+                    Como hasta hoy: el documento y el nombre solo se llenan fotografiando la
+                    cédula, y sin foto no se puede registrar un cliente nuevo. Apágalo para las
+                    unidades donde el cliente no carga cédula o la señal no da para subirla: ahí
+                    los dos campos se escriben a mano y la foto queda opcional.
+                  </>
+                ) : (
+                  <>
+                    El documento y el nombre se escriben a mano y la foto es opcional. El número
+                    de documento sigue siendo obligatorio y único: dos clientes no pueden tener el
+                    mismo, así que un dato inventado bloquea al cliente de verdad cuando llegue.
+                  </>
+                )}
+              </p>
             </div>
 
             {/* ── Geocerca ──────────────────────────────────────────────── */}

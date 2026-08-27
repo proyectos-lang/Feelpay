@@ -461,6 +461,28 @@ export function NewLoan({
   // dos (comportamiento de siempre).
   const [amortizacionesRuta, setAmortizacionesRuta] = useState<string[]>(["aleman", "americano"])
   const [amortizacionDefaultRuta, setAmortizacionDefaultRuta] = useState("")
+
+  /**
+   * ¿Esta unidad exige fotografiar la cédula para un cliente nuevo?
+   *
+   * Arranca en `true` —como se comportó siempre la app— y `getRutaUmbrales`
+   * también falla cerrada. Así, mientras la respuesta no llegue o si no llega
+   * nunca, el formulario sigue pidiendo la cédula: aflojar la regla por una
+   * consulta lenta sería aflojarla por accidente.
+   */
+  const [cedulaObligatoria, setCedulaObligatoria] = useState(true)
+
+  /**
+   * Cuándo el documento y el nombre están bajo llave.
+   *
+   * Sin foto y con la cédula exigida, los llena SOLO el escaneo. Con la foto
+   * ya tomada se abren aunque la unidad la exija: el escaneo lee mal a menudo
+   * —foto borrosa, reflejo, cédula cortada— y la app ya prometía en dos
+   * mensajes distintos que en ese caso se podían "escribir a mano", con los
+   * campos en readOnly. Era una promesa que no se podía cumplir; ahora sí, y
+   * la foto sigue ahí como respaldo de lo que se escriba.
+   */
+  const datosBloqueados = cedulaObligatoria && !cedulaImage
   useEffect(() => {
     let cancelado = false
     getRutaUmbrales(rutaId)
@@ -468,6 +490,7 @@ export function NewLoan({
         if (cancelado) return
         setAmortizacionesRuta(u.amortizaciones_habilitadas)
         setAmortizacionDefaultRuta(u.amortizacion_default ?? "")
+        setCedulaObligatoria(u.cedula_obligatoria)
       })
       .catch((err) => console.error("[v0] NewLoan umbrales error:", err))
     return () => { cancelado = true }
@@ -728,7 +751,7 @@ export function NewLoan({
           toast({
             title: "No se pudo leer la cédula",
             description:
-              "La foto quedó guardada. Vuelve a tomarla bien enfocada, sin reflejos y con la cédula completa dentro del cuadro — o escribe los datos a mano.",
+              "La foto quedó guardada. Vuelve a tomarla bien enfocada, sin reflejos y con la cédula completa dentro del cuadro — o escribe los datos a mano en los campos de abajo, que ya quedaron abiertos.",
             variant: "destructive",
           })
           return
@@ -991,6 +1014,7 @@ export function NewLoan({
       // tanto en el banner de error como en el toast para que el mensaje
       // sea especifico en lugar de generico.
       const fieldLabels: Record<string, string> = {
+        documento: "Documento",
         nombreCompleto: "Nombre completo",
         apodo: "Apodo",
         telefono: "Teléfono",
@@ -1009,6 +1033,11 @@ export function NewLoan({
 
       const errors = new Set<string>()
       if (isNewClient) {
+        // El documento SIEMPRE hizo falta —es NOT NULL UNIQUE en `clients`—,
+        // pero no estaba en esta lista porque no había forma de teclearlo: o
+        // lo llenaba el escaneo o no había venta. Ahora que se puede escribir,
+        // se valida y se resalta como cualquier otro campo.
+        if (!documento.trim()) errors.add("documento")
         if (!nombreCompleto.trim()) errors.add("nombreCompleto")
         if (!apodo.trim()) errors.add("apodo")
         if (!telefono.trim()) errors.add("telefono")
@@ -1046,15 +1075,34 @@ export function NewLoan({
       // completo; si es existente, solo enviamos `is_new: false` y `id`.
       let p_cliente: Record<string, unknown>
       if (isNewClient) {
-        // Sin conexion no se pueden crear clientes nuevos: el escaneo de
-        // cedula necesita el servidor, y dos cobradores sin senal podrian
-        // registrar a la misma persona y duplicarla. Las renovaciones a
-        // clientes existentes si funcionan offline.
+        // Sin conexion no se pueden crear clientes nuevos. Eran dos motivos y
+        // ahora queda uno, que es el que de verdad pesa: `clients.documento`
+        // es UNIQUE, asi que dos cobradores sin senal pueden registrar a la
+        // misma persona y el segundo en sincronizar se choca con la llave y se
+        // queda con la venta trabada. El otro motivo —que el escaneo necesita
+        // el servidor— ya no aplica en las unidades que apagaron la cedula
+        // obligatoria, pero levantar el bloqueo por eso es otra decision, con
+        // su propio riesgo, y no se toma de pasada aca.
+        //
+        // Las renovaciones a clientes existentes si funcionan offline.
         if (typeof navigator !== "undefined" && !navigator.onLine) {
           toast({
             title: "Sin conexión",
             description:
               "No se pueden registrar clientes nuevos sin internet. Puedes hacer ventas a clientes que ya existen, o esperar a tener señal.",
+            variant: "destructive",
+          })
+          return
+        }
+        // Con la cédula exigida, el documento vacío no es un descuido: es que
+        // no se tomó la foto, y los campos están bajo llave hasta que se tome.
+        // Decir "complete los datos" mandaba a la persona a un campo que no la
+        // dejaba escribir.
+        if (cedulaObligatoria && !cedulaImage) {
+          toast({
+            title: "Falta la foto de la cédula",
+            description:
+              "En esta unidad el documento y el nombre se llenan fotografiando la cédula. Toma la foto para continuar.",
             variant: "destructive",
           })
           return
@@ -1085,8 +1133,12 @@ export function NewLoan({
         }
         p_cliente = {
           is_new: true,
-          documento,
-          nombre_completo: nombreCompleto,
+          // Se normaliza acá porque ahora hay dos orígenes: el escaneo, que ya
+          // devolvía todo en mayúsculas y sin espacios sobrantes, y el
+          // teclado, que no. Sin esto "12345 " y "12345" serían dos clientes
+          // distintos y la llave única no atraparía el duplicado.
+          documento: documento.trim().toUpperCase(),
+          nombre_completo: nombreCompleto.trim().toUpperCase(),
           apodo: apodo || null,
           sector: sector || null,
           telefono: telefono || null,
@@ -1812,10 +1864,22 @@ export function NewLoan({
               </div>
               <div className="text-center">
                 <p className="text-xs md:text-base font-semibold text-blue-900">
-                  {procesandoCedula ? "Procesando..." : cedulaImage ? "Cédula capturada" : "Captura tu cédula"}
+                  {procesandoCedula
+                    ? "Procesando..."
+                    : cedulaImage
+                      ? "Cédula capturada"
+                      : cedulaObligatoria
+                        ? "Captura tu cédula"
+                        : "Captura la cédula (opcional)"}
                 </p>
                 <p className="text-[10px] md:text-sm text-blue-700">
-                  {procesandoCedula ? "Leyendo información..." : cedulaImage ? "Toca para cambiar" : "Toca el botón para fotografiar"}
+                  {procesandoCedula
+                    ? "Leyendo información..."
+                    : cedulaImage
+                      ? "Toca para cambiar"
+                      : cedulaObligatoria
+                        ? "Toca el botón para fotografiar"
+                        : "O escribe el documento y el nombre aquí abajo"}
                 </p>
               </div>
               {cedulaImage && (
@@ -1900,15 +1964,19 @@ export function NewLoan({
               <div className="grid gap-2 md:gap-4 grid-cols-1 md:grid-cols-3">
                 <div className="space-y-1 md:space-y-2">
                   <Label htmlFor="documento" className="text-[11px] md:text-sm">
-                    Documento
+                    Documento <span className="text-red-500">*</span>
                   </Label>
                   <Input
                     id="documento"
-                    placeholder="Número de documento"
+                    placeholder={datosBloqueados ? "Lo llena la cédula" : "Número de documento"}
                     value={documento}
-                    readOnly
+                    onChange={(e) => {
+                      setDocumento(e.target.value)
+                      clearFieldError("documento")
+                    }}
+                    readOnly={datosBloqueados}
                     disabled={procesandoCedula}
-                    className="h-8 md:h-10 text-[11px] md:text-sm bg-muted"
+                    className={`h-8 md:h-10 text-[11px] md:text-sm ${datosBloqueados ? "bg-muted" : ""} ${errCls("documento")}`}
                   />
                 </div>
                 <div className="space-y-1 md:space-y-2">
@@ -1917,11 +1985,15 @@ export function NewLoan({
                   </Label>
                   <Input
                     id="nombreCompleto"
-                    placeholder="Nombre completo"
+                    placeholder={datosBloqueados ? "Lo llena la cédula" : "Nombre completo"}
                     value={nombreCompleto}
-                    readOnly
+                    onChange={(e) => {
+                      setNombreCompleto(e.target.value)
+                      clearFieldError("nombreCompleto")
+                    }}
+                    readOnly={datosBloqueados}
                     disabled={procesandoCedula}
-                    className="h-8 md:h-10 text-[11px] md:text-sm bg-muted"
+                    className={`h-8 md:h-10 text-[11px] md:text-sm ${datosBloqueados ? "bg-muted" : ""} ${errCls("nombreCompleto")}`}
                   />
                 </div>
                 <div className="space-y-1 md:space-y-2">
