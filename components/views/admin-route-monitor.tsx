@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   Dialog,
   DialogContent,
@@ -45,6 +46,7 @@ import {
   ShoppingCart,
   ReceiptText,
   Eye,
+  Filter,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { DetalleClientesDialog } from "@/components/detalle-clientes-dialog"
@@ -191,7 +193,30 @@ interface AdminRouteMonitorProps {
 
 export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
   const { toast } = useToast()
-  const [fecha, setFecha] = useState<string>(todayColombia())
+  /**
+   * EL PERÍODO. Arranca en un solo día —hoy— así que sin tocar nada el módulo
+   * se comporta como siempre.
+   *
+   * `hasta` es la fecha "de referencia" para lo que necesita UNA fecha y no un
+   * rango (aprobar un cierre, abrir el mapa). Pero ojo: casi todo eso debe
+   * usar la fecha DE LA FILA, no esta. Con una sola fecha daba igual; con un
+   * rango, confundirlas abre el día equivocado.
+   */
+  const [desde, setDesde] = useState<string>(todayColombia())
+  const [hasta, setHasta] = useState<string>(todayColombia())
+  const esUnSoloDia = desde === hasta
+
+  // Filtros. "" = sin filtrar.
+  const [fPais, setFPais] = useState("")
+  const [fCiudad, setFCiudad] = useState("")
+  const [fAdmin, setFAdmin] = useState("")
+  const [fUnidad, setFUnidad] = useState("")
+
+  /** Ficha de cada ruta: para los filtros y para mostrar ciudad y país. */
+  const [rutasMeta, setRutasMeta] = useState<
+    { id: number; nombre: string | null; ciudad: string | null; pais: string | null; idadmin: number | null }[]
+  >([])
+  const [adminsMeta, setAdminsMeta] = useState<{ id: number; nombre: string }[]>([])
   /**
    * Qué le toca mostrar a la tabla de clientes, o `null` si está cerrada.
    *
@@ -254,6 +279,115 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
     return () => { vigente = false }
   }, [currentUser?.id, currentUser?.rol])
 
+  // La ficha de las rutas no cambia con la fecha: se pide una sola vez.
+  useEffect(() => {
+    let vigente = true
+    const cargar = async () => {
+      try {
+        const supabase = createClient()
+        const [rs, us] = await Promise.all([
+          supabase.from("rutas").select("id, nombre, ciudad, pais, idadmin").order("id"),
+          supabase.from("usuarios").select("id, nombre"),
+        ])
+        if (!vigente) return
+        setRutasMeta((rs.data ?? []) as typeof rutasMeta)
+        setAdminsMeta((us.data ?? []) as { id: number; nombre: string }[])
+      } catch (e) {
+        console.error("[v0] No se pudo cargar la ficha de rutas:", e)
+      }
+    }
+    void cargar()
+    return () => { vigente = false }
+  }, [])
+
+  /**
+   * Los días del período, uno por uno.
+   *
+   * TOPE DE 62. Un rango escrito de más —o un año tecleado sin querer en el
+   * campo de fecha— dispararía cientos de consultas contra producción. Se
+   * corta y se avisa en pantalla, en vez de dejar la app colgada.
+   */
+  const diasDelRango = useMemo(() => {
+    const out: string[] = []
+    if (!desde || !hasta || desde > hasta) return out
+    const d = new Date(`${desde}T12:00:00Z`)
+    const fin = new Date(`${hasta}T12:00:00Z`)
+    while (d <= fin && out.length < 62) {
+      out.push(d.toISOString().slice(0, 10))
+      d.setUTCDate(d.getUTCDate() + 1)
+    }
+    return out
+  }, [desde, hasta])
+
+  const metaDe = useCallback(
+    (id: number) => rutasMeta.find((r) => r.id === id) ?? null,
+    [rutasMeta],
+  )
+
+  /**
+   * Los países y ciudades vienen escritos a mano y sin criterio: la base tiene
+   * "ARGENTINA" y "Argentina", "LA PLATA" y "La Plata". Si se agruparan tal
+   * cual, el filtro ofrecería la misma ciudad dos veces y ninguna de las dos
+   * traería todas sus rutas. Se agrupa en minúsculas y se muestra bonito.
+   */
+  const clave = (v: string | null | undefined) => (v ?? "").trim().toLowerCase()
+  const bonito = (v: string) =>
+    v.split(/\s+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ")
+
+  const opciones = useMemo(() => {
+    const unicos = (vals: (string | null)[]) => {
+      const m = new Map<string, string>()
+      for (const v of vals) {
+        const k = clave(v)
+        if (k && !m.has(k)) m.set(k, bonito(v as string))
+      }
+      return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], "es"))
+    }
+    // Cada filtro ofrece solo lo que sigue siendo alcanzable con los otros
+    // puestos: elegir Argentina y que después aparezca Cuenca sería ofrecer
+    // un camino que no lleva a nada.
+    const base = rutasMeta.filter(
+      (r) =>
+        (!fPais || clave(r.pais) === fPais) &&
+        (!fCiudad || clave(r.ciudad) === fCiudad) &&
+        (!fAdmin || String(r.idadmin ?? "") === fAdmin),
+    )
+    return {
+      paises: unicos(rutasMeta.map((r) => r.pais)),
+      ciudades: unicos(
+        rutasMeta.filter((r) => !fPais || clave(r.pais) === fPais).map((r) => r.ciudad),
+      ),
+      admins: [
+        ...new Map(
+          rutasMeta
+            .filter((r) => r.idadmin != null)
+            .map((r) => [
+              String(r.idadmin),
+              adminsMeta.find((a) => a.id === r.idadmin)?.nombre ?? `Usuario ${r.idadmin}`,
+            ]),
+        ).entries(),
+      ].sort((a, b) => a[1].localeCompare(b[1], "es")),
+      unidades: base.map((r) => [String(r.id), `#${r.id}${r.nombre ? ` · ${r.nombre}` : ""}`] as const),
+    }
+  }, [rutasMeta, adminsMeta, fPais, fCiudad, fAdmin])
+
+  const hayFiltro = Boolean(fPais || fCiudad || fAdmin || fUnidad)
+
+  const rutasFiltradas = useMemo(
+    () =>
+      rutas.filter((r) => {
+        if (fUnidad && String(r.ruta_id) !== fUnidad) return false
+        const m = metaDe(r.ruta_id)
+        if (fPais && clave(m?.pais) !== fPais) return false
+        if (fCiudad && clave(m?.ciudad) !== fCiudad) return false
+        if (fAdmin && String(m?.idadmin ?? "") !== fAdmin) return false
+        return true
+      }),
+    [rutas, metaDe, fPais, fCiudad, fAdmin, fUnidad],
+  )
+
+  const limpiarFiltros = () => { setFPais(""); setFCiudad(""); setFAdmin(""); setFUnidad("") }
+
   // Dialog state
   const [selectedRuta, setSelectedRuta] = useState<MonitoreoRuta | null>(null)
   const [detalle, setDetalle] = useState<GestionRow[]>([])
@@ -304,7 +438,9 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
   const rutasSinApertura = useCallback(
     async (supabase: SupabaseClient, presentes: MonitoreoRuta[]): Promise<MonitoreoRuta[]> => {
       try {
-        const yaEstan = new Set(presentes.map((r) => r.ruta_id))
+        // La llave es ruta + día: una ruta puede haber abierto el lunes y no
+        // el martes, y las dos filas tienen que existir.
+        const yaEstan = new Set(presentes.map((r) => `${r.ruta_id}|${r.fecha ?? ""}`))
 
         let consulta = supabase.from("loans").select("ruta").eq("estado", "activo")
         if (rutasPermitidas !== null) consulta = consulta.in("ruta", rutasPermitidas)
@@ -316,23 +452,43 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
             .map((l) => Number(l.ruta))
             .filter((r) => Number.isFinite(r)),
         )
-        const faltantes = [...conCartera].filter((id) => !yaEstan.has(id)).sort((a, b) => a - b)
+        // Cuántos créditos vivos tiene cada ruta. Es el respaldo cuando no se
+        // puede preguntar día por día.
+        const activosPorRuta = new Map<number, number>()
+        for (const l of (data ?? []) as { ruta: number | null }[]) {
+          const r = Number(l.ruta)
+          if (Number.isFinite(r)) activosPorRuta.set(r, (activosPorRuta.get(r) ?? 0) + 1)
+        }
+
+        const faltantes: { ruta_id: number; dia: string }[] = []
+        for (const dia of diasDelRango) {
+          for (const ruta_id of [...conCartera].sort((a, b) => a - b)) {
+            if (!yaEstan.has(`${ruta_id}|${dia}`)) faltantes.push({ ruta_id, dia })
+          }
+        }
         if (faltantes.length === 0) return []
 
         return await Promise.all(
-          faltantes.map(async (ruta_id) => {
-            let cartera: number | null = null
+          faltantes.map(async ({ ruta_id, dia }) => {
+            let cartera: number | null = activosPorRuta.get(ruta_id) ?? null
             let pendientes: number | null = null
-            try {
-              const { data: c } = await supabase.rpc("cartera_del_dia", {
-                p_ruta_id: ruta_id,
-                p_fecha: fecha,
-              })
-              const cs = (c ?? []) as { gestionado: boolean }[]
-              cartera = cs.length
-              pendientes = cs.filter((x) => !x.gestionado).length
-            } catch (e) {
-              console.error("[v0] cartera_del_dia (sin apertura):", e)
+            // `cartera_del_dia` solo se consulta con UN día a la vista. En un
+            // rango serían días × rutas llamadas —una semana con cuatro rutas
+            // caídas son veintiocho— y el módulo tardaría más de lo que vale
+            // el dato. En rango la fila igual aparece y dice "Sin apertura",
+            // que es lo que se pidió ver.
+            if (esUnSoloDia) {
+              try {
+                const { data: c } = await supabase.rpc("cartera_del_dia", {
+                  p_ruta_id: ruta_id,
+                  p_fecha: dia,
+                })
+                const cs = (c ?? []) as { gestionado: boolean }[]
+                cartera = cs.length
+                pendientes = cs.filter((x) => !x.gestionado).length
+              } catch (e) {
+                console.error("[v0] cartera_del_dia (sin apertura):", e)
+              }
             }
             return {
               ruta_id,
@@ -354,7 +510,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
               cantidad_ventas: 0,
               total_ventas_homologadas: 0,
               cantidad_ventas_homologadas: 0,
-              fecha,
+              fecha: dia,
             } satisfies MonitoreoRuta
           }),
         )
@@ -363,7 +519,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
         return []
       }
     },
-    [fecha, rutasPermitidas],
+    [diasDelRango, esUnSoloDia, rutasPermitidas],
   )
 
   // ── Load routes for the selected date ─────────────────────────────────────
@@ -381,7 +537,9 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
       let consulta = supabase
         .from("vista_monitoreo_admin")
         .select("*")
-        .eq("fecha", fecha)
+        .gte("fecha", desde)
+        .lte("fecha", hasta)
+        .order("fecha", { ascending: false })
         .order("ruta_id", { ascending: true })
 
       // `null` = admin, ve todas. Un arreglo = solo esas. Vacío = ninguna, y
@@ -397,7 +555,13 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
         return
       }
       const filas = (data ?? []) as MonitoreoRuta[]
-      setRutas([...filas, ...(await rutasSinApertura(supabase, filas))])
+      const todas = [...filas, ...(await rutasSinApertura(supabase, filas))]
+      // El día más reciente arriba; dentro de cada día, por número de ruta.
+      todas.sort(
+        (a, b) =>
+          String(b.fecha ?? "").localeCompare(String(a.fecha ?? "")) || a.ruta_id - b.ruta_id,
+      )
+      setRutas(todas)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error("[v0] fetchRutas exception:", msg)
@@ -406,7 +570,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
     } finally {
       setLoading(false)
     }
-  }, [fecha, rutasPermitidas, resolviendoPermiso, rutasSinApertura])
+  }, [desde, hasta, rutasPermitidas, resolviendoPermiso, rutasSinApertura])
 
   useEffect(() => {
     fetchRutas()
@@ -423,7 +587,9 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
           .from("rutas_diarias")
           .update({ aprobacion_admin: "aprobado" })
           .eq("ruta_id", ruta.ruta_id)
-          .eq("fecha", fecha)
+          // La fecha de la FILA. Con un rango en pantalla, usar la del filtro
+          // aprobaría el cierre del día equivocado.
+          .eq("fecha", ruta.fecha ?? hasta)
 
         if (error) {
           console.error("[v0] Error aprobando cierre:", error.message)
@@ -444,7 +610,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
         setApprovingRutaId(null)
       }
     },
-    [approvingRutaId, fecha, fetchRutas],
+    [approvingRutaId, hasta, fetchRutas],
   )
 
   // ── Detalle de Caja: consultar gastos/ingresos/retiros/ventas ─────────────
@@ -459,9 +625,11 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
         setVentasList([])
         const supabase = createClient()
 
-        // Rango UTC del día en zona America/Bogota (UTC-5)
-        const startUtc = `${fecha}T05:00:00Z`
-        const nextDate = new Date(`${fecha}T00:00:00Z`)
+        // Rango UTC del día en zona America/Bogota (UTC-5). El día es el DE
+        // LA FILA: en un período, cada fila es un día distinto.
+        const dia = ruta.fecha ?? hasta
+        const startUtc = `${dia}T05:00:00Z`
+        const nextDate = new Date(`${dia}T00:00:00Z`)
         nextDate.setUTCDate(nextDate.getUTCDate() + 1)
         const nextYmd = nextDate.toISOString().slice(0, 10)
         const endUtc = `${nextYmd}T05:00:00Z`
@@ -513,7 +681,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
         setCajaLoading(false)
       }
     },
-    [fecha],
+    [hasta],
   )
 
   const openCajaDetalle = useCallback(
@@ -540,18 +708,20 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
   // el orden real del recorrido. Se excluye `homologacion` (historia migrada de
   // otro sistema) para cuadrar con los contadores de `vista_monitoreo_admin`.
   const fetchGestiones = useCallback(
-    async (rutaId: number) => {
+    // El día llega por parámetro: con un período en pantalla cada fila es un
+    // día distinto y no hay "la fecha" del módulo.
+    async (rutaId: number, dia: string) => {
       const supabase = createClient()
       return supabase
         .from("gestiones")
         .select(COLUMNAS_MOVIMIENTO)
         .eq("ruta", rutaId)
-        .eq("fecha_gestion", fecha)
+        .eq("fecha_gestion", dia)
         .eq("estado", "aplicada")
         .neq("origen", "homologacion")
         .order("fecha_hora", { ascending: true })
     },
-    [fecha],
+    [],
   )
 
   const openDetalle = useCallback(
@@ -566,7 +736,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
 
       try {
         // Primer intento
-        let { data, error } = await fetchGestiones(ruta.ruta_id)
+        let { data, error } = await fetchGestiones(ruta.ruta_id, ruta.fecha ?? hasta)
 
         // Si el usuario cerro o cambio de ruta mientras tanto, descartar.
         if (fetchTokenRef.current !== myToken) return
@@ -584,7 +754,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
           // Pequena pausa para dar tiempo a que el RPC anterior haga commit
           await new Promise((r) => setTimeout(r, 120))
           if (fetchTokenRef.current !== myToken) return
-          const retry = await fetchGestiones(ruta.ruta_id)
+          const retry = await fetchGestiones(ruta.ruta_id, ruta.fecha ?? hasta)
           if (fetchTokenRef.current !== myToken) return
           if (retry.error) {
             console.error("[v0] gestiones retry error:", retry.error.message)
@@ -605,7 +775,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
         }
       }
     },
-    [fetchGestiones],
+    [fetchGestiones, hasta],
   )
 
   const closeDetalle = useCallback(() => {
@@ -623,7 +793,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
   // clic, así que quien cuente las filas obtiene lo mismo que dice la tarjeta.
   const abrirCartera = useCallback(
     async (r: MonitoreoRuta) => {
-      const dia = r.fecha ?? fecha
+      const dia = r.fecha ?? hasta
       setCargandoCartera(r.ruta_id)
       try {
         const { data, error } = await createClient().rpc("cartera_del_dia", {
@@ -652,7 +822,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
         setCargandoCartera(null)
       }
     },
-    [fecha, toast],
+    [hasta, toast],
   )
 
   // Reintenta el fetch para la ruta actualmente abierta (boton "Reintentar"
@@ -761,25 +931,51 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
               </p>
             </div>
 
-            <div className="flex flex-wrap items-end gap-2">
+            <div className="grid grid-cols-2 items-end gap-2 md:flex md:flex-wrap">
               <div className="flex flex-col gap-1">
-                <Label htmlFor="fecha-monitoreo" className="text-xs text-muted-foreground">
-                  Fecha
+                <Label htmlFor="desde-monitoreo" className="text-xs text-muted-foreground">
+                  Desde
                 </Label>
                 <div className="relative">
                   <CalendarIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    id="fecha-monitoreo"
+                    id="desde-monitoreo"
                     type="date"
-                    value={fecha}
-                    onChange={(e) => setFecha(e.target.value)}
-                    className="h-9 pl-8"
+                    value={desde}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setDesde(v)
+                      // Un "desde" posterior al "hasta" no devuelve nada y se
+                      // ve como si no hubiera datos. Se arrastra el otro
+                      // extremo en vez de dejar el rango imposible.
+                      if (v && hasta && v > hasta) setHasta(v)
+                    }}
+                    className="h-9 w-full pl-8"
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="hasta-monitoreo" className="text-xs text-muted-foreground">
+                  Hasta
+                </Label>
+                <div className="relative">
+                  <CalendarIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="hasta-monitoreo"
+                    type="date"
+                    value={hasta}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setHasta(v)
+                      if (v && desde && v < desde) setDesde(v)
+                    }}
+                    className="h-9 w-full pl-8"
                   />
                 </div>
               </div>
               <Button
                 variant="outline"
-                className="h-9 gap-1.5"
+                className="col-span-2 h-9 gap-1.5 md:col-span-1"
                 onClick={fetchRutas}
                 disabled={loading}
               >
@@ -787,6 +983,59 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                 Actualizar
               </Button>
             </div>
+          </div>
+
+          {/* Filtros. En dos columnas en el teléfono y en fila en pantalla
+              grande: cuatro desplegables uno debajo de otro se comen la
+              pantalla antes de llegar a la primera ruta. */}
+          <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border/60 pt-3 md:flex md:flex-wrap md:items-center">
+            <span className="col-span-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground md:col-span-1">
+              <Filter className="h-3.5 w-3.5" />
+              Filtrar
+            </span>
+            {([
+              { v: fPais,   set: setFPais,   ph: "País",    ops: opciones.paises },
+              { v: fCiudad, set: setFCiudad, ph: "Ciudad",  ops: opciones.ciudades },
+              { v: fAdmin,  set: setFAdmin,  ph: "Admin",   ops: opciones.admins },
+              { v: fUnidad, set: setFUnidad, ph: "Unidad",  ops: opciones.unidades },
+            ] as const).map(({ v, set, ph, ops }) => (
+              <Select
+                key={ph}
+                value={v || "__todas__"}
+                onValueChange={(nv) => set(nv === "__todas__" ? "" : nv)}
+              >
+                <SelectTrigger className="h-8 w-full text-xs md:w-[150px]">
+                  <SelectValue placeholder={ph} />
+                </SelectTrigger>
+                <SelectContent>
+                  {/* Un `value=""` no es válido en este Select: se usa un
+                      centinela y se traduce al entrar y al salir. */}
+                  <SelectItem value="__todas__" className="text-xs">
+                    {ph}: todas
+                  </SelectItem>
+                  {ops.map(([k, label]) => (
+                    <SelectItem key={k} value={k} className="text-xs">
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ))}
+            {hayFiltro && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="col-span-2 h-8 text-xs md:col-span-1"
+                onClick={limpiarFiltros}
+              >
+                Quitar filtros
+              </Button>
+            )}
+            <span className="col-span-2 text-[11px] text-muted-foreground md:col-span-1 md:ml-auto">
+              {rutasFiltradas.length} {rutasFiltradas.length === 1 ? "fila" : "filas"}
+              {!esUnSoloDia && ` · ${diasDelRango.length} días`}
+              {diasDelRango.length >= 62 && " (tope)"}
+            </span>
           </div>
         </CardHeader>
       </Card>
@@ -818,20 +1067,26 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
             </Button>
           </CardContent>
         </Card>
-      ) : rutas.length === 0 ? (
+      ) : rutasFiltradas.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center gap-2 py-12 text-center">
             <CalendarIcon className="h-10 w-10 text-muted-foreground" />
-            <p className="font-semibold">Sin rutas para esta fecha</p>
+            <p className="font-semibold">
+              {hayFiltro ? "Ningún resultado con esos filtros" : "Sin rutas en este período"}
+            </p>
             <p className="text-sm text-muted-foreground">
-              No hay actividad registrada en {fecha}
+              {hayFiltro
+                ? "Prueba quitando alguno."
+                : esUnSoloDia
+                  ? `No hay actividad registrada en ${desde}`
+                  : `No hay actividad registrada entre ${desde} y ${hasta}`}
             </p>
           </CardContent>
         </Card>
       ) : (
         <Card className="overflow-hidden border-border/60 shadow-steel">
           <div className="divide-y divide-border">
-            {rutas.map((r) => {
+            {rutasFiltradas.map((r) => {
               const isAbierta = (r.estado_ruta ?? "").toLowerCase() === "abierta"
               const isCerrada = (r.estado_ruta ?? "").toLowerCase() === "cerrada"
 
@@ -847,7 +1102,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                * 151 aparecían "Abiertas" cuando lo que pasó es que se
                * quedaron sin cerrar.
                */
-              const esHoy = fecha === todayColombia()
+              const esHoy = (r.fecha ?? hasta) === todayColombia()
               const jornada = isCerrada
                 ? { texto: "Cerrada", clase: "border-0 bg-success text-success-foreground" }
                 : isAbierta
@@ -869,7 +1124,12 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
               return (
                 <div
                   key={`${r.ruta_id}-${r.fecha ?? ""}`}
-                  className={`group relative flex flex-col gap-3 px-4 py-3 transition-colors hover:bg-muted/30 lg:flex-row lg:items-center lg:gap-4 lg:py-4 ${
+                  /* MÓVIL: tres renglones apretados en vez de cinco bloques
+                     apilados. La fila envuelve, el recaudo se va a la derecha
+                     del primer renglón, los contadores toman el segundo y los
+                     botones el tercero. En pantalla grande no cambia nada:
+                     `lg:flex-nowrap` la devuelve a una sola línea. */
+                  className={`group relative flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5 transition-colors hover:bg-muted/30 lg:flex-nowrap lg:gap-4 lg:px-4 lg:py-4 ${
                     pendienteAprobacion ? "bg-warning/5" : ""
                   }`}
                 >
@@ -879,16 +1139,21 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                   )}
 
                   {/* Ruta + Estado */}
-                  <div className="flex items-center gap-3 lg:w-[180px] lg:shrink-0">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand/10 shrink-0">
+                  <div className="flex items-center gap-2 lg:w-[190px] lg:shrink-0 lg:gap-3">
+                    {/* El círculo del ícono se va en el teléfono: son 40px de
+                        ancho que no dicen nada y ahí el ancho es todo. */}
+                    <div className="hidden h-10 w-10 items-center justify-center rounded-full bg-brand/10 shrink-0 lg:flex">
                       <Route className="h-5 w-5 text-brand" />
                     </div>
                     <div className="flex flex-col">
                       <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        Ruta
+                        {/* Con un período, cada fila es una ruta EN UN DÍA. Sin
+                            la fecha, dos filas de la misma ruta se leen como un
+                            duplicado. */}
+                        {esUnSoloDia ? "Ruta" : (r.fecha ?? "")}
                       </span>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-xl font-bold leading-none text-brand">
+                        <span className="text-lg font-bold leading-none text-brand lg:text-xl">
                           #{r.ruta_id}
                         </span>
                         <Badge
@@ -904,6 +1169,11 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                           {jornada.texto}
                         </Badge>
                       </div>
+                      {metaDe(r.ruta_id)?.ciudad && (
+                        <span className="text-[10px] leading-tight text-muted-foreground">
+                          {bonito(metaDe(r.ruta_id)!.ciudad as string)}
+                        </span>
+                      )}
                       {pendienteAprobacion && (
                         <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-warning">
                           <AlertTriangle className="h-3 w-3" />
@@ -926,12 +1196,14 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                       1.103.500 un día en que el cobrador recaudó 341.500.
                       Arriba va lo que él responde; los ajustes se muestran
                       debajo, en pequeño, para que no desaparezcan. */}
-                  <div className="flex flex-col lg:w-[150px] lg:shrink-0">
+                  {/* `ml-auto` lo manda al extremo derecho del primer renglón
+                      en el teléfono; en pantalla grande vuelve a su columna. */}
+                  <div className="ml-auto flex flex-col items-end lg:ml-0 lg:w-[150px] lg:shrink-0 lg:items-start">
                     <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                       <Banknote className="h-3 w-3" />
                       Recaudo
                     </span>
-                    <span className="text-lg font-bold tabular-nums text-foreground">
+                    <span className="text-base font-bold tabular-nums text-foreground lg:text-lg">
                       {formatCurrency(r.recaudo_campo)}
                     </span>
                     {Number(r.recaudo_ajuste) !== 0 && (
@@ -946,7 +1218,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                   </div>
 
                   {/* Gestión: Pagos / Sin Pago / Pendientes */}
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 lg:flex-1 lg:min-w-0">
+                  <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 lg:w-auto lg:flex-1 lg:min-w-0 lg:gap-x-4">
                     {/* Los dos contadores abren la MISMA tabla que el ojito
                         de Pagos en el Resumen del Día: nombre con apodo, la
                         plata, las cuotas, el saldo y el ojo de historial. Se
@@ -956,7 +1228,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                       type="button"
                       onClick={() =>
                         setPagosDialog({
-                          tipo: "dia", rutaId: r.ruta_id, fecha: r.fecha ?? fecha,
+                          tipo: "dia", rutaId: r.ruta_id, fecha: r.fecha ?? hasta,
                           modo: "pagos", titulo: `Pagos · ruta ${r.ruta_id}`,
                         })
                       }
@@ -982,7 +1254,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                       type="button"
                       onClick={() =>
                         setPagosDialog({
-                          tipo: "dia", rutaId: r.ruta_id, fecha: r.fecha ?? fecha,
+                          tipo: "dia", rutaId: r.ruta_id, fecha: r.fecha ?? hasta,
                           modo: "no_pagos", titulo: `No pagos · ruta ${r.ruta_id}`,
                         })
                       }
@@ -1040,7 +1312,10 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                   </div>
 
                   {/* Resumen Financiero */}
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5 text-[11px] lg:grid-cols-4 lg:flex-1 lg:min-w-[280px]">
+                  {/* En el teléfono no se muestra: son cuatro cifras que
+                      ocupan medio renglón cada una y las mismas están, con
+                      todo su detalle, detrás del botón "Detalle de Caja". */}
+                  <div className="hidden grid-cols-2 gap-x-3 gap-y-0.5 rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5 text-[11px] lg:grid lg:grid-cols-4 lg:flex-1 lg:min-w-[280px]">
                     <div className="flex items-center justify-between gap-2 lg:flex-col lg:items-start lg:justify-center lg:gap-0">
                       <span className="flex items-center gap-1 text-muted-foreground">
                         <TrendingUp className="h-3 w-3 text-success" />
@@ -1100,7 +1375,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                   </div>
 
                   {/* Acciones */}
-                  <div className="flex items-center gap-2 lg:shrink-0">
+                  <div className="flex w-full items-center justify-end gap-1.5 lg:w-auto lg:shrink-0 lg:gap-2">
                     {pendienteAprobacion && (
                       <Button
                         size="sm"
@@ -1150,7 +1425,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Route className="h-5 w-5 text-brand" />
-              Ruta #{selectedRuta?.ruta_id} · {fecha}
+              Ruta #{selectedRuta?.ruta_id} · {selectedRuta?.fecha ?? hasta}
             </DialogTitle>
             <DialogDescription>
               Seguimiento cronológico del vendedor, pagos y no pagos registrados.
@@ -1281,7 +1556,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ReceiptText className="h-5 w-5 text-brand" />
-              Detalle de Caja · Ruta #{cajaRuta?.ruta_id} · {fecha}
+              Detalle de Caja · Ruta #{cajaRuta?.ruta_id} · {cajaRuta?.fecha ?? hasta}
             </DialogTitle>
             <DialogDescription>
               Desglose de los movimientos financieros registrados durante la jornada.
