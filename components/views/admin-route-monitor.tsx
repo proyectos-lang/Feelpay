@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import dynamic from "next/dynamic"
  import { createClient } from "@/lib/supabase/client"
+import type { SupabaseClient } from "@supabase/supabase-js"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -277,6 +278,94 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
   const [cartera, setCartera] = useState<{ titulo: string; subtitulo: string; ids: string[] } | null>(null)
   const [cargandoCartera, setCargandoCartera] = useState<number | null>(null)
 
+  /**
+   * LAS RUTAS QUE NO SALEN EN LA VISTA.
+   *
+   * `vista_monitoreo_admin` solo devuelve filas de rutas que ese día abrieron
+   * jornada o registraron algo. Una ruta que nadie tocó simplemente NO APARECE
+   * — y ahí está el problema: en el monitoreo se ve igual que si no existiera.
+   *
+   * La auditoría del 26/08 lo destapó: la 933 llevaba nueve días sin un solo
+   * movimiento con 48 clientes vivos, y la 154 once días con 15. Ninguna de
+   * las dos salía en pantalla. Lo que no se ve no se reclama.
+   *
+   * Se agregan acá, con estado "Sin apertura".
+   *
+   * SOLO LAS QUE TIENEN CARTERA VIVA. Una ruta sin un solo crédito activo no
+   * está "sin abrir": no tiene nada que hacer, y llenar la pantalla de esas
+   * todos los días enseña a ignorar la lista entera.
+   *
+   * Los pendientes salen de `cartera_del_dia`, la MISMA función que abre el
+   * ojito. Si acá se pusiera el número de créditos activos a secas, la
+   * tarjeta y la lista podrían decir cosas distintas — que es justo lo que un
+   * monitoreo no se puede permitir. Si la función falla, la fila entra igual
+   * sin ese número: perder el contador es mejor que perder la ruta.
+   */
+  const rutasSinApertura = useCallback(
+    async (supabase: SupabaseClient, presentes: MonitoreoRuta[]): Promise<MonitoreoRuta[]> => {
+      try {
+        const yaEstan = new Set(presentes.map((r) => r.ruta_id))
+
+        let consulta = supabase.from("loans").select("ruta").eq("estado", "activo")
+        if (rutasPermitidas !== null) consulta = consulta.in("ruta", rutasPermitidas)
+        const { data, error } = await consulta
+        if (error) throw error
+
+        const conCartera = new Set(
+          ((data ?? []) as { ruta: number | null }[])
+            .map((l) => Number(l.ruta))
+            .filter((r) => Number.isFinite(r)),
+        )
+        const faltantes = [...conCartera].filter((id) => !yaEstan.has(id)).sort((a, b) => a - b)
+        if (faltantes.length === 0) return []
+
+        return await Promise.all(
+          faltantes.map(async (ruta_id) => {
+            let cartera: number | null = null
+            let pendientes: number | null = null
+            try {
+              const { data: c } = await supabase.rpc("cartera_del_dia", {
+                p_ruta_id: ruta_id,
+                p_fecha: fecha,
+              })
+              const cs = (c ?? []) as { gestionado: boolean }[]
+              cartera = cs.length
+              pendientes = cs.filter((x) => !x.gestionado).length
+            } catch (e) {
+              console.error("[v0] cartera_del_dia (sin apertura):", e)
+            }
+            return {
+              ruta_id,
+              // `null` es lo que dispara la insignia "Sin apertura".
+              estado_ruta: null,
+              aprobacion_admin: null,
+              total_recaudado: 0,
+              recaudo_campo: 0,
+              recaudo_ajuste: 0,
+              pagos_exitosos: 0,
+              visitas_sin_pago: 0,
+              pendientes_por_visitar: pendientes,
+              cartera_activa: cartera,
+              cuotas_vencen_hoy: null,
+              total_ingresos: 0,
+              total_gastos: 0,
+              total_retiros: 0,
+              total_ventas: 0,
+              cantidad_ventas: 0,
+              total_ventas_homologadas: 0,
+              cantidad_ventas_homologadas: 0,
+              fecha,
+            } satisfies MonitoreoRuta
+          }),
+        )
+      } catch (err) {
+        console.error("[v0] rutasSinApertura:", err)
+        return []
+      }
+    },
+    [fecha, rutasPermitidas],
+  )
+
   // ── Load routes for the selected date ─────────────────────────────────────
   // SELECT sobre `vista_monitoreo_admin` por fecha Y POR LAS RUTAS QUE ESTA
   // PERSONA PUEDE VER. No hay RLS: si no se filtra acá, no lo filtra nadie.
@@ -307,7 +396,8 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
         setRutas([])
         return
       }
-      setRutas((data ?? []) as MonitoreoRuta[])
+      const filas = (data ?? []) as MonitoreoRuta[]
+      setRutas([...filas, ...(await rutasSinApertura(supabase, filas))])
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error("[v0] fetchRutas exception:", msg)
@@ -316,7 +406,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
     } finally {
       setLoading(false)
     }
-  }, [fecha, rutasPermitidas, resolviendoPermiso])
+  }, [fecha, rutasPermitidas, resolviendoPermiso, rutasSinApertura])
 
   useEffect(() => {
     fetchRutas()
@@ -764,7 +854,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                   ? esHoy
                     ? { texto: "Abierta", clase: "border-0 bg-info text-info-foreground" }
                     : { texto: "Sin cierre", clase: "border-0 bg-warning text-warning-foreground" }
-                  : { texto: "Sin jornada", clase: "border-0 bg-muted text-muted-foreground" }
+                  : { texto: "Sin apertura", clase: "border-0 bg-destructive-light text-destructive" }
               const aprobacion = (r.aprobacion_admin ?? "").toLowerCase()
               const pendienteAprobacion = isCerrada && aprobacion === "pendiente"
               const aprobado = isCerrada && aprobacion === "aprobado"
@@ -806,8 +896,8 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                           title={
                             jornada.texto === "Sin cierre"
                               ? "La jornada se abrió y nunca se cerró la caja"
-                              : jornada.texto === "Sin jornada"
-                                ? "La ruta no abrió jornada ese día"
+                              : jornada.texto === "Sin apertura"
+                                ? "Nadie abrió esta ruta ese día: no hubo un solo movimiento"
                                 : undefined
                           }
                         >
