@@ -106,6 +106,33 @@ type MonitoreoRuta = {
   total_ventas_homologadas: number | null
   cantidad_ventas_homologadas: number | null
   fecha: string | null
+  /**
+   * La caja con la que la ruta EMPEZÓ el día y con la que lo TERMINÓ.
+   *
+   * No salen de `vista_monitoreo_admin` —no las tiene— sino de
+   * `resumen_diario_v2`, que las calcula como parte del cierre:
+   *
+   *   caja final = caja inicial + recaudo + ingresos − gastos − retiros − ventas
+   *
+   * Comprobado contra la base: cuadra en las 25 filas de los últimos cuatro
+   * días, sin una sola diferencia.
+   *
+   * LA CADENA ENTERA SALE DE ESA MISMA VISTA, no de las columnas del
+   * monitoreo. Dos detalles la romperían si se mezclaran: el recaudo de acá
+   * es `valor_pago` (con ajustes) y no `recaudo_campo`, y las ventas que
+   * descuentan de la caja son `valor_ventas_caja` y no `total_ventas`, que
+   * incluye las homologadas —plata que nunca pasó por esta caja—. Tomando
+   * todo del mismo sitio, el informe siempre suma.
+   */
+  caja: {
+    inicial: number
+    recaudo: number
+    ingresos: number
+    gastos: number
+    retiros: number
+    ventas: number
+    final: number
+  } | null
 }
 
 type FinancialMovement = {
@@ -511,6 +538,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
               total_ventas_homologadas: 0,
               cantidad_ventas_homologadas: 0,
               fecha: dia,
+              caja: null,
             } satisfies MonitoreoRuta
           }),
         )
@@ -556,6 +584,48 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
       }
       const filas = (data ?? []) as MonitoreoRuta[]
       const todas = [...filas, ...(await rutasSinApertura(supabase, filas))]
+
+      // LA CAJA. Va aparte porque `vista_monitoreo_admin` no la trae: vive en
+      // `resumen_diario_v2`, que es donde se calcula el cierre. Se pide para
+      // TODO el período de una sola vez y se pega por ruta y día.
+      //
+      // Se pide después de armar las filas —incluidas las "sin apertura"— a
+      // propósito: una ruta que nadie abrió igual tiene caja, y esconderla
+      // sería justo perder el dato que explica por qué no se movió. La 154
+      // lleva $809.000 quietos hace once días.
+      try {
+        let caja = supabase
+          .from("resumen_diario_v2")
+          .select(
+            "ruta, fecha_pago, caja_anterior, efectivo, valor_pago, " +
+              "valor_ingresos, valor_gastos, valor_retiros, valor_ventas_caja",
+          )
+          .gte("fecha_pago", desde)
+          .lte("fecha_pago", hasta)
+        if (rutasPermitidas !== null) caja = caja.in("ruta", rutasPermitidas)
+        const { data: cajaRows, error: cajaErr } = await caja
+        if (cajaErr) throw cajaErr
+        const porDia = new Map<string, MonitoreoRuta["caja"]>()
+        for (const c of (cajaRows ?? []) as Record<string, unknown>[]) {
+          porDia.set(`${c.ruta}|${String(c.fecha_pago).slice(0, 10)}`, {
+            inicial: Number(c.caja_anterior) || 0,
+            recaudo: Number(c.valor_pago) || 0,
+            ingresos: Number(c.valor_ingresos) || 0,
+            gastos: Number(c.valor_gastos) || 0,
+            retiros: Number(c.valor_retiros) || 0,
+            ventas: Number(c.valor_ventas_caja) || 0,
+            final: Number(c.efectivo) || 0,
+          })
+        }
+        for (const r of todas) {
+          r.caja = porDia.get(`${r.ruta_id}|${r.fecha ?? ""}`) ?? null
+        }
+      } catch (e) {
+        // Que falle la caja no puede tumbar el monitoreo entero: las filas ya
+        // están armadas y se muestran sin ese par de cifras.
+        console.error("[v0] caja del monitoreo:", e)
+      }
+
       // El día más reciente arriba; dentro de cada día, por número de ruta.
       todas.sort(
         (a, b) =>
@@ -1198,7 +1268,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                       debajo, en pequeño, para que no desaparezcan. */}
                   {/* `ml-auto` lo manda al extremo derecho del primer renglón
                       en el teléfono; en pantalla grande vuelve a su columna. */}
-                  <div className="ml-auto flex flex-col items-end lg:ml-0 lg:w-[150px] lg:shrink-0 lg:items-start">
+                  <div className="ml-auto flex flex-col items-end lg:ml-0 lg:w-[185px] lg:shrink-0 lg:items-start">
                     <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                       <Banknote className="h-3 w-3" />
                       Recaudo
@@ -1213,6 +1283,37 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                       >
                         {Number(r.recaudo_ajuste) > 0 ? "+" : "−"}
                         {formatCurrency(Math.abs(Number(r.recaudo_ajuste)))} en ajustes
+                      </span>
+                    )}
+
+                    {/* CAJA INICIAL → CAJA FINAL.
+                        Van acá, pegadas al recaudo, y no en el cuadro
+                        financiero: ese cuadro no se muestra en el teléfono, y
+                        con qué plata abrió y cerró la ruta es de lo primero
+                        que se mira.
+
+                        En rojo cuando la caja queda NEGATIVA. No es un adorno:
+                        hoy la 151 está en −$18.300 y la 933 en −$217, y en un
+                        renglón de cifras grises eso pasa desapercibido. */}
+                    {r.caja && (
+                      <span
+                        className="mt-0.5 flex items-center gap-1 text-[10px] tabular-nums text-muted-foreground"
+                        title="Con cuánta plata abrió la ruta ese día y con cuánta lo cerró. El desglose completo está en Detalle de Caja."
+                      >
+                        <span className="uppercase tracking-wide">Caja</span>
+                        <span className={r.caja.inicial < 0 ? "font-semibold text-destructive" : ""}>
+                          {formatCurrency(r.caja.inicial)}
+                        </span>
+                        <span aria-hidden>→</span>
+                        <span
+                          className={
+                            r.caja.final < 0
+                              ? "font-semibold text-destructive"
+                              : "font-semibold text-foreground"
+                          }
+                        >
+                          {formatCurrency(r.caja.final)}
+                        </span>
                       </span>
                     )}
                   </div>
@@ -1562,6 +1663,59 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
               Desglose de los movimientos financieros registrados durante la jornada.
             </DialogDescription>
           </DialogHeader>
+
+          {/* DE CUÁNTO A CUÁNTO, Y POR QUÉ.
+              La cadena completa, en el orden en que la caja se mueve. No es
+              una suma que se arme acá: los siete números vienen de
+              `resumen_diario_v2`, y por eso siempre cierran. */}
+          {cajaRuta?.caja && (
+            <div className="rounded-lg border border-border bg-muted/20 p-3">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+                {([
+                  ["Caja inicial", cajaRuta.caja.inicial, ""],
+                  ["Recaudo", cajaRuta.caja.recaudo, "+"],
+                  ["Ingresos", cajaRuta.caja.ingresos, "+"],
+                  ["Gastos", cajaRuta.caja.gastos, "−"],
+                  ["Retiros", cajaRuta.caja.retiros, "−"],
+                  ["Ventas", cajaRuta.caja.ventas, "−"],
+                ] as const).map(([label, valor, signo]) => (
+                  <div key={label} className="flex items-center justify-between gap-2 sm:flex-col sm:items-start sm:gap-0">
+                    <span className="text-muted-foreground">
+                      {signo && <span className="mr-0.5 font-semibold">{signo}</span>}
+                      {label}
+                    </span>
+                    <span
+                      className={`font-semibold tabular-nums ${
+                        valor < 0 ? "text-destructive" : "text-foreground"
+                      }`}
+                    >
+                      {formatCurrency(valor)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-2 border-t border-border pt-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  = Caja final
+                </span>
+                <span
+                  className={`text-lg font-bold tabular-nums ${
+                    cajaRuta.caja.final < 0 ? "text-destructive" : "text-foreground"
+                  }`}
+                >
+                  {formatCurrency(cajaRuta.caja.final)}
+                </span>
+              </div>
+              {/* Una caja negativa no es un detalle de formato: significa que
+                  salió más plata de la que entró y que alguien la puso. */}
+              {cajaRuta.caja.final < 0 && (
+                <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-destructive">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  La caja quedó en negativo: salió más plata de la que entró.
+                </p>
+              )}
+            </div>
+          )}
 
           {cajaLoading ? (
             <div className="flex h-[280px] items-center justify-center rounded-xl bg-muted/30 shadow-steel">
