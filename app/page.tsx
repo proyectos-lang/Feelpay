@@ -108,6 +108,21 @@ const USER_STORAGE_KEY = "currentUser"
 // el fetch real). El valor se sobreescribe en cuanto llega la respuesta
 // fresca del servidor, así que no genera estado "fantasma" persistente.
 const RUTA_ACTIVA_CACHE_KEY = "rutaActivaCache"
+
+/**
+ * Cuánto se espera por el estado de la ruta antes de seguir con lo último que
+ * se supo.
+ *
+ * Es UN renglón de `rutas_diarias` y normalmente contesta en ~150 ms. Pero una
+ * petición lenta no puede secuestrar el módulo: sin corte, `rutaActivaResolved`
+ * se quedaba en false y el módulo de pagos mostraba "Verificando estado de la
+ * ruta..." hasta que el servidor contestara —se midieron esperas de más de un
+ * minuto— aunque el estado de hoy estuviera ahí mismo, en localStorage.
+ *
+ * A los 6 s se sigue con el cache, que es EXACTAMENTE lo que ya se hacía sin
+ * señal, y la respuesta tardía corrige después.
+ */
+const ESPERA_ESTADO_RUTA_MS = 6000
 type RutaActivaCache = {
   rutaId: number
   fecha: string // YYYY-MM-DD en zona Bogotá
@@ -376,20 +391,50 @@ export default function Page() {
         return
       }
 
+      // Guardar el resultado y dejarlo cacheado. Se usa desde los dos
+      // caminos: la consulta con corte y el reintento sin corte.
+      const aplicar = (estado: "abierta" | "cerrada" | null) => {
+        setRutaActivaEstado(estado)
+        setRutaActivaResolved(true)
+        try {
+          if (estado === "abierta" || estado === "cerrada") {
+            const cache: RutaActivaCache = { rutaId: selectedRuta.id, fecha: fechaHoy, estado }
+            localStorage.setItem(RUTA_ACTIVA_CACHE_KEY, JSON.stringify(cache))
+          } else {
+            // El servidor confirmo que no hay jornada abierta hoy: aqui si
+            // corresponde limpiar.
+            localStorage.removeItem(RUTA_ACTIVA_CACHE_KEY)
+          }
+        } catch (err) {
+          console.warn("[v0] No se pudo persistir rutaActivaCache:", err)
+        }
+      }
+
       // SELECT directo sobre `rutas_diarias` filtrando por ruta_id + fecha.
       // RLS eliminado: el filtro por ruta es 100% a nivel app.
-      let result: "abierta" | "cerrada" | null = null
-      // Distingue "el servidor dijo que no hay fila" de "no pude preguntar".
-      // Solo lo primero justifica borrar el cache.
-      let respondioElServidor = false
-      try {
+      const consultar = async (signal?: AbortSignal) => {
         const supabase = await getSupabaseSafe()
-        const { data, error } = await supabase
+        let q = supabase
           .from("rutas_diarias")
           .select("estado")
           .eq("ruta_id", selectedRuta.id)
           .eq("fecha", fechaHoy)
-          .maybeSingle()
+        if (signal) q = q.abortSignal(signal)
+        return q.maybeSingle()
+      }
+
+      let result: "abierta" | "cerrada" | null = null
+      // Distingue "el servidor dijo que no hay fila" de "no pude preguntar".
+      // Solo lo primero justifica borrar el cache.
+      let respondioElServidor = false
+      let seAgotoLaEspera = false
+      const control = new AbortController()
+      const reloj = setTimeout(() => {
+        seAgotoLaEspera = true
+        control.abort()
+      }, ESPERA_ESTADO_RUTA_MS)
+      try {
+        const { data, error } = await consultar(control.signal)
         if (cancelled) return
         if (error) {
           console.error("[v0] rutas_diarias error:", error.message)
@@ -400,6 +445,8 @@ export default function Page() {
       } catch (err) {
         if (cancelled) return
         console.warn("[v0] rutas_diarias excepcion:", err)
+      } finally {
+        clearTimeout(reloj)
       }
 
       // Si no hubo respuesta, se conserva lo ultimo que se supo en vez de
@@ -407,27 +454,26 @@ export default function Page() {
       if (!respondioElServidor) {
         setRutaActivaEstado(leerCacheRuta())
         setRutaActivaResolved(true)
+        // La respuesta TARDIA sigue importando: se vuelve a preguntar, ahora
+        // sin corte, y cuando llegue corrige lo que se mostro desde el cache.
+        // Sin esto, un dispositivo sin cache se quedaria viendo "Ruta no
+        // iniciada" sobre una ruta abierta hasta que recargara la app.
+        if (seAgotoLaEspera) {
+          console.warn(`[v0] rutas_diarias tardo mas de ${ESPERA_ESTADO_RUTA_MS} ms: se sigue con el ultimo estado conocido.`)
+          void (async () => {
+            try {
+              const { data, error } = await consultar()
+              if (cancelled || error) return
+              aplicar((data?.estado ?? null) as "abierta" | "cerrada" | null)
+            } catch (err) {
+              console.warn("[v0] rutas_diarias (reintento sin corte):", err)
+            }
+          })()
+        }
         return
       }
 
-      setRutaActivaEstado(result)
-      setRutaActivaResolved(true)
-      try {
-        if (result === "abierta" || result === "cerrada") {
-          const cache: RutaActivaCache = {
-            rutaId: selectedRuta.id,
-            fecha: fechaHoy,
-            estado: result,
-          }
-          localStorage.setItem(RUTA_ACTIVA_CACHE_KEY, JSON.stringify(cache))
-        } else {
-          // El servidor confirmo que no hay jornada abierta hoy: aqui si
-          // corresponde limpiar.
-          localStorage.removeItem(RUTA_ACTIVA_CACHE_KEY)
-        }
-      } catch (err) {
-        console.warn("[v0] No se pudo persistir rutaActivaCache:", err)
-      }
+      aplicar(result)
     }
     fetchRutaActiva()
 
