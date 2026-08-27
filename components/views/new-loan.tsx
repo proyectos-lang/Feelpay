@@ -126,11 +126,46 @@ type NewLoanProps = {
   currentRutaId?: number
   rutaPais?: string
   onCancel?: () => void
+  /**
+   * EL DÍA AL QUE PERTENECE LA VENTA (YYYY-MM-DD). Sin esto es hoy, que es lo
+   * que pasa en la calle: se vende y se registra en el mismo acto.
+   *
+   * Control Total lo manda para registrar una venta de un día anterior — la
+   * que se hizo ayer y llegó en papel hoy. NO es la fecha en que se teclea:
+   * es la del reporte al que tiene que contarse, y por eso mueve también la
+   * primera cuota, el abono inicial y la caja de ese día.
+   */
+  fechaVenta?: string
+  /**
+   * Registrar en `currentRutaId` y no en la ruta de la sesión.
+   *
+   * El formulario siempre leyó `localStorage.selectedRuta` justo antes de
+   * enviar, porque en la calle la ruta de la sesión ES la ruta de la venta.
+   * Secretaría cuadrando cajas hace lo contrario: elige la ruta de otro. Sin
+   * esta bandera, esa venta se iría a la ruta de la secretaria.
+   */
+  rutaFija?: boolean
+  /** Se llama después de cada venta registrada, para refrescar lo de afuera. */
+  onCreated?: () => void
 }
 
-export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "", onCancel }: NewLoanProps) {
+export function NewLoan({
+  preSelectedClientId, currentRutaId = 1, rutaPais = "", onCancel,
+  fechaVenta, rutaFija = false, onCreated,
+}: NewLoanProps) {
   const { toast } = useToast()
   const [rutaId] = useState<number>(currentRutaId)
+
+  /**
+   * El día de la venta, en UN solo sitio para todo el formulario.
+   *
+   * Todo lo que colgaba de "hoy" cuelga ahora de acá: la primera cuota, la
+   * tabla de amortización que se le muestra al cliente y el día del abono
+   * inicial. Si alguno se quedara en `todayColombia()`, una venta de ayer
+   * nacería con el cronograma corrido un día.
+   */
+  const diaVenta = fechaVenta || todayColombia()
+  const esRetroactiva = diaVenta !== todayColombia()
   const [isNewClient, setIsNewClient] = useState(false)
   const [selectedClient, setSelectedClient] = useState(preSelectedClientId || "")
   const [clientSearch, setClientSearch] = useState("")
@@ -734,7 +769,9 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     // dias totales del prestamo). Esto mantiene la simulacion consistente
     // con handleCreateVenta, que tambien usa `dias` como numero de cuotas.
     const numeroCuotas = Number.parseInt(dias)
-    const todayStr = todayColombia()
+    // El día de la venta, no el de hoy: la tabla que se le muestra al cliente
+    // tiene que ser la misma que se va a guardar.
+    const todayStr = diaVenta
     const [y, m, d] = todayStr.split("-").map(Number)
     const fechaInicioCruda = new Date(y, m - 1, d + (iniciaPagosHoy ? 0 : 1))
 
@@ -1110,7 +1147,7 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       // `generar_cronograma` (script 045). Antes esta matemática vivía en
       // tres copias distintas —dos en este archivo y una en la librería—
       // y divergían entre sí.
-      const hoyStr = todayColombia()
+      const hoyStr = diaVenta
       const fechaPrimerPago = ventaHomologada && fechaInicioHomologada
         ? fechaInicioHomologada
         : sumarDias(hoyStr, iniciaPagosHoy ? 0 : 1)
@@ -1241,6 +1278,17 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         // inicial debe quedar en el día en que el cliente entregó la plata,
         // no en el día en que el servidor la recibió.
         fecha_dispositivo: hoyStr,
+        // EL DÍA DEL REPORTE. Viaja solo cuando alguien lo ELIGIÓ, o sea desde
+        // Control Total. En la calle no se manda, y el servidor sigue fechando
+        // con su NOW(): mandarlo siempre con el "hoy" del teléfono le
+        // entregaría el día del informe al reloj del dispositivo, que hoy no
+        // decide nada.
+        //
+        // Se manda aunque el día elegido sea hoy, y no solo cuando va hacia
+        // atrás: si alguien deja la pantalla abierta y guarda pasada la
+        // medianoche, la venta queda en el día que decía la pantalla y no en
+        // el que amaneció.
+        ...(fechaVenta ? { fecha_venta: fechaVenta } : {}),
         // Historia de la venta homologada (vacío en una venta normal).
         historial,
         // Abono inicial ("Pago adelantado"). Viaja DENTRO de p_loan igual que
@@ -1271,10 +1319,14 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
           p_user_id = parsed?.id ?? null
           p_rol = parsed?.rol ?? null
         }
-        const rawRuta = typeof window !== "undefined" ? localStorage.getItem("selectedRuta") : null
-        if (rawRuta) {
-          const parsedRuta = JSON.parse(rawRuta)
-          if (typeof parsedRuta?.id === "number") p_ruta_id = parsedRuta.id
+        // `rutaFija` = la ruta la eligió quien registra (Control Total) y no
+        // se pisa con la de la sesión.
+        if (!rutaFija) {
+          const rawRuta = typeof window !== "undefined" ? localStorage.getItem("selectedRuta") : null
+          if (rawRuta) {
+            const parsedRuta = JSON.parse(rawRuta)
+            if (typeof parsedRuta?.id === "number") p_ruta_id = parsedRuta.id
+          }
         }
       } catch (e) {
         console.warn("[v0] Error leyendo credenciales de localStorage:", e)
@@ -1483,7 +1535,9 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
         setClientOptions((prev) => prev.filter((c) => c.id !== selectedClient))
       }
 
-      const successMsg = `Se registró la venta de $${Number(valor || 0).toLocaleString()} para ${nombreParaEtiqueta}.`
+      const successMsg = esRetroactiva
+        ? `Se registró la venta de $${Number(valor || 0).toLocaleString()} para ${nombreParaEtiqueta}, contada en el reporte del ${fmtFecha(diaVenta)}.`
+        : `Se registró la venta de $${Number(valor || 0).toLocaleString()} para ${nombreParaEtiqueta}.`
       showToastPill("Venta registrada exitosamente")
       setSuccessDialog({ open: true, msg: successMsg })
       setSuccessAlert(successMsg)
@@ -1491,6 +1545,9 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
       setTimeout(() => setSuccessAlert(null), 6000)
 
       resetFormularioVenta()
+      // Solo acá, y no en los caminos de revisión o de cola offline: en esos
+      // dos todavía no existe ninguna venta que refrescar.
+      onCreated?.()
     } catch (error) {
       console.error('[v0] Error creating venta:', error)
       toast({
@@ -1506,8 +1563,47 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
     }
   }
 
+  /**
+   * El día en que DE VERDAD arranca el cobro.
+   *
+   * `diaVenta + 1` no alcanza: en frecuencia diaria el cronograma no pone
+   * cuotas en domingo (script 067), así que un domingo se corre al lunes. Una
+   * de cada siete ventas caería justo ahí, y decir una fecha que después no
+   * coincide con el plan es peor que no decir ninguna.
+   */
+  const primerCobro = (() => {
+    const base = sumarDias(diaVenta, iniciaPagosHoy ? 0 : 1)
+    // El préstamo de empleado es diario por definición.
+    const diaria = prestamoEmpleado || frecuenciaPago === "daily"
+    const [y, m, d] = base.split("-").map(Number)
+    const esDomingo = new Date(Date.UTC(y, m - 1, d)).getUTCDay() === 0
+    return diaria && esDomingo ? sumarDias(base, 1) : base
+  })()
+
   return (
     <div className="space-y-3 md:space-y-6">
+      {/* ── ESTA VENTA NO ES DE HOY ─────────────────────────────────────
+          Va de primero y no se va nunca. El formulario es largo: quien lo
+          llena de arriba abajo pierde de vista lo que eligió al abrirlo, y
+          equivocarse acá no se nota hasta que la caja de ese día no cuadra.
+          Se dicen las dos consecuencias que sorprenden: el cronograma
+          arranca desde ese día y la caja de ese día —y las siguientes—
+          cambian. La fecha exacta de la primera cuota NO se promete acá:
+          depende de la frecuencia y del "inicia pagos", que se eligen más
+          abajo, y ahí sí se dice con todas las letras. */}
+      {esRetroactiva && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          <p className="text-[12px] md:text-sm font-semibold">
+            Esta venta se contará en el reporte del {fmtFecha(diaVenta)}
+          </p>
+          <p className="mt-0.5 text-[11px] md:text-xs leading-snug opacity-90">
+            No en el de hoy: el cronograma arranca desde ese día y el capital sale
+            de la caja de ese día, así que la caja del {fmtFecha(diaVenta)} y las de
+            los días siguientes cambian.
+          </p>
+        </div>
+      )}
+
       {/* ── Banners de feedback ────────────────────────────────────────
           Avisos persistentes que complementan los toasts. Quedan en la
           cabecera del formulario, encima del titulo, para que sean
@@ -2103,10 +2199,16 @@ export function NewLoan({ preSelectedClientId, currentRutaId = 1, rutaPais = "",
                 onCheckedChange={(checked) => setIniciaPagosHoy(checked as boolean)}
                 className="h-4 w-4 md:h-5 md:w-5"
               />
+              {/* Con una venta fechada hacia atrás, "hoy" y "mañana" mienten:
+                  la primera cuota cuelga del día de la VENTA. Se dicen las
+                  fechas con todas las letras en vez de un adverbio que ya no
+                  apunta a donde parece. */}
               <span className="text-[11px] md:text-sm font-medium">
-                Inicia pagos hoy
+                {esRetroactiva ? `Inicia pagos el ${fmtFecha(diaVenta)}` : "Inicia pagos hoy"}
                 <span className="ml-1 font-normal opacity-80">
-                  (por defecto la primera cuota es mañana)
+                  {esRetroactiva
+                    ? `(la primera cuota queda el ${fmtFecha(primerCobro)})`
+                    : "(por defecto la primera cuota es mañana)"}
                 </span>
               </span>
             </label>

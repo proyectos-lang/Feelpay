@@ -77,6 +77,8 @@ import {
   fmtFechaHora,
   fmtMoneda,
   nuevaGestionId,
+  sumarDias,
+  diasEntre,
   todayColombia,
   type Gestion,
 } from "@/lib/gestion-core"
@@ -89,6 +91,7 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowLeftRight,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
   Edit2,
@@ -105,6 +108,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { MovimientosPanel } from "@/components/views/movimientos-panel"
+import { NewLoan } from "@/components/views/new-loan"
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
@@ -241,10 +245,28 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>("activos")
   // Filtro de ruta: secretaría atiende varias, y el préstamo que hay que
   // corregir no tiene por qué estar en la que uno tenga abierta.
-  const [rutas, setRutas] = useState<{ id: number; nombre: string }[]>([])
+  // `pais` viaja porque el formulario de venta valida los teléfonos con él:
+  // registrar en una ruta de otro país con las reglas de la propia rebotaría
+  // números que sí son válidos.
+  const [rutas, setRutas] = useState<{ id: number; nombre: string; pais: string | null }[]>([])
   const [rutaFiltro, setRutaFiltro] = useState<number | "todas">(currentRutaId)
   // Qué se está listando: ventas (lo de siempre) o los movimientos de caja.
   const [modoListado, setModoListado] = useState("ventas")
+
+  // ── Venta nueva ───────────────────────────────────────────────────────────
+  // Registrar una venta que ya ocurrió: la de ayer que llegó en papel hoy.
+  // Se eligen la RUTA y el DÍA DEL REPORTE, y el formulario de siempre hace el
+  // resto — no hay una segunda forma de crear ventas, que tarde o temprano se
+  // habría separado de la primera.
+  const [creandoVenta, setCreandoVenta] = useState(false)
+  const [ventaRuta, setVentaRuta] = useState<number | "">("")
+  const [ventaFecha, setVentaFecha] = useState(todayColombia())
+  // Cómo terminó ese día en esa ruta. No bloquea nada: avisa.
+  const [jornada, setJornada] = useState<{ estado: string | null; aprobacion: string | null } | null>(null)
+  const [jornadaCargando, setJornadaCargando] = useState(false)
+  // Obliga a releer la lista al volver de crear: el efecto de abajo solo
+  // depende de la ruta, y volver del formulario no la cambia.
+  const [recargaLista, setRecargaLista] = useState(0)
 
   // Préstamo abierto
   const [loanId, setLoanId] = useState<string | null>(loanIdInicial ?? null)
@@ -340,9 +362,9 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
   useEffect(() => {
     let cancelado = false
     getSupabaseSafe()
-      .then((supabase) => supabase.from("rutas").select("id, nombre").order("id"))
+      .then((supabase) => supabase.from("rutas").select("id, nombre, pais").order("id"))
       .then(({ data }) => {
-        if (!cancelado) setRutas((data ?? []) as { id: number; nombre: string }[])
+        if (!cancelado) setRutas((data ?? []) as { id: number; nombre: string; pais: string | null }[])
       })
       .catch((err) => console.error("[v0] SaleEditor rutas error:", err))
     return () => {
@@ -354,6 +376,49 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
     (id: number) => rutas.find((r) => r.id === id)?.nombre ?? `Ruta ${id}`,
     [rutas],
   )
+
+  // ── Cómo quedó la jornada que se va a tocar ───────────────────────────────
+  // Fechar una venta hacia atrás mueve la caja de ese día y, por la suma
+  // corrida de `resumen_diario_v2`, la de todos los siguientes. Si ese día ya
+  // se cerró —peor, si el admin ya lo aprobó— quien registra tiene que saberlo
+  // ANTES, no enterarse cuando el cierre deje de cuadrar.
+  useEffect(() => {
+    if (!creandoVenta || ventaRuta === "" || !ventaFecha) {
+      setJornada(null)
+      return
+    }
+    let cancelado = false
+    setJornadaCargando(true)
+    ;(async () => {
+      try {
+        const supabase = await getSupabaseSafe()
+        const { data, error } = await supabase
+          .from("rutas_diarias")
+          .select("estado, aprobacion_admin")
+          .eq("ruta_id", ventaRuta)
+          .eq("fecha", ventaFecha)
+          .maybeSingle()
+        if (cancelado) return
+        if (error) throw error
+        setJornada(
+          data
+            ? { estado: (data as { estado: string | null }).estado,
+                aprobacion: (data as { aprobacion_admin: string | null }).aprobacion_admin }
+            : null,
+        )
+      } catch (err) {
+        // Que no se pueda leer el estado del día no puede impedir registrar la
+        // venta: se pierde el aviso, no la operación.
+        console.error("[v0] SaleEditor jornada error:", err)
+        if (!cancelado) setJornada(null)
+      } finally {
+        if (!cancelado) setJornadaCargando(false)
+      }
+    })()
+    return () => {
+      cancelado = true
+    }
+  }, [creandoVenta, ventaRuta, ventaFecha])
 
   // ── Listado de préstamos de la ruta elegida ───────────────────────────────
   useEffect(() => {
@@ -381,7 +446,7 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
     return () => {
       cancelado = true
     }
-  }, [rutaFiltro, errorToast])
+  }, [rutaFiltro, recargaLista, errorToast])
 
   // ── Detalle del préstamo abierto ──────────────────────────────────────────
   const cargarDetalle = useCallback(
@@ -820,6 +885,166 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
   }
 
   // ──────────────────────────────────────────────────────────────────────────
+  // VENTA NUEVA
+  // ──────────────────────────────────────────────────────────────────────────
+  // Se elige la RUTA y el DÍA DEL REPORTE, y debajo va el formulario de venta
+  // de siempre. La alternativa era un formulario propio acá, y con el tiempo
+  // los dos se habrían separado: uno con el abono inicial, el otro no; uno con
+  // la homologación, el otro no.
+  if (creandoVenta) {
+    const rutaElegida = ventaRuta === "" ? null : rutas.find((r) => r.id === ventaRuta) ?? null
+    const hoy = todayColombia()
+    const diasAtras = ventaFecha ? diasEntre(ventaFecha, hoy) : 0
+    const cerrada = (jornada?.estado ?? "").toLowerCase() === "cerrada"
+    const aprobada = (jornada?.aprobacion ?? "").toLowerCase() === "aprobado"
+
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setCreandoVenta(false)}
+            className="gap-1"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Volver a la lista
+          </Button>
+          <div>
+            <h1 className="text-lg md:text-2xl font-bold">Nueva venta</h1>
+            <p className="text-xs md:text-sm text-muted-foreground">
+              Registrar una venta en cualquier ruta y contarla en el día que le corresponde.
+            </p>
+          </div>
+        </div>
+
+        <Card>
+          <CardContent className="space-y-3 p-3 md:p-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label className="text-xs">Ruta</Label>
+                <Select
+                  value={ventaRuta === "" ? "" : String(ventaRuta)}
+                  onValueChange={(v) => setVentaRuta(Number(v))}
+                >
+                  <SelectTrigger className="h-9">
+                    <MapPin className="mr-1.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <SelectValue placeholder="Elige la ruta" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {rutas.map((r) => (
+                      <SelectItem key={r.id} value={String(r.id)}>
+                        {r.nombre}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs">Día del reporte</Label>
+                <div className="flex gap-1.5">
+                  <div className="relative flex-1">
+                    <CalendarDays className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      type="date"
+                      value={ventaFecha}
+                      /* El tope de 60 días es el mismo que el del servidor. Se
+                         repite acá para que el año mal tecleado ni siquiera se
+                         pueda escribir, en vez de rebotar al guardar. */
+                      min={sumarDias(hoy, -60)}
+                      max={hoy}
+                      onChange={(e) => setVentaFecha(e.target.value || hoy)}
+                      className="h-9 pl-8"
+                    />
+                  </div>
+                  {/* "Ayer" es EL caso: la venta que se hizo en la calle y
+                      llegó en papel al día siguiente. Merece un botón. */}
+                  {([["Hoy", hoy], ["Ayer", sumarDias(hoy, -1)]] as const).map(([etiqueta, valor]) => (
+                    <button
+                      key={etiqueta}
+                      type="button"
+                      onClick={() => setVentaFecha(valor)}
+                      className={`rounded-md border px-2 text-[11px] transition-colors ${
+                        ventaFecha === valor
+                          ? "border-brand bg-brand/10 font-semibold"
+                          : "hover:bg-muted/50"
+                      }`}
+                    >
+                      {etiqueta}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* CÓMO QUEDÓ ESE DÍA. Solo cuando la venta va hacia atrás: para
+                una venta de hoy no hay nada que advertir, y un aviso que sale
+                siempre deja de leerse. */}
+            {ventaRuta !== "" && diasAtras > 0 && !jornadaCargando && (
+              <div
+                className={`flex items-start gap-2 rounded-lg border p-2.5 ${
+                  cerrada
+                    ? "border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                    : "border-border bg-muted/40 text-muted-foreground"
+                }`}
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <p className="text-[11px] leading-snug">
+                  {jornada === null ? (
+                    <>
+                      La ruta {rutaElegida?.nombre ?? ventaRuta} no registró jornada el{" "}
+                      {fmtFecha(ventaFecha)}. La venta va a quedar contada en ese día de
+                      todas formas.
+                    </>
+                  ) : cerrada ? (
+                    <>
+                      La caja del {fmtFecha(ventaFecha)} de {rutaElegida?.nombre ?? ventaRuta} ya
+                      está <span className="font-semibold">cerrada{aprobada ? " y aprobada por el admin" : ""}</span>.
+                      Esta venta descuenta su capital de esa caja, así que ese cierre y los de
+                      los {diasAtras === 1 ? "días siguientes" : `${diasAtras} días siguientes`} cambian.
+                    </>
+                  ) : (
+                    <>
+                      La jornada del {fmtFecha(ventaFecha)} sigue abierta. La venta entra a la
+                      caja de ese día.
+                    </>
+                  )}
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {ventaRuta === "" ? (
+          <Card>
+            <CardContent className="flex flex-col items-center gap-2 py-10 text-center text-muted-foreground">
+              <MapPin className="h-8 w-8 opacity-40" />
+              <span className="text-sm">Elige la ruta para empezar la venta.</span>
+            </CardContent>
+          </Card>
+        ) : (
+          /* `key` es SOLO la ruta, a propósito. Cambiar de ruta SÍ obliga a
+             un formulario nuevo —la lista de clientes, las cuentas, los
+             umbrales y hasta el `rutaId` congelado en un `useState` cuelgan de
+             ella—, pero cambiar de día no: el formulario lee `fechaVenta` como
+             prop, en vivo. Si el día también estuviera en la llave, corregir
+             la fecha después de llenar la venta entera la borraría. */
+          <NewLoan
+            key={ventaRuta}
+            currentRutaId={ventaRuta}
+            rutaPais={rutaElegida?.pais ?? ""}
+            rutaFija
+            fechaVenta={ventaFecha}
+            onCreated={() => setRecargaLista((n) => n + 1)}
+            onCancel={() => setCreandoVenta(false)}
+          />
+        )}
+      </div>
+    )
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
   // LISTADO
   // ──────────────────────────────────────────────────────────────────────────
   if (!loanId) {
@@ -900,6 +1125,20 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
                   ))}
                 </SelectContent>
               </Select>
+              {/* Arranca con la ruta que el buscador ya tenga puesta y con el
+                  día de HOY: fechar hacia atrás es una decisión, no algo que
+                  deba pasar por no haber mirado el campo. */}
+              <Button
+                className="h-9 gap-1.5 sm:shrink-0"
+                onClick={() => {
+                  setVentaRuta(rutaFiltro === "todas" ? "" : rutaFiltro)
+                  setVentaFecha(todayColombia())
+                  setCreandoVenta(true)
+                }}
+              >
+                <Plus className="h-4 w-4" />
+                Nueva venta
+              </Button>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {([
