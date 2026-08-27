@@ -252,6 +252,21 @@ const isPaymentDayToday = (diaSemana: string | null) => {
   return diaSemana.toLowerCase() === today
 }
 
+/**
+ * Una gestión con el lugar donde ocurrió.
+ *
+ * `Gestion` (gestion-core) no trae coordenadas porque casi nadie las necesita.
+ * Acá sí: una corrección tiene que poder repetir el lugar del evento que
+ * corrige, o el servidor la toma por una visita sin prueba.
+ */
+type GestionConUbicacion = Gestion & {
+  referencia_gestion_id: string | null
+  latitud: number | null
+  longitud: number | null
+  geocerca_estado: string | null
+  geocerca_motivo: string | null
+}
+
 type ManagedClient = DisplayClient & {
   gestionTipo: "pago" | "no_pago"
   gestionHora: string
@@ -2399,20 +2414,25 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
    * reversa puede llevar la fecha de la cuota que corrige y no la de hoy
    * (`ajustar_cuota_control_pagos`), y filtrando por fecha se escapaba.
    */
-  const resolveGestionHoy = async (m: ManagedClient): Promise<Gestion | null> => {
+  const resolveGestionHoy = async (m: ManagedClient): Promise<GestionConUbicacion | null> => {
     try {
       const supabase = await getSupabaseSafe()
       const { data } = await supabase
         .from("gestiones")
         .select(
           "id, loan_id, tipo, monto, fecha_gestion, cuota_objetivo, num_cuotas, " +
-            "metodo_pago, referencia_gestion_id, fecha_hora",
+            "metodo_pago, referencia_gestion_id, fecha_hora, " +
+            // DÓNDE OCURRIÓ LA VISITA. Se traen para que la corrección pueda
+            // llevarlas: el servidor trata un pago o un no pago SIN
+            // coordenadas como una visita que nadie puede probar (script
+            // 064), y una corrección se escribe desde el escritorio.
+            "latitud, longitud, geocerca_estado, geocerca_motivo",
         )
         .eq("loan_id", m.loanId)
         .eq("estado", "aplicada")
         .order("fecha_hora", { ascending: false })
 
-      const filas = (data ?? []) as unknown as (Gestion & { referencia_gestion_id: string | null })[]
+      const filas = (data ?? []) as unknown as GestionConUbicacion[]
 
       // Las que ya tienen una reversa aplicada apuntándoles. Solo cuentan las
       // reversas APLICADAS: una en revisión todavía no anuló nada.
@@ -2520,6 +2540,22 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           fecha_hora: ahoraColombiaISO(),
           cuota_objetivo: original.cuota_objetivo,
           metodo_pago: destino === "pago" ? original.metodo_pago : null,
+          // LAS COORDENADAS DE LA VISITA QUE SE CORRIGE.
+          //
+          // Sin esto la corrección no entra. El servidor trata un `pago` o un
+          // `no_pago` sin GPS como una visita sin prueba de que ocurrió: al
+          // pago lo manda `en_revision` —no suma, y el cliente se devuelve a
+          // Pendientes— y al no pago lo RECHAZA con una excepción, después de
+          // que su reversa ya se aplicó. De ahí salían los dos defectos que
+          // se reportaron.
+          //
+          // No es inventar un dato: son las coordenadas que midió el teléfono
+          // en ESA visita. Lo que se corrige es el monto o el tipo, no el
+          // lugar. Y llevándolas, la corrección sale en el mapa donde debe.
+          latitud: original.latitud ?? null,
+          longitud: original.longitud ?? null,
+          geocerca_estado: original.geocerca_estado ?? null,
+          geocerca_motivo: original.geocerca_motivo ?? null,
           // A propósito en `false`. Un no pago registrado en la calle puede
           // alargar el cronograma si el cliente iba en su última cuota, y esa
           // decisión la toma el cobrador con la casilla del formulario. Una
@@ -2553,11 +2589,18 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       })
       void fetchData({ silent: true })
     } catch (e) {
+      // La reversa y el evento nuevo son dos llamadas, no una transacción. Si
+      // la segunda falla, la primera YA se aplicó: la gestión anterior quedó
+      // anulada y no hay nada en su lugar. Callarlo dejaba al cobrador
+      // pensando que no había pasado nada, cuando el pago ya no estaba.
       toast({
-        title: "Error",
-        description: e instanceof Error ? e.message : "No se pudo corregir la gestión",
+        title: "No se pudo corregir",
+        description:
+          (e instanceof Error ? e.message : "Error al registrar la corrección") +
+          " · La gestión anterior quedó anulada: vuelve a registrarla desde Pendientes.",
         variant: "destructive",
       })
+      void fetchData({ silent: true })
     } finally {
       setSavingManaged(false)
     }
