@@ -1108,28 +1108,32 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     </div>
                   </div>
                   {/* Pagos stats.
-                      LAS DOS CANTIDADES, NO UNA CONTRA OTRA. Antes decía
-                      "8 / 12", que se lee como "8 de 12 clientes" — y no era
-                      eso: el 12 eran los gestionados, no la cartera. Ahora se
-                      muestran los dos números por separado, con el color que
-                      cada uno tiene en toda la app: pagos en verde, no pagos
-                      en rojo. */}
+                      PAGOS CONTRA NO PAGOS. El denominador era
+                      `pagos + no pagos`, así que un día sin ningún no pago
+                      imprimía "1/1", "2/2", "3/3" — pasó de verdad: ruta 1 el
+                      21 y el 25/08, ruta 197 el 21 y el 22/08. Se leía como
+                      "1 de 1 cliente" cuando la ruta tiene once.
+
+                      Ahora el segundo número son los NO pagos, con el color
+                      que cada uno tiene en toda la app. Los rótulos van
+                      debajo y coloreados: sin ellos, "8 / 7" se lee como "8
+                      de 7", que es justo el malentendido del que se viene. */}
                   <div className="flex-1 pl-4">
                     <p className="text-sm text-muted-foreground font-medium">Pagos Realizados</p>
-                    <div className="flex items-baseline gap-4">
-                      <div>
-                        <span className="text-3xl font-bold text-success tabular-nums">
-                          {cantidadPagos}
-                        </span>
-                        <span className="ml-1 text-xs text-muted-foreground">pagos</span>
-                      </div>
-                      <div>
-                        <span className="text-3xl font-bold text-destructive tabular-nums">
-                          {cantidadNoPagos}
-                        </span>
-                        <span className="ml-1 text-xs text-muted-foreground">no pagos</span>
-                      </div>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-3xl font-bold text-success tabular-nums">
+                        {cantidadPagos}
+                      </span>
+                      <span className="text-2xl font-light text-muted-foreground">/</span>
+                      <span className="text-3xl font-bold text-destructive tabular-nums">
+                        {cantidadNoPagos}
+                      </span>
                     </div>
+                    <p className="text-[10px] leading-none">
+                      <span className="font-semibold text-success">pagos</span>
+                      <span className="text-muted-foreground"> / </span>
+                      <span className="font-semibold text-destructive">no pagos</span>
+                    </p>
                     <div className="mt-1 flex h-2 w-full overflow-hidden rounded-full bg-muted">
                       {/* La barra reparte los dos, no mide un avance contra un
                           total: si hoy hubo 8 pagos y 4 no pagos, se ve dos
