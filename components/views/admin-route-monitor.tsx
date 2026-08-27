@@ -877,6 +877,16 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                       <CheckCircle2 className="h-4 w-4 text-success" />
                       <span className="text-sm font-bold tabular-nums text-foreground">{pagos}</span>
                       <span className="text-[11px] text-muted-foreground">Pagos</span>
+                      {/* El ojito. Va DENTRO del boton y no al lado como en el
+                          Resumen: aca el contador entero ya es el area que se
+                          toca, y meter un boton dentro de otro es HTML
+                          invalido. Se ve igual y el dedo tiene mas sitio. */}
+                      <Eye
+                        className={`h-3 w-3 shrink-0 ${
+                          pagos === 0 ? "text-muted-foreground/30" : "text-muted-foreground"
+                        }`}
+                        aria-hidden
+                      />
                     </button>
                     <button
                       type="button"
@@ -893,6 +903,12 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                       <XCircle className="h-4 w-4 text-destructive" />
                       <span className="text-sm font-bold tabular-nums text-foreground">{sinPago}</span>
                       <span className="text-[11px] text-muted-foreground">Sin Pago</span>
+                      <Eye
+                        className={`h-3 w-3 shrink-0 ${
+                          sinPago === 0 ? "text-muted-foreground/30" : "text-muted-foreground"
+                        }`}
+                        aria-hidden
+                      />
                     </button>
                     {/* Pendientes = CARTERA sin gestionar, no solo las cuotas
                         que vencen hoy. El denominador va al lado porque "48
