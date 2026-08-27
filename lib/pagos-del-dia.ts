@@ -36,8 +36,13 @@ export interface PagoDelDiaRow {
   cuotasPagas: number
   /** Cuántas cuotas tiene el crédito en total. Se usa en el modo grupo. */
   cuotasTotales: number
-  /** 'Cancelada' cuando el crédito quedó en cero; si no, 'Abono'. */
-  movimiento: "Abono" | "Cancelada"
+  /**
+   * Qué pasó con el cliente:
+   *   'Cancelada'  el crédito quedó en cero
+   *   'Abono'      entró plata y todavía debe
+   *   'No pago'    se le visitó y no pagó
+   */
+  movimiento: "Abono" | "Cancelada" | "No pago"
   saldo: number
 }
 
@@ -63,10 +68,22 @@ export interface HistorialCredito {
   }[]
 }
 
+/**
+ * Los dos lados de la visita del día.
+ *
+ *   'pagos'     quien dejó plata            (neto > 0)
+ *   'no_pagos'  quien fue visitado y no     (neto <= 0 con un no_pago)
+ *
+ * Los dos salen del MISMO colapso por cliente, que es la regla del script
+ * 070: un cliente, un día, un resultado. Por eso las dos listas suman
+ * exactamente los dos contadores de la tarjeta y nunca se pisan — nadie
+ * puede estar en las dos.
+ */
 export async function getPagosDelDia(
   supabase: SupabaseClient,
   rutaId: number,
   fecha: string,
+  modo: "pagos" | "no_pagos" = "pagos",
 ): Promise<PagoDelDiaRow[]> {
   try {
     const { data: ges, error } = await supabase
@@ -79,7 +96,7 @@ export async function getPagosDelDia(
     if (error) throw error
 
     const filas = colapsarPorCliente((ges ?? []) as unknown as Gestion[])
-      .filter((f) => f.neto > 0)
+      .filter((f) => (modo === "pagos" ? f.estado === "pagado" : f.estado === "no_pago"))
     if (filas.length === 0) return []
 
     const loanIds = filas.map((f) => f.loanId)
@@ -112,13 +129,20 @@ export async function getPagosDelDia(
           clientId: String(l?.client_id ?? ""),
           nombre: l?.clients?.nombre_completo ?? "Cliente",
           apodo: l?.clients?.apodo ?? null,
-          pago: f.neto,
+          // En un no pago el neto puede ser negativo (un pago anulado ese
+          // mismo día). Mostrar "−$20.000" en la columna del pago no diría
+          // nada: lo que pasó es que no pagó.
+          pago: modo === "pagos" ? f.neto : 0,
           valorCuota,
           // Sin valor de cuota no se puede dividir; se muestra 0 en vez de
           // inventar un número o reventar con una división por cero.
-          cuotasPagas: valorCuota > 0 ? f.neto / valorCuota : 0,
+          cuotasPagas: modo === "pagos" && valorCuota > 0 ? f.neto / valorCuota : 0,
           cuotasTotales: Number(fin.get(f.loanId)?.cuotas_totales) || 0,
-          movimiento: (saldo <= 0 ? "Cancelada" : "Abono") as "Abono" | "Cancelada",
+          movimiento: (modo === "no_pagos"
+            ? "No pago"
+            : saldo <= 0
+              ? "Cancelada"
+              : "Abono") as PagoDelDiaRow["movimiento"],
           saldo,
         }
       })

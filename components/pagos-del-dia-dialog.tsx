@@ -7,10 +7,12 @@
  *
  * SIRVE PARA DOS OJITOS, con la misma tabla:
  *
- *   tipo "dia"       los pagos de hoy en una ruta — el ojito de "Pagos" en el
- *                    Resumen del Día. La lista sale del LIBRO, igual que el
- *                    contador que la abre, así que el número de filas no
- *                    puede discrepar del "8 pagos" de la tarjeta.
+ *   tipo "dia"       las visitas de un día en una ruta — los ojitos de "Pagos"
+ *                    en el Resumen y en Monitoreo. Con `modo: "no_pagos"`
+ *                    muestra el otro lado: a quién se visitó y no pagó. La
+ *                    lista sale del LIBRO, igual que el contador que la abre,
+ *                    así que el número de filas no puede discrepar del "8
+ *                    pagos" de la tarjeta.
  *
  *   tipo "creditos"  un grupo de créditos — los ojitos de "Cuotas Clientes".
  *                    Ahí "Pago" es lo que el cliente lleva pagado del crédito
@@ -36,7 +38,15 @@ import {
 
 /** De dónde salen las filas. */
 export type FuentePagos =
-  | { tipo: "dia"; rutaId: number; fecha: string }
+  | {
+      tipo: "dia"
+      rutaId: number
+      fecha: string
+      /** 'pagos' (por defecto) o 'no_pagos'. */
+      modo?: "pagos" | "no_pagos"
+      /** Encabezado propio. Sin esto dice "Pagos del día". */
+      titulo?: string
+    }
   | { tipo: "creditos"; loanIds: string[]; titulo: string }
 
 interface Props {
@@ -73,6 +83,8 @@ export function PagosDelDiaDialog({ open, onOpenChange, fuente }: Props) {
   const [cargandoHistorial, setCargandoHistorial] = useState(false)
 
   const porDia = fuente?.tipo === "dia"
+  // Los no pagos no llevan plata ni cuotas: esas dos columnas se apagan.
+  const soloNoPagos = fuente?.tipo === "dia" && fuente.modo === "no_pagos"
 
   useEffect(() => {
     if (!open || !fuente) { setVerHistorialDe(null); setHistorial(null); return }
@@ -81,7 +93,7 @@ export function PagosDelDiaDialog({ open, onOpenChange, fuente }: Props) {
     const sb = createClient()
     const pedir =
       fuente.tipo === "dia"
-        ? getPagosDelDia(sb, fuente.rutaId, fuente.fecha)
+        ? getPagosDelDia(sb, fuente.rutaId, fuente.fecha, fuente.modo ?? "pagos")
         : getCreditosComoFilas(sb, fuente.loanIds)
     pedir
       .then((d) => { if (vigente) setFilas(d) })
@@ -118,16 +130,18 @@ export function PagosDelDiaDialog({ open, onOpenChange, fuente }: Props) {
             )}
             {verHistorialDe
               ? verHistorialDe.nombre
-              : porDia
-                ? "Pagos del día"
+              : fuente?.tipo === "dia"
+                ? (fuente.titulo ?? (soloNoPagos ? "No pagos del día" : "Pagos del día"))
                 : (fuente?.tipo === "creditos" ? fuente.titulo : "Clientes")}
           </DialogTitle>
           <DialogDescription className="text-xs">
             {verHistorialDe
               ? "La venta completa y su historial de pagos"
-              : porDia
-                ? `${filas.length} ${filas.length === 1 ? "cliente pagó" : "clientes pagaron"} · ${fmtMoneda(totalPagado)}`
-                : `${filas.length} ${filas.length === 1 ? "cliente" : "clientes"} · ${fmtMoneda(totalPagado)} pagado`}
+              : soloNoPagos
+                ? `${filas.length} ${filas.length === 1 ? "cliente visitado que no pagó" : "clientes visitados que no pagaron"}`
+                : porDia
+                  ? `${filas.length} ${filas.length === 1 ? "cliente pagó" : "clientes pagaron"} · ${fmtMoneda(totalPagado)}`
+                  : `${filas.length} ${filas.length === 1 ? "cliente" : "clientes"} · ${fmtMoneda(totalPagado)} pagado`}
           </DialogDescription>
         </DialogHeader>
 
@@ -195,9 +209,11 @@ export function PagosDelDiaDialog({ open, onOpenChange, fuente }: Props) {
           </div>
         ) : filas.length === 0 ? (
           <p className="py-8 text-center text-xs text-muted-foreground">
-            {porDia
-              ? "Todavía no hay pagos registrados hoy en esta ruta."
-              : "No hay clientes en este grupo."}
+            {soloNoPagos
+              ? "Ese día no se registró ningún no pago en esta ruta."
+              : porDia
+                ? "Todavía no hay pagos registrados hoy en esta ruta."
+                : "No hay clientes en este grupo."}
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -206,9 +222,11 @@ export function PagosDelDiaDialog({ open, onOpenChange, fuente }: Props) {
                 <tr className="border-b border-border text-left text-muted-foreground">
                   <th className="py-1.5 pr-2 font-medium">Nombre / Apodo</th>
                   <th className="py-1.5 px-2 font-medium text-right">
-                    {porDia ? "Pago" : "Pagado"}
+                    {soloNoPagos ? "Cuota" : porDia ? "Pago" : "Pagado"}
                   </th>
-                  <th className="py-1.5 px-2 font-medium text-center">Cuotas pagas</th>
+                  {!soloNoPagos && (
+                    <th className="py-1.5 px-2 font-medium text-center">Cuotas pagas</th>
+                  )}
                   {/* "Movimiento" solo en el día. En un grupo de créditos
                       activos el saldo nunca es cero, así que las 139 filas
                       dirían "Abono": una columna entera repitiendo la misma
@@ -228,12 +246,21 @@ export function PagosDelDiaDialog({ open, onOpenChange, fuente }: Props) {
                       )}
                     </td>
                     <td className="px-2 py-2 text-right">
-                      {/* La píldora verde del mockup. Es el mismo formato que
-                          ya usa el comprobante para el valor abonado. */}
-                      <span className="inline-block rounded-full bg-success-light px-2 py-0.5 font-bold tabular-nums text-success">
-                        {fmtMoneda(f.pago)}
-                      </span>
+                      {/* La píldora verde del mockup — el mismo formato que ya
+                          usa el comprobante para el valor abonado. En la lista
+                          de no pagos no hay plata que mostrar, así que en su
+                          lugar va la cuota que se dejó de cobrar. */}
+                      {soloNoPagos ? (
+                        <span className="tabular-nums text-muted-foreground">
+                          {f.valorCuota > 0 ? fmtMoneda(f.valorCuota) : "—"}
+                        </span>
+                      ) : (
+                        <span className="inline-block rounded-full bg-success-light px-2 py-0.5 font-bold tabular-nums text-success">
+                          {fmtMoneda(f.pago)}
+                        </span>
+                      )}
                     </td>
+                    {!soloNoPagos && (
                     <td className="px-2 py-2 text-center font-semibold tabular-nums text-foreground">
                       {fmtCuotas(f.cuotasPagas)}
                       {/* En el grupo se agrega "de N": ahí la gracia es ver
@@ -245,9 +272,10 @@ export function PagosDelDiaDialog({ open, onOpenChange, fuente }: Props) {
                         </span>
                       )}
                     </td>
+                    )}
                     {porDia && (
                       <td className={`px-2 py-2 text-center font-semibold ${
-                        f.movimiento === "Cancelada" ? "text-destructive" : "text-muted-foreground"
+                        f.movimiento === "Abono" ? "text-muted-foreground" : "text-destructive"
                       }`}>
                         {f.movimiento}
                       </td>

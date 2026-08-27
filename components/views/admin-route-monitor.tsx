@@ -47,6 +47,7 @@ import {
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { DetalleClientesDialog } from "@/components/detalle-clientes-dialog"
+import { PagosDelDiaDialog, type FuentePagos } from "@/components/pagos-del-dia-dialog"
 import {
   todayColombia,
   horaColombia,
@@ -190,6 +191,14 @@ interface AdminRouteMonitorProps {
 export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
   const { toast } = useToast()
   const [fecha, setFecha] = useState<string>(todayColombia())
+  /**
+   * Qué le toca mostrar a la tabla de clientes, o `null` si está cerrada.
+   *
+   * Se guarda el objeto entero y no un par de banderas: el efecto que carga
+   * los datos depende de él, así que construirlo en línea en el JSX crearía
+   * uno nuevo en cada render y la consulta entraría en bucle.
+   */
+  const [pagosDialog, setPagosDialog] = useState<FuentePagos | null>(null)
   const [rutas, setRutas] = useState<MonitoreoRuta[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -735,6 +744,27 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
             {rutas.map((r) => {
               const isAbierta = (r.estado_ruta ?? "").toLowerCase() === "abierta"
               const isCerrada = (r.estado_ruta ?? "").toLowerCase() === "cerrada"
+
+              /**
+               * ESTADO DE LA JORNADA — tres casos, no dos.
+               *
+               * Antes una jornada 'abierta' decía "Abierta" sin mirar la
+               * fecha, así que un día pasado en el que la ruta NUNCA cerró
+               * caja se leía igual que una ruta trabajando ahora mismo. Son
+               * cosas distintas: una está en curso y la otra terminó mal.
+               *
+               * La auditoría del 26/08 vive de esta diferencia: las rutas 1 y
+               * 151 aparecían "Abiertas" cuando lo que pasó es que se
+               * quedaron sin cerrar.
+               */
+              const esHoy = fecha === todayColombia()
+              const jornada = isCerrada
+                ? { texto: "Cerrada", clase: "border-0 bg-success text-success-foreground" }
+                : isAbierta
+                  ? esHoy
+                    ? { texto: "Abierta", clase: "border-0 bg-info text-info-foreground" }
+                    : { texto: "Sin cierre", clase: "border-0 bg-warning text-warning-foreground" }
+                  : { texto: "Sin jornada", clase: "border-0 bg-muted text-muted-foreground" }
               const aprobacion = (r.aprobacion_admin ?? "").toLowerCase()
               const pendienteAprobacion = isCerrada && aprobacion === "pendiente"
               const aprobado = isCerrada && aprobacion === "aprobado"
@@ -772,13 +802,16 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                           #{r.ruta_id}
                         </span>
                         <Badge
-                          className={
-                            isAbierta
-                              ? "border-0 bg-success text-success-foreground"
-                              : "border-0 bg-muted text-muted-foreground"
+                          className={jornada.clase}
+                          title={
+                            jornada.texto === "Sin cierre"
+                              ? "La jornada se abrió y nunca se cerró la caja"
+                              : jornada.texto === "Sin jornada"
+                                ? "La ruta no abrió jornada ese día"
+                                : undefined
                           }
                         >
-                          {isAbierta ? "Abierta" : r.estado_ruta ? "Cerrada" : "Sin datos"}
+                          {jornada.texto}
                         </Badge>
                       </div>
                       {pendienteAprobacion && (
@@ -824,16 +857,43 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
 
                   {/* Gestión: Pagos / Sin Pago / Pendientes */}
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 lg:flex-1 lg:min-w-0">
-                    <div className="flex items-center gap-1.5" title="Pagos">
+                    {/* Los dos contadores abren la MISMA tabla que el ojito
+                        de Pagos en el Resumen del Día: nombre con apodo, la
+                        plata, las cuotas, el saldo y el ojo de historial. Se
+                        pidió "poder ver quiénes fueron esos pagos y no pagos"
+                        y esa tabla ya existía. */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPagosDialog({
+                          tipo: "dia", rutaId: r.ruta_id, fecha: r.fecha ?? fecha,
+                          modo: "pagos", titulo: `Pagos · ruta ${r.ruta_id}`,
+                        })
+                      }
+                      disabled={pagos === 0}
+                      title={pagos === 0 ? "Sin pagos ese día" : `Ver los ${pagos} clientes que pagaron`}
+                      className="flex items-center gap-1.5 rounded-md px-1 -mx-1 py-0.5 transition-colors hover:bg-success/10 disabled:cursor-default disabled:hover:bg-transparent"
+                    >
                       <CheckCircle2 className="h-4 w-4 text-success" />
                       <span className="text-sm font-bold tabular-nums text-foreground">{pagos}</span>
                       <span className="text-[11px] text-muted-foreground">Pagos</span>
-                    </div>
-                    <div className="flex items-center gap-1.5" title="Sin Pago">
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPagosDialog({
+                          tipo: "dia", rutaId: r.ruta_id, fecha: r.fecha ?? fecha,
+                          modo: "no_pagos", titulo: `No pagos · ruta ${r.ruta_id}`,
+                        })
+                      }
+                      disabled={sinPago === 0}
+                      title={sinPago === 0 ? "Sin no pagos ese día" : `Ver los ${sinPago} clientes visitados que no pagaron`}
+                      className="flex items-center gap-1.5 rounded-md px-1 -mx-1 py-0.5 transition-colors hover:bg-destructive/10 disabled:cursor-default disabled:hover:bg-transparent"
+                    >
                       <XCircle className="h-4 w-4 text-destructive" />
                       <span className="text-sm font-bold tabular-nums text-foreground">{sinPago}</span>
                       <span className="text-[11px] text-muted-foreground">Sin Pago</span>
-                    </div>
+                    </button>
                     {/* Pendientes = CARTERA sin gestionar, no solo las cuotas
                         que vencen hoy. El denominador va al lado porque "48
                         pendientes" a secas no dice si la ruta va atrasada o si
@@ -1188,6 +1248,14 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
         titulo={cartera?.titulo ?? ""}
         subtitulo={cartera?.subtitulo}
         loanIds={cartera?.ids ?? []}
+      />
+
+      {/* Quiénes fueron los pagos y los no pagos de esa ruta ese día. Es el
+          mismo diálogo del Resumen del Día, con la misma tabla. */}
+      <PagosDelDiaDialog
+        open={pagosDialog !== null}
+        onOpenChange={(v) => { if (!v) setPagosDialog(null) }}
+        fuente={pagosDialog}
       />
     </div>
   )
