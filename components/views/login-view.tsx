@@ -17,9 +17,17 @@ export type AuthenticatedUser = {
 
 interface LoginViewProps {
   onLoginSuccess: (user: AuthenticatedUser) => void
+  /**
+   * Por qué se está pidiendo la contraseña otra vez. Hoy solo lo usa el cierre
+   * diario de sesión (`lib/sesion-diaria.ts`): sin este aviso, que la app te
+   * devuelva al login sin decir nada se lee como una falla, y lo primero que
+   * hace la gente es reportarlo o intentar entrar tres veces creyendo que se
+   * equivocó de clave.
+   */
+  aviso?: string | null
 }
 
-export function LoginView({ onLoginSuccess }: LoginViewProps) {
+export function LoginView({ onLoginSuccess, aviso }: LoginViewProps) {
   const [usuario, setUsuario] = useState("")
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
@@ -165,6 +173,16 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
               </button>
             </div>
           </div>
+
+          {/* Por qué se cerró la sesión. En azul y no en rojo: no es un
+              error de la persona, es la regla del día. Se apaga en cuanto
+              escribe algo, para no dejar un aviso viejo junto a uno nuevo. */}
+          {aviso && !error && (
+            <div className="flex items-start gap-2 rounded-lg border border-info/40 bg-info/10 px-3 py-2 text-sm text-info">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p className="leading-tight">{aviso}</p>
+            </div>
+          )}
 
           {/* Error */}
           {error && (

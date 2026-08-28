@@ -43,6 +43,9 @@ import { AdminDashboard } from "@/components/views/admin-dashboard"
 import { AdminRouteDetail } from "@/components/views/admin-route-detail"
 import { RouteSelector, type SelectedRuta } from "@/components/route-selector"
 import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
+import {
+  marcarDiaDeSesion, limpiarDiaDeSesion, sesionVencioPorDia, MENSAJE_SESION_DIARIA,
+} from "@/lib/sesion-diaria"
 import { LoginView, type AuthenticatedUser } from "@/components/views/login-view"
 import { LoginSplash } from "@/components/login-splash"
 import { PinLockView } from "@/components/views/pin-lock-view"
@@ -133,6 +136,9 @@ export default function Page() {
   const { toast } = useToast()
   const [currentView, setCurrentView] = useState("register-payment")
   const [viewData, setViewData] = useState<any>(null)
+  // Por qué se cerró la sesión. Sin esto, que la app te devuelva al login sin
+  // decir nada se lee como una falla, no como una regla.
+  const [avisoSesion, setAvisoSesion] = useState<string | null>(null)
   const [rutaActivaEstado, setRutaActivaEstado] = useState<"abierta" | "cerrada" | null>(null)
   // `rutaActivaResolved` distingue entre "todavía no he resuelto el estado
   // de la ruta" (false → mostrar spinner/skeleton, NO el guard) y "ya tengo
@@ -182,6 +188,26 @@ export default function Page() {
     try {
       if (typeof window !== "undefined") {
         const rawUser = localStorage.getItem(USER_STORAGE_KEY)
+
+        // ── LA SESIÓN DURA UN DÍA ──────────────────────────────────────
+        // Se comprueba ANTES de hidratar nada: si se hidratara primero y se
+        // cerrara después, habría un parpadeo del dashboard con los datos del
+        // día anterior. Ver `lib/sesion-diaria.ts` para el porqué.
+        if (rawUser && sesionVencioPorDia(true)) {
+          try {
+            localStorage.removeItem(USER_STORAGE_KEY)
+            localStorage.removeItem(RUTA_STORAGE_KEY)
+            localStorage.removeItem(RUTA_ACTIVA_CACHE_KEY)
+          } catch { /* modo privado */ }
+          limpiarDiaDeSesion()
+          setAvisoSesion(MENSAJE_SESION_DIARIA)
+          setSessionPhase("idle")
+          // El cache de LECTURA se va; la cola de escrituras pendientes vive
+          // en otra base y no se toca.
+          void limpiarCache()
+          return
+        }
+
         if (rawUser) {
           const parsed = JSON.parse(rawUser) as AuthenticatedUser
           if (parsed && parsed.id) {
@@ -498,6 +524,9 @@ export default function Page() {
     } catch (err) {
       console.error("[v0] Error writing currentUser to localStorage:", err)
     }
+    // El día en que se entró. Es lo que hace que mañana se vuelva a pedir.
+    marcarDiaDeSesion()
+    setAvisoSesion(null)
     setCurrentUser(user)
     // Acaba de escribir usuario y contraseña: no tiene sentido pedirle
     // ademas el PIN. El candado se arma solo la proxima vez que salga.
@@ -638,6 +667,7 @@ export default function Page() {
     } catch (err) {
       console.error("[v0] Error clearing session:", err)
     }
+    limpiarDiaDeSesion()
     setBloqueado(false)
     setCurrentUser(null)
     setSelectedRuta(null)
@@ -651,6 +681,40 @@ export default function Page() {
     // siguiente usuario no vea la ruta del anterior.
     void limpiarCache()
   }, [])
+
+  /**
+   * LA APP VUELVE AL FRENTE → ¿SIGUE SIENDO EL MISMO DÍA?
+   *
+   * La comprobación de la hidratación solo corre al ABRIR la app. Un teléfono
+   * que se queda con la app abierta toda la noche —lo normal en el bolsillo de
+   * un cobrador— nunca volvería a pasar por ahí, y a las seis de la mañana
+   * seguiría dentro con la sesión de ayer.
+   *
+   * Se comprueba al VOLVER, no con un temporizador que dispare a medianoche.
+   * A esa hora hay secretaría cuadrando caja, y sacarla del formulario a mitad
+   * de un cierre no es seguridad, es perder trabajo hecho. Quien esté usando
+   * la app en ese momento la termina; en cuanto la deje y vuelva, entra con
+   * contraseña.
+   *
+   * Estos listeners van para TODOS los roles, no solo para los del PIN: la
+   * regla es que nadie trabaje un día con la sesión del anterior.
+   */
+  useEffect(() => {
+    if (!currentUser) return
+    const revisar = () => {
+      if (document.visibilityState === "hidden") return
+      if (!sesionVencioPorDia(true)) return
+      setAvisoSesion(MENSAJE_SESION_DIARIA)
+      handleLogout()
+    }
+    document.addEventListener("visibilitychange", revisar)
+    window.addEventListener("focus", revisar)
+    return () => {
+      document.removeEventListener("visibilitychange", revisar)
+      window.removeEventListener("focus", revisar)
+    }
+  }, [currentUser, handleLogout])
+
 
   // ── Suscripción global de notificaciones (chat, documentos, reportes) ──────
   // Se mantiene activa durante toda la sesión, independientemente de la vista.
@@ -1104,7 +1168,7 @@ export default function Page() {
 
   // 1) No user → Login screen
   if (!currentUser) {
-    return <LoginView onLoginSuccess={handleLoginSuccess} />
+    return <LoginView onLoginSuccess={handleLoginSuccess} aviso={avisoSesion} />
   }
 
   // El PIN NO se devuelve acá con un `return`, aunque sea lo primero que uno
