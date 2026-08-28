@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DollarSign, X, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown, ChevronUp, ChevronDown } from "lucide-react"
+import { DollarSign, X, Check, Eye, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown, ChevronUp, ChevronDown } from "lucide-react"
 import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -20,7 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { useToast } from "@/hooks/use-toast"
 // `createClient` ya no se importa directamente: toda interaccion con
   // Supabase: RLS eliminado. `getSupabaseSafe` y `callRpcAtomic` se conservan
@@ -95,6 +95,18 @@ type DisplayClient = {
   nombreCompleto: string
   documento: string
   valorVenta: number
+  /**
+   * Lo que el cliente termina pagando: capital + intereses. Sale de
+   * `v_loan_financiero.total_a_pagar`, la misma cuenta de la que sale el
+   * saldo, así que no puede discrepar con él.
+   *
+   * Es distinto de `valorVenta`, que es el capital prestado a secas. Los dos
+   * hacen falta en el extracto: uno dice cuánto se le prestó y el otro cuánto
+   * va a devolver.
+   */
+  totalAPagar: number
+  /** Lo que lleva pagado del crédito entero (`total_pagado`). */
+  abonado: number
   valorCuota: number
   saldo: number
   // Conteos sobre las cuotas BASE del plan (excluyen cuotas extra de
@@ -616,6 +628,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // Payment history dialog
   const [paymentHistoryOpen, setPaymentHistoryOpen] = useState(false)
   const [paymentHistoryClient, setPaymentHistoryClient] = useState<DisplayClient | null>(null)
+
+  // ── Extracto del cliente ────────────────────────────────────────────────
+  // Lo que se sacó de la fila para que quepan más clientes: fecha de venta,
+  // total a pagar, interés, abonado y multa. No se perdió, se agrupó — el
+  // ojito de cada fila lo abre.
+  const [extractoClient, setExtractoClient] = useState<DisplayClient | null>(null)
+  // Cuántos movimientos tiene el crédito. Se pide al abrir el extracto porque
+  // es un número que solo se mira ahí, y traerlo para las 40 filas de la lista
+  // serían 40 consultas para un dato que casi nadie abre.
+  const [extractoMovimientos, setExtractoMovimientos] = useState<number | null>(null)
   const [paymentHistoryRows, setPaymentHistoryRows] = useState<{
     id: string; fecha_pago: string; valor_cuota: number; estado: string
     monto_pagado: number; fecha_pago_real: string | null; numero_cuota: number
@@ -1128,6 +1150,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           // el cliente iba a terminar pagando.
           valorVenta: loan.valor,
           valorPrestamo: loan.valor,
+          // Del MISMO sitio que el saldo. Con `total_a_pagar` y `saldo` de
+          // fuentes distintas, el extracto podría mostrar un abonado que no
+          // cuadra con la resta que el cliente hace de cabeza.
+          totalAPagar: Number(fin?.total_a_pagar) || 0,
+          abonado: Number(fin?.total_pagado) || 0,
           // Fecha en que se hizo la venta — se imprime en el recibo.
           fechaVenta: (loan.fecha_creacion || loan.created_at || "").split("T")[0],
           valorCuota: loan.valor_cuota,
@@ -1895,6 +1922,34 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // ver es qué pasó cada día que se visitó al cliente. Antes se leían las
   // cuotas gestionadas, que era una aproximación — un abono de tres cuotas
   // aparecía como tres líneas y una cancelación como muchas.
+  // Cuántos movimientos lleva el crédito. Se pide SOLO al abrir el extracto:
+  // traerlo para las cuarenta filas de la lista serían cuarenta consultas por
+  // un número que se mira de vez en cuando. `head: true` no baja las filas,
+  // solo el conteo.
+  useEffect(() => {
+    if (!extractoClient) { setExtractoMovimientos(null); return }
+    let cancelado = false
+    ;(async () => {
+      try {
+        const supabase = await getSupabaseSafe()
+        const { count, error } = await supabase
+          .from("gestiones")
+          .select("id", { count: "exact", head: true })
+          .eq("loan_id", extractoClient.loanId)
+          .eq("estado", "aplicada")
+        if (cancelado) return
+        if (error) throw error
+        setExtractoMovimientos(count ?? 0)
+      } catch (err) {
+        // Sin conteo el extracto se abre igual; lo que no se puede es que el
+        // ojito no responda por una consulta de adorno.
+        console.error("[v0] conteo de movimientos del extracto:", err)
+        if (!cancelado) setExtractoMovimientos(null)
+      }
+    })()
+    return () => { cancelado = true }
+  }, [extractoClient])
+
   useEffect(() => {
     if (!paymentHistoryOpen || !paymentHistoryClient) return
     let cancelled = false
@@ -2656,6 +2711,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         documento: m.documento,
         fechaVenta: m.fechaVenta,
         valorVenta: m.valorVenta,
+        // La anulacion devuelve la plata: lo abonado baja en el mismo monto
+        // que sube el saldo. El refetch silencioso de abajo corrige el exacto.
+        totalAPagar: m.totalAPagar,
+        abonado: Math.max(0, m.abonado - m.valorAbonado),
         valorCuota: m.valorCuota,
         saldo: nuevoSaldo,
         cuotasPagadas: Math.max(0, m.cuotasPagadas - 1),
@@ -2724,6 +2783,21 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // reflejo mucho mejor que una linea de 1px, y de paso dice en que anda el
   // cliente antes de leer una sola palabra. Es la MISMA banda del badge de
   // mora, no un codigo nuevo que haya que aprenderse.
+  /**
+   * El color de la mora en TEXTO, sin pastilla.
+   *
+   * `getMoraColor` devuelve texto + fondo, que es lo que necesitaba la
+   * pastilla de la fila vieja. En la fila apretada la pastilla costaba
+   * relleno arriba y abajo en cada una de las cuarenta filas, así que se
+   * quedó solo el color.
+   */
+  const moraTexto = (mora: number) => {
+    const banda = colorMora(mora)
+    if (banda === "verde") return "text-green-700"
+    if (banda === "amarillo") return "text-yellow-700"
+    return "text-red-700"
+  }
+
   const getMoraBarra = (mora: number) => {
     const banda = colorMora(mora)
     if (banda === "verde") return "border-l-green-500"
@@ -3124,36 +3198,45 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               <div className="rounded-md border overflow-hidden">
                 <Table className="w-full table-fixed">
                   <TableHeader>
+                    {/* TRES COLUMNAS, no cuatro, y UNA fila por cliente.
+                        Antes cada cliente ocupaba dos filas y ~110px: el nombre
+                        cruzando las cuatro columnas y debajo orden, acciones,
+                        frecuencia, mora, monto de venta, cuota, valor de cuota,
+                        saldo, multa y fecha del último pago. En un teléfono
+                        entraban cinco clientes; una ruta de cuarenta eran ocho
+                        pantallazos.
+
+                        Lo que se fue NO se perdió: se agrupó detrás del ojito
+                        de cada fila (el "Extracto"). En la lista se queda lo
+                        único que se mira mientras se cobra —quién es, cuánto
+                        debe, por qué cuota va y cómo está de mora— y lo demás
+                        se consulta cuando hace falta, que es casi nunca. */}
                     <TableRow>
-                      {/* Anchos fijos suman ~ Orden 38 + Accion 80 = 118 px en
-                          móvil, dejando el resto para Cliente (flex) y Monto
-                          (alineado a la derecha). table-fixed asegura que el
-                          contenido se ajuste a esos anchos sin desbordar. */}
-                      {/* Orden ensanchado a 48 px para que el título "Orden"
-                          no se cruce visualmente con el de "Acción". */}
-                      <TableHead className="w-[40px] md:w-[64px] text-center text-[12px] md:text-base whitespace-nowrap py-1 md:py-3 px-0.5 md:px-1">Orden</TableHead>
-                      {/* Acción en desktop necesita caber 3 botones de
-                          36 px (h-9 w-9) + gaps en flex-row → ~130 px.
-                          Antes era 100 px y los botones se montaban sobre
-                          la columna Cliente. */}
-                      <TableHead className="w-[48px] md:w-[140px] text-[12px] md:text-base whitespace-nowrap py-1 md:py-3 px-0.5 md:px-2">Accion</TableHead>
-                      <TableHead className="text-[12px] md:text-base whitespace-nowrap py-1 md:py-3 px-0.5 md:px-1">Frec. / Mora</TableHead>
-                      <TableHead className="w-[96px] md:w-[180px] text-right text-[12px] md:text-base whitespace-nowrap py-1 md:py-3 px-1 md:px-2">Monto / Detalle</TableHead>
+                      {/* LOS ANCHOS SE CALCULARON CONTRA EL CONTENIDO REAL,
+                          no a ojo. `table-fixed` respeta estos números pero NO
+                          impide que el contenido se salga: la primera versión
+                          le dio 142px a Acción cuando sus botones pedían 168, y
+                          el sobrante se pintó encima del saldo.
+
+                          Acción = 36 + 8 + 36 + 6 + 28 + 4 + 28 = 146px de
+                          botones. Saldo = "$332.600" a 12px. Lo que queda es
+                          para el nombre: ~124px en un teléfono de 360, que dan
+                          para dos renglones. */}
+                      <TableHead className="text-[12px] md:text-base whitespace-nowrap py-1 md:py-2 px-2">Cliente</TableHead>
+                      <TableHead className="w-[84px] md:w-[130px] text-right text-[12px] md:text-base whitespace-nowrap py-1 md:py-2 px-1">Saldo / Cuota</TableHead>
+                      <TableHead className="w-[152px] md:w-[190px] text-center text-[12px] md:text-base whitespace-nowrap py-1 md:py-2 px-1">Acción</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {displayClients.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={4} className="text-center text-muted-foreground text-[12px] md:text-base py-2 md:py-4">
+                        <TableCell colSpan={3} className="text-center text-muted-foreground text-[12px] md:text-base py-2 md:py-4">
                           No se encontraron clientes activos
                         </TableCell>
                       </TableRow>
                     ) : (
                       displayClients.map((client, index) => {
                         const canManage = canManageClient(client)
-                        // El arrastre va IGUAL en las dos filas del cliente:
-                        // agarrarlo por el nombre tiene que funcionar lo mismo
-                        // que agarrarlo por los datos.
                         const arrastre = {
                           draggable: true,
                           onDragStart: () => handleDragStart(index),
@@ -3161,171 +3244,139 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                           onDragEnd: () => { setDragIndex(null); setDragOverIndex(null) },
                           onDrop: () => handleDrop(index),
                         }
-                        // El fondo y el atenuado son de las DOS: si solo una
-                        // llevara el franjeado, el cliente se veria partido a
-                        // la mitad.
-                        const fondo = `${index % 2 === 0 ? "bg-card" : "bg-muted"} hover:bg-accent/30 transition-colors ${
-                          dragIndex === index ? "opacity-50" : ""
-                        } ${!canManage ? "opacity-60" : ""}`
                         return (
                         <Fragment key={client.loanId}>
-                        {/* FILA 1: el nombre solo, con TODO el ancho.
-                            Compartia celda con la frecuencia y la mora, en una
-                            columna de 160px de 360: se partia en tres o cuatro
-                            renglones. Solo, y cruzando las cuatro columnas, le
-                            sobra para dos. */}
                         <TableRow
                           {...arrastre}
-                          className={`${fondo} border-b-0 ${
+                          className={`${index % 2 === 0 ? "bg-card" : "bg-muted"} hover:bg-accent/30 transition-colors border-b-0 ${
+                            dragIndex === index ? "opacity-50" : ""
+                          } ${!canManage ? "opacity-60" : ""} ${
                             dragOverIndex === index ? "border-t-2 border-t-brand" : ""
                           }`}
                         >
-                          <TableCell colSpan={4} className={`pt-2 pb-0 px-2 border-l-4 ${getMoraBarra(client.mora)}`}>
-                            {/* ENVUELVE, no se corta: con `truncate` dos
-                                clientes del mismo apellido quedaban
-                                indistinguibles. */}
+                          {/* La franja de color va en la CELDA y no en la fila:
+                              la tabla le quita los bordes al último `<tr>`, así
+                              que puesta en la fila el último cliente se
+                              quedaría sin ella. */}
+                          {/* EL NOMBRE, CRUZANDO LAS TRES COLUMNAS.
+                              Se intentó primero como en el boceto —nombre y
+                              saldo en el mismo renglón— y medido en un teléfono
+                              de 360px no da: al nombre le quedaban 104px, se
+                              partía en cuatro renglones y la fila subía a 96px,
+                              peor que los 110 de antes. Recortarlo a dos
+                              renglones lo dejaba en "kelly marcela ga…", y dos
+                              clientes del mismo apellido se vuelven el mismo
+                              cliente.
+
+                              Cruzando las tres columnas el nombre se lee
+                              entero, los cuatro botones caben sin apretarse, y
+                              la fila queda en ~68px contra los ~110 de antes.
+                              El ahorro real no estaba en el nombre: estaba en
+                              la columna de flechas, que medía 95px de alto y
+                              era la que decidía cuánto media cada fila. */}
+                          <TableCell
+                            colSpan={3}
+                            className={`pt-1.5 pb-0 px-2 border-l-4 align-bottom whitespace-normal ${getMoraBarra(client.mora)}`}
+                          >
                             <span className="block font-semibold text-[13px] md:text-base leading-tight break-words [overflow-wrap:anywhere]">
+                              {/* La posición en la ruta. Perdió su columna
+                                  —eran 40px de ancho para dos dígitos— pero se
+                                  queda: es el orden en que se recorre la
+                                  calle. */}
+                              <span className="mr-1 text-[10px] md:text-xs font-normal text-muted-foreground tabular-nums">
+                                {index + 1}.
+                              </span>
                               {client.nombreCompleto}
                             </span>
-                            {client.apodo && (
-                              <span className="block text-[11px] md:text-sm text-muted-foreground leading-tight break-words [overflow-wrap:anywhere]">
-                                {client.apodo}
-                              </span>
-                            )}
                           </TableCell>
                         </TableRow>
 
-                        {/* FILA 2: orden, acciones, estado y plata */}
+                        {/* SEGUNDA FILA: mora, plata y acciones. */}
                         <TableRow
                           {...arrastre}
-                          // Separacion entre clientes, pensada para leerse al
-                          // sol: franja de color a la izquierda, linea gruesa
-                          // abajo y franjeado de verdad. Antes era una linea de
-                          // 1px casi invisible sobre un franjeado al 40% de
-                          // opacidad — o sea, blanco contra blanco.
-                          className={`${fondo} border-b-2 border-b-border`}
+                          className={`${index % 2 === 0 ? "bg-card" : "bg-muted"} hover:bg-accent/30 transition-colors border-b-2 border-b-border ${
+                            dragIndex === index ? "opacity-50" : ""
+                          } ${!canManage ? "opacity-60" : ""}`}
                         >
-                          {/* La franja va en la CELDA y no en la fila: la tabla
-                              le quita todos los bordes al ultimo `<tr>`
-                              (`[&_tr:last-child]:border-0`), asi que puesta en
-                              la fila el ultimo cliente de la lista se quedaria
-                              sin ella. */}
-                          <TableCell className={`py-1.5 md:py-3 px-0.5 md:px-1 border-l-4 ${getMoraBarra(client.mora)}`}>
-                            <div className="flex flex-col items-center">
-                              <button
-                                type="button"
-                                onClick={() => handleMoveUp(index)}
-                                disabled={index === 0 || savingOrder}
-                                className="text-muted-foreground hover:text-foreground disabled:opacity-30 p-0.5"
-                              >
-                                <ArrowUp className="h-5 w-5" />
-                              </button>
-                              <div className="cursor-grab active:cursor-grabbing flex items-center gap-0.5">
-                                <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
-                                {/* EL NUMERO ES LA POSICION EN ESTA LISTA, no el
-                                    `ordenvisita` guardado: la lista deja fuera
-                                    a los ya gestionados, asi que el primero
-                                    podia decir "5" porque los cuatro
-                                    anteriores ya estaban cobrados. */}
-                                <span className="text-[12px] md:text-sm font-bold text-muted-foreground tabular-nums leading-none">{index + 1}</span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => handleMoveDown(index)}
-                                disabled={index >= displayClients.length - 1 || savingOrder}
-                                className="text-muted-foreground hover:text-foreground disabled:opacity-30 p-0.5"
-                              >
-                                <ArrowDown className="h-5 w-5" />
-                              </button>
-
-                              {/* "Más opciones", debajo de las flechas y en su
-                                  misma columna.
-
-                                  TAMAÑOS: esta columna llevaba ~124px de alto
-                                  entre flechas, número y menú, y era ella —no
-                                  los datos— la que decidía qué tan alta salía
-                                  cada fila. Ajustada a ~95 deja de mandar: el
-                                  alto lo pone el nombre del cliente, que es lo
-                                  que de verdad ocupa. Las flechas bajan de 24 a
-                                  20px y el menú de 32 a 28.
-
-                                  Va acá y no junto a Pago / No pago porque es
-                                  lo unico de la fila que NO mueve plata: si se
-                                  toca por error no pasa nada, se abre un menu.
-                                  Los otros dos quedan solos en su columna, con
-                                  aire de sobra entre uno y otro.
-
-                                  El `mt-1` lo despega de la flecha de bajar,
-                                  que si tiene efecto inmediato. */}
-                              <div className="mt-0.5">
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button size="icon" variant="outline" className="h-7 w-7 bg-transparent">
-                                      <MoreVertical className="h-3.5 w-3.5" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end" className="w-48">
-                                    <DropdownMenuItem
-                                      className="text-xs md:text-base cursor-pointer"
-                                      onClick={() => {
-                                        setPaymentHistoryClient(client)
-                                        setPaymentHistoryOpen(true)
-                                      }}
-                                    >
-                                      <History className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                      Historial de pagos
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      className="text-xs md:text-base cursor-pointer"
-                                      onClick={() => {
-                                        setLoanHistoryClient(client)
-                                        setLoanHistoryOpen(true)
-                                      }}
-                                    >
-                                      <FileText className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                      Historial de prestamos
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      className="text-xs md:text-base cursor-pointer"
-                                      onClick={() => {
-                                        setSelectedClientInfo(client)
-                                        setClientInfoDialogOpen(true)
-                                      }}
-                                    >
-                                      <User className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                      Info del cliente
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      className="text-xs md:text-base cursor-pointer"
-                                      onClick={() => handleGenerarRecibo(client)}
-                                    >
-                                      <Receipt className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                      Generar recibo
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              </div>
-                            </div>
+                          <TableCell className={`py-1 md:py-1.5 px-2 border-l-4 align-middle ${getMoraBarra(client.mora)}`}>
+                            <span className="flex flex-wrap items-center gap-1">
+                              {/* Mora en CUOTAS vencidas sin cubrir. Texto de
+                                  color y no pastilla: la pastilla llevaba
+                                  relleno arriba y abajo, y multiplicada por
+                                  cuarenta filas costaba media pantalla. */}
+                              <span className={`text-[11px] md:text-sm font-semibold leading-tight ${moraTexto(client.mora)}`}>
+                                {client.mora > 0 ? `Mora: ${client.mora}` : "Al día"}
+                              </span>
+                              {/* El día de cobro SOLO en los no diarios, que es
+                                  donde dice algo: en una ruta diaria sería la
+                                  misma etiqueta en las cuarenta filas. Verde
+                                  cuando es hoy. */}
+                              {client.frecuenciaPago !== "daily" && client.diaSemana && (
+                                <span className={`rounded px-1 text-[9px] md:text-xs font-semibold leading-tight ${
+                                  isPaymentDayToday(client.diaSemana)
+                                    ? "bg-success text-success-foreground"
+                                    : "bg-muted-foreground/15 text-muted-foreground"
+                                }`}>
+                                  {client.diaSemana.charAt(0).toUpperCase() + client.diaSemana.slice(1)}
+                                </span>
+                              )}
+                            </span>
                           </TableCell>
-                          <TableCell className="py-1 md:py-3 px-0.5 md:px-2">
-                            {/* SOLO los dos botones que registran plata, y
-                                SEPARADOS.
 
-                                Antes iban los tres apilados con 2px entre uno
-                                y otro, y el de arriba —el menu— medía 20px. A
-                                pulso, en la calle, se tocaba No pago queriendo
-                                Pago: 2px no alcanzan para errarle a nada, y
-                                cada equivocación cuesta una reversa.
+                          <TableCell className="py-1 md:py-1.5 px-1 text-right align-middle">
+                            <span className="block text-[12px] md:text-base font-semibold tabular-nums leading-tight">
+                              ${Math.round(client.saldo).toLocaleString()}
+                            </span>
+                            <span className="block text-[10px] md:text-sm text-muted-foreground tabular-nums leading-tight">
+                              Cta {client.cuotasPagadas}/{client.cuotasTotales}
+                            </span>
+                            {/* La multa sí se queda en la lista: es plata que
+                                hay que cobrar HOY y encontrarla solo abriendo
+                                el extracto sería enterrarla. */}
+                            {client.multaPendiente && (
+                              <span className="block text-[10px] md:text-sm font-semibold text-destructive tabular-nums leading-tight">
+                                Multa ${client.multaPendiente.valor.toLocaleString()}
+                              </span>
+                            )}
+                          </TableCell>
 
-                                Ahora hay 16px de aire entre los dos y los dos
-                                miden 40. El menú se fue al final de la fila,
-                                que es donde vive un "más opciones" en una
-                                tabla. */}
-                            <div className="flex flex-col items-center gap-4 md:flex-row md:gap-2">
+                          <TableCell className="py-1 md:py-1.5 px-1 align-middle">
+                            {/* LOS DOS BOTONES DE PLATA SIGUEN SIENDO GRANDES Y
+                                SIGUEN SEPARADOS.
+
+                                Estos dos estuvieron a 2px uno de otro y en la
+                                calle, a pulso, se tocaba No pago queriendo
+                                Pago: cada equivocación cuesta una reversa.
+                                Miden 36px con 8 de aire —44px entre centros,
+                                contra los 2 de entonces— y el ojo y el menú,
+                                que no mueven plata, van de 28 y al final. */}
+                            <div className="flex items-center justify-end gap-0">
+                              <Button
+                                size="icon"
+                                className="bg-success hover:bg-success/80 text-card h-9 w-9 shrink-0 rounded-full disabled:opacity-40 disabled:cursor-not-allowed"
+                                onClick={() =>
+                                  gpsStatus !== "granted"
+                                    ? handleLocationRequired()
+                                    : handleSelectClient(client)
+                                }
+                                disabled={canManage === false && gpsStatus === "granted"}
+                                title={
+                                  gpsStatus !== "granted"
+                                    ? "Debes habilitar la ubicacion para registrar pagos"
+                                    : !canManage
+                                    ? "No es el dia de pago de este cliente"
+                                    : client.nextPaymentEsFuturo
+                                    ? `Adelantar la cuota del ${client.nextPaymentFecha.split("-").reverse().slice(0, 2).join("/")}`
+                                    : "Registrar Pago"
+                                }
+                                aria-label="Registrar Pago"
+                              >
+                                <Check className="h-5 w-5" />
+                              </Button>
 
                               <Button
                                 size="icon"
-                                className="bg-destructive hover:bg-destructive/80 text-destructive-foreground h-10 w-10 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                                className="bg-destructive hover:bg-destructive/80 text-destructive-foreground h-9 w-9 shrink-0 rounded-full ml-2 disabled:opacity-40 disabled:cursor-not-allowed"
                                 onClick={() => {
                                   if (gpsStatus !== "granted") {
                                     handleLocationRequired()
@@ -3347,142 +3398,89 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 <X className="h-5 w-5" />
                               </Button>
 
+                              {/* EL OJITO: todo lo que se sacó de la fila. */}
                               <Button
                                 size="icon"
-                                className="bg-success hover:bg-success/80 text-card h-10 w-10 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                                onClick={() =>
-                                  gpsStatus !== "granted"
-                                    ? handleLocationRequired()
-                                    : handleSelectClient(client)
-                                }
-                                disabled={canManage === false && gpsStatus === "granted"}
-                                title={
-                                  gpsStatus !== "granted"
-                                    ? "Debes habilitar la ubicacion para registrar pagos"
-                                    : !canManage
-                                    ? "No es el dia de pago de este cliente"
-                                    : client.nextPaymentEsFuturo
-                                    ? `Adelantar la cuota del ${client.nextPaymentFecha.split("-").reverse().slice(0, 2).join("/")}`
-                                    : "Registrar Pago"
-                                }
-                                aria-label="Registrar Pago"
+                                variant="outline"
+                                className="h-7 w-7 shrink-0 rounded-full bg-transparent ml-1.5"
+                                onClick={() => setExtractoClient(client)}
+                                title="Ver el extracto del cliente"
+                                aria-label="Ver el extracto del cliente"
                               >
-                                <DollarSign className="h-5 w-5 md:h-5 md:w-5" />
+                                <Eye className="h-3.5 w-3.5" />
                               </Button>
-                            </div>
-                          </TableCell>
-<TableCell className="py-1.5 md:py-3 px-1 md:px-2 overflow-hidden align-top">
-                            {/* min-w-0 en el flex container es CRITICO: sin
-                                eso, el contenido (el span del nombre) impone
-                                su ancho intrinseco al flex item, desborda la
-                                celda y se solapa con la columna Monto a la
-                                derecha. Con min-w-0 + table-fixed el span
-                                respeta el ancho de la columna y envuelve. */}
-                            <div className="flex flex-col gap-0.5 min-w-0">
-                              <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-                                <span className="text-[11px] md:text-sm text-muted-foreground">{frecuenciaLabel(client.frecuenciaPago)}</span>
-                                {client.frecuenciaPago !== "daily" && client.diaSemana && (
-                                  <span className={`text-[9px] md:text-xs px-1.5 py-0.5 rounded font-semibold ${
-                                    isPaymentDayToday(client.diaSemana) 
-                                      ? "bg-success text-success-foreground" 
-                                      : "bg-muted text-muted-foreground"
-                                  }`}>
-                                    {client.diaSemana.charAt(0).toUpperCase() + client.diaSemana.slice(1)}
-                                  </span>
-                                )}
-                                {/* El badge del tipo de cuota ("Cuota fija" /
-                                    "Cuota interes") ya no se pinta: al cobrador
-                                    en la calle no le cambia nada — cobra el
-                                    mismo valor de cualquier forma — y ocupaba
-                                    espacio en una fila que ya va apretada.
-                                    `tipoAmortizacion` sigue en el modelo porque
-                                    de el dependen el valor de la venta y el
-                                    calculo de la cancelacion total. */}
-                                {/* El badge "Próx. pago dd/mm" ya no se pinta.
-                                    Salía en todo cliente al día y sumaba una
-                                    etiqueta más a una fila que ya va apretada,
-                                    sin cambiarle nada al cobrador: igual le
-                                    puede cobrar, adelantando la cuota.
 
-                                    `nextPaymentEsFuturo` SIGUE en el modelo y
-                                    se usa: es lo que manda a esos clientes al
-                                    final de la lista, para que primero salga lo
-                                    que vence hoy o está atrasado. */}
-                              </div>
-                              {/* Mora en CUOTAS vencidas sin cubrir. Se venía
-                                  mostrando como "3d mora", que se leía como
-                                  días y no lo era. */}
-                              <div className={`inline-flex items-center justify-center w-fit px-1.5 py-0.5 rounded text-[10px] md:text-sm font-semibold ${getMoraColor(client.mora)}`}>
-                                {client.mora > 0 ? `${etiquetaMora(client.mora)} en mora` : "al día"}
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell className="py-1.5 md:py-3 px-1 md:px-2 align-top">
-                            <div className="flex flex-col items-end gap-0.5">
-                              {/* Primera fila: Monto Venta + tasa */}
-                              <div className="flex items-baseline justify-end gap-1">
-                                <span className="text-[12px] md:text-base font-semibold text-right">
-                                  ${client.valorVenta.toLocaleString()}
-                                </span>
-                                {/* El % de interes ya no va en la lista de
-                                    cobro: al cobrador no le cambia nada —cobra
-                                    el mismo valor de cualquier forma— y en una
-                                    fila apretada roba espacio al monto. Sigue
-                                    estando en Historial de prestamos, que es
-                                    donde se consulta. */}
-                              </div>
-                              {/* Segunda fila: Cuota · Valor Cuota · Saldo
-                                  En movil cada dato queda en su propia
-                                  linea (flex-col); en md+ vuelven a
-                                  estar en fila horizontal (md:flex-row). */}
-                              <div className="flex flex-col md:flex-row md:flex-wrap justify-end md:items-center gap-y-0.5 md:gap-x-2 text-[10px] md:text-xs text-muted-foreground">
-                                {/* El sufijo "+N extra" NO se muestra acá, ni
-                                    tampoco en el recibo. En la lista de cobro
-                                    lo unico que importa es por que cuota va el
-                                    cliente; las cuotas extra de extensiones y
-                                    prorrogas eran ruido en una fila que ya va
-                                    apretada en movil. Siguen contadas y
-                                    visibles en Auditoria 360 y Control Total,
-                                    que son las pantallas de revision. */}
-                                <span className="whitespace-nowrap text-right">
-                                  Cta{" "}
-                                  <strong className="text-foreground tabular-nums">
-                                    {client.cuotasPagadas}/{client.cuotasTotales}
-                                  </strong>
-                                </span>
-                                <span className="whitespace-nowrap text-right">
-                                  Vlr{" "}
-                                  <strong className="text-foreground tabular-nums">
-                                    ${client.valorCuota.toLocaleString()}
-                                  </strong>
-                                </span>
-                                <span className="whitespace-nowrap text-right">
-                                  Saldo{" "}
-                                  <strong className="text-foreground tabular-nums">
-                                    ${Math.round(client.saldo).toLocaleString()}
-                                  </strong>
-                                </span>
-                                {client.multaPendiente && (
-                                  <span className="whitespace-nowrap text-right">
-                                    Multa{" "}
-                                    <strong className="text-red-600 tabular-nums">
-                                      ${client.multaPendiente.valor.toLocaleString()}
-                                    </strong>
-                                  </span>
-                                )}
-                              </div>
-                              {/* Fecha último pago — solo visible cuando existe */}
-                              {client.ultimoPagoFecha && (
-                                <span className="text-[10px] md:text-xs text-muted-foreground whitespace-nowrap text-right">
-                                  Últ. pago{" "}
-                                  <strong className="text-foreground tabular-nums">
-                                    {(() => {
-                                      const [y, m, d] = client.ultimoPagoFecha.split("-")
-                                      return `${d}/${m}/${y.slice(2)}`
-                                    })()}
-                                  </strong>
-                                </span>
-                              )}
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button size="icon" variant="outline" className="h-7 w-7 shrink-0 rounded-full bg-transparent ml-1">
+                                    <MoreVertical className="h-3.5 w-3.5" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-52">
+                                  {/* SUBIR Y BAJAR SE VINIERON ACÁ.
+                                      Tenían columna propia con dos flechas, el
+                                      número y el asa de arrastre: ~40px de
+                                      ancho y, sobre todo, ~95px de ALTO que
+                                      eran los que decidían cuánto medía cada
+                                      fila. Arrastrar la fila sigue funcionando
+                                      igual; esto es el camino para quien
+                                      prefiere tocar. */}
+                                  <DropdownMenuItem
+                                    className="text-xs md:text-base cursor-pointer"
+                                    disabled={index === 0 || savingOrder}
+                                    onClick={() => handleMoveUp(index)}
+                                  >
+                                    <ArrowUp className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                    Subir en la ruta
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className="text-xs md:text-base cursor-pointer"
+                                    disabled={index >= displayClients.length - 1 || savingOrder}
+                                    onClick={() => handleMoveDown(index)}
+                                  >
+                                    <ArrowDown className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                    Bajar en la ruta
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    className="text-xs md:text-base cursor-pointer"
+                                    onClick={() => {
+                                      setPaymentHistoryClient(client)
+                                      setPaymentHistoryOpen(true)
+                                    }}
+                                  >
+                                    <History className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                    Historial de pagos
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className="text-xs md:text-base cursor-pointer"
+                                    onClick={() => {
+                                      setLoanHistoryClient(client)
+                                      setLoanHistoryOpen(true)
+                                    }}
+                                  >
+                                    <FileText className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                    Historial de prestamos
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className="text-xs md:text-base cursor-pointer"
+                                    onClick={() => {
+                                      setSelectedClientInfo(client)
+                                      setClientInfoDialogOpen(true)
+                                    }}
+                                  >
+                                    <User className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                    Info del cliente
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className="text-xs md:text-base cursor-pointer"
+                                    onClick={() => handleGenerarRecibo(client)}
+                                  >
+                                    <Receipt className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                    Generar recibo
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -4256,6 +4254,131 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           ) : (
             <p className="text-xs text-muted-foreground py-4 text-center">No se pudieron cargar los datos.</p>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── EXTRACTO DEL CLIENTE ──────────────────────────────────────
+          Lo que se sacó de la fila para que quepan más clientes. No es una
+          pantalla nueva: es la MISMA información de antes, agrupada donde se
+          consulta en vez de repetida cuarenta veces donde estorba. */}
+      <Dialog open={!!extractoClient} onOpenChange={(o) => { if (!o) setExtractoClient(null) }}>
+        <DialogContent className="max-h-[88vh] max-w-md overflow-y-auto p-4">
+          <DialogHeader>
+            <DialogTitle className="text-base">Extracto del cliente</DialogTitle>
+            <DialogDescription className="text-sm font-semibold text-foreground">
+              {extractoClient?.nombreCompleto}
+              {extractoClient?.apodo && (
+                <span className="block text-xs font-normal text-muted-foreground">
+                  {extractoClient.apodo}
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {extractoClient && (() => {
+            const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`
+            const fecha = (f: string) => {
+              if (!f) return "—"
+              const [y, m, d] = f.split("-")
+              return d ? `${d}/${m}/${y}` : f
+            }
+            // Dos columnas, cada dato con su nombre encima. `null` en el valor
+            // apaga la fila entera: una multa que no existe no merece un
+            // renglón que diga "$0".
+            const datos: [string, React.ReactNode][] = [
+              ["Fecha de venta", fecha(extractoClient.fechaVenta)],
+              ["Frecuencia", `${frecuenciaLabel(extractoClient.frecuenciaPago)}${
+                extractoClient.frecuenciaPago !== "daily" && extractoClient.diaSemana
+                  ? ` · ${extractoClient.diaSemana.charAt(0).toUpperCase()}${extractoClient.diaSemana.slice(1)}`
+                  : ""
+              }`],
+              ["Valor prestado", fmt(extractoClient.valorVenta)],
+              ["Interés", `${extractoClient.tasaInteres ?? 0}%`],
+              ["Total a pagar", fmt(extractoClient.totalAPagar)],
+              ["Valor de cuota", fmt(extractoClient.valorCuota)],
+              ["Cuotas", `${extractoClient.cuotasPagadas}/${extractoClient.cuotasTotales}`],
+              ["Abonado", fmt(extractoClient.abonado)],
+            ]
+            return (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-x-3 gap-y-2 rounded-lg border border-border bg-muted/30 p-3">
+                  {datos.map(([k, v]) => (
+                    <div key={k}>
+                      <p className="text-[11px] leading-tight text-muted-foreground">{k}</p>
+                      <p className="text-sm font-semibold leading-tight text-foreground tabular-nums">{v}</p>
+                    </div>
+                  ))}
+
+                  {/* El saldo y el estado van aparte y más grandes: son las dos
+                      cosas por las que se abre este extracto. */}
+                  <div>
+                    <p className="text-[11px] leading-tight text-muted-foreground">Saldo</p>
+                    <p className="text-lg font-bold leading-tight text-foreground tabular-nums">
+                      {fmt(extractoClient.saldo)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] leading-tight text-muted-foreground">Estado</p>
+                    {/* "1 cuota" a secas no dice si es lo que lleva pagado o
+                        lo que debe. Con "Mora:" delante se lee de una. */}
+                    <p className={`text-lg font-bold leading-tight ${moraTexto(extractoClient.mora)}`}>
+                      {extractoClient.mora > 0
+                        ? `Mora: ${etiquetaMora(extractoClient.mora)}`
+                        : "Al día"}
+                    </p>
+                  </div>
+
+                  {extractoClient.multaPendiente && (
+                    <div>
+                      <p className="text-[11px] leading-tight text-muted-foreground">Multa pendiente</p>
+                      <p className="text-sm font-bold leading-tight text-destructive tabular-nums">
+                        {fmt(extractoClient.multaPendiente.valor)}
+                      </p>
+                    </div>
+                  )}
+                  {extractoClient.ultimoPagoFecha && (
+                    <div>
+                      <p className="text-[11px] leading-tight text-muted-foreground">Último pago</p>
+                      <p className="text-sm font-semibold leading-tight text-foreground tabular-nums">
+                        {fecha(extractoClient.ultimoPagoFecha)}
+                        {extractoClient.ultimoPago > 0 && (
+                          <span className="ml-1 font-normal text-muted-foreground">
+                            {fmt(extractoClient.ultimoPago)}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* ACCESO DIRECTO AL HISTORIAL, como en el boceto. El
+                    extracto contesta "cómo va este crédito"; el historial,
+                    "qué ha pasado día por día". Son dos preguntas seguidas y
+                    por eso la segunda se abre desde la primera, sin volver a
+                    la lista y buscar el menú. */}
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2 text-left transition-colors hover:bg-accent/40"
+                  onClick={() => {
+                    const c = extractoClient
+                    setExtractoClient(null)
+                    setPaymentHistoryClient(c)
+                    setPaymentHistoryOpen(true)
+                  }}
+                >
+                  <span className="text-sm font-semibold text-foreground">
+                    Historial de pagos
+                    {extractoMovimientos !== null && (
+                      <span className="ml-1 font-normal text-muted-foreground">
+                        ({extractoMovimientos})
+                      </span>
+                    )}
+                  </span>
+                  <Eye className="h-4 w-4 shrink-0 text-muted-foreground" />
+                </button>
+              </div>
+            )
+          })()}
         </DialogContent>
       </Dialog>
 
