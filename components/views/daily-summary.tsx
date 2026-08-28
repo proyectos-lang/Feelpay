@@ -12,6 +12,7 @@ import { todayColombia, bandaCartera, etiquetaFrecuencia } from "@/lib/gestion-c
 import { getRutaUmbrales } from "@/lib/ruta-umbrales"
 import { DetalleClientesDialog } from "@/components/detalle-clientes-dialog"
 import { PagosDelDiaDialog, type FuentePagos } from "@/components/pagos-del-dia-dialog"
+import type { ModoDia } from "@/lib/pagos-del-dia"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
@@ -861,6 +862,21 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     <XCircle className="h-4 w-4 text-destructive" />
                     <span className="text-xs text-muted-foreground">No Pagos:</span>
                     <span className="text-sm font-bold text-destructive">{cantidadNoPagos}</span>
+                    {/* El otro lado de la visita: a quién se fue a cobrar y no
+                        dejó plata. Sale del MISMO colapso por cliente que los
+                        pagos, así que las dos listas no se pisan — nadie puede
+                        estar en las dos. */}
+                    <Ojito
+                      disabled={cantidadNoPagos === 0}
+                      onClick={() =>
+                        setPagosDialog({
+                          tipo: "dia",
+                          rutaId,
+                          fecha: todayColombia(),
+                          modo: "no_pagos",
+                        })
+                      }
+                    />
                   </div>
                 </div>
 
@@ -878,21 +894,49 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                       siempre sí informa y se conserva. */}
                 {(() => {
                   const totalRecaudo = collectedAmount
-                  const par = unidadDeUnSoloMetodo
-                    ? [
-                        { label: "Efectivo", valor: pagoEfectivo },
-                        { label: "Transferencia", valor: pagoTransferencia },
-                      ]
-                    : [
-                        { label: "Capital", valor: pagoCapital },
-                        { label: "Intereses", valor: pagoIntereses },
-                      ]
+                  // `modo` es lo que hace que la caja tenga ojito o no.
+                  //
+                  // Efectivo y Transferencia SÍ lo tienen: son una propiedad
+                  // del pago —`gestiones.metodo_pago`— así que se puede decir
+                  // quién pagó de cada forma.
+                  //
+                  // Capital e Intereses NO. Ese par no parte los pagos: parte
+                  // los PRÉSTAMOS por su método de interés, y la caja de cada
+                  // uno es la suma de lo que pagaron los clientes de ese tipo.
+                  // Un ojito ahí contestaría otra pregunta —quién tiene
+                  // crédito alemán— y no la que hace la tarjeta.
+                  const par: { label: string; valor: number; modo: ModoDia | null }[] =
+                    unidadDeUnSoloMetodo
+                      ? [
+                          { label: "Efectivo", valor: pagoEfectivo, modo: "efectivo" },
+                          { label: "Transferencia", valor: pagoTransferencia, modo: "transferencia" },
+                        ]
+                      : [
+                          { label: "Capital", valor: pagoCapital, modo: null },
+                          { label: "Intereses", valor: pagoIntereses, modo: null },
+                        ]
                   return (
                     <div className="mt-1 grid grid-cols-2 gap-1.5">
                       {par.map((c) => (
                         <div key={c.label} className="rounded-md border border-border bg-card px-2 py-0.5">
                           <div className="flex items-center justify-between gap-1">
-                            <span className="text-[11px] font-medium text-muted-foreground">{c.label}</span>
+                            <span className="flex items-center gap-0.5 text-[11px] font-medium text-muted-foreground">
+                              {c.label}
+                              {c.modo && (
+                                <Ojito
+                                  disabled={c.valor === 0}
+                                  onClick={() =>
+                                    setPagosDialog({
+                                      tipo: "dia",
+                                      rutaId,
+                                      fecha: todayColombia(),
+                                      modo: c.modo!,
+                                      titulo: `Pagos en ${c.label.toLowerCase()}`,
+                                    })
+                                  }
+                                />
+                              )}
+                            </span>
                             <span className="text-[10px] font-bold text-primary">
                               {(totalRecaudo > 0 ? (c.valor / totalRecaudo) * 100 : 0).toFixed(1)}%
                             </span>

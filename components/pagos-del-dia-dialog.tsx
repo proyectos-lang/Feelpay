@@ -33,7 +33,7 @@ import { createClient } from "@/lib/supabase/client"
 import { fmtMoneda, fmtFecha, etiquetaFrecuencia } from "@/lib/gestion-core"
 import {
   getPagosDelDia, getCreditosComoFilas, getHistorialCredito,
-  type PagoDelDiaRow, type HistorialCredito,
+  type PagoDelDiaRow, type HistorialCredito, type ModoDia,
 } from "@/lib/pagos-del-dia"
 
 /** De dónde salen las filas. */
@@ -42,8 +42,11 @@ export type FuentePagos =
       tipo: "dia"
       rutaId: number
       fecha: string
-      /** 'pagos' (por defecto) o 'no_pagos'. */
-      modo?: "pagos" | "no_pagos"
+      /**
+       * Qué rebanada del día: 'pagos' (por defecto), 'no_pagos', o una de las
+       * dos formas de pago — 'efectivo' / 'transferencia'.
+       */
+      modo?: ModoDia
       /** Encabezado propio. Sin esto dice "Pagos del día". */
       titulo?: string
     }
@@ -85,6 +88,13 @@ export function PagosDelDiaDialog({ open, onOpenChange, fuente }: Props) {
   const porDia = fuente?.tipo === "dia"
   // Los no pagos no llevan plata ni cuotas: esas dos columnas se apagan.
   const soloNoPagos = fuente?.tipo === "dia" && fuente.modo === "no_pagos"
+  // Efectivo / transferencia: la tabla es la misma, pero el pie tiene que
+  // decir de qué está hablando. "3 clientes pagaron · $95.000" a secas, en la
+  // lista del efectivo, se lee como si ese fuera TODO el recaudo del día.
+  const formaDePago =
+    fuente?.tipo === "dia" && (fuente.modo === "efectivo" || fuente.modo === "transferencia")
+      ? fuente.modo
+      : null
 
   useEffect(() => {
     if (!open || !fuente) { setVerHistorialDe(null); setHistorial(null); return }
@@ -139,9 +149,11 @@ export function PagosDelDiaDialog({ open, onOpenChange, fuente }: Props) {
               ? "La venta completa y su historial de pagos"
               : soloNoPagos
                 ? `${filas.length} ${filas.length === 1 ? "cliente visitado que no pagó" : "clientes visitados que no pagaron"}`
-                : porDia
-                  ? `${filas.length} ${filas.length === 1 ? "cliente pagó" : "clientes pagaron"} · ${fmtMoneda(totalPagado)}`
-                  : `${filas.length} ${filas.length === 1 ? "cliente" : "clientes"} · ${fmtMoneda(totalPagado)} pagado`}
+                : formaDePago
+                  ? `${filas.length} ${filas.length === 1 ? "cliente pagó" : "clientes pagaron"} por ${formaDePago === "efectivo" ? "efectivo" : "transferencia"} · ${fmtMoneda(totalPagado)}`
+                  : porDia
+                    ? `${filas.length} ${filas.length === 1 ? "cliente pagó" : "clientes pagaron"} · ${fmtMoneda(totalPagado)}`
+                    : `${filas.length} ${filas.length === 1 ? "cliente" : "clientes"} · ${fmtMoneda(totalPagado)} pagado`}
           </DialogDescription>
         </DialogHeader>
 

@@ -16,7 +16,9 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { colapsarPorCliente, COLUMNAS_GESTION, type Gestion } from "@/lib/gestion-core"
+import {
+  colapsarPorCliente, montoEfectivo, COLUMNAS_GESTION, type Gestion,
+} from "@/lib/gestion-core"
 
 export interface PagoDelDiaRow {
   loanId: string
@@ -68,22 +70,54 @@ export interface HistorialCredito {
   }[]
 }
 
+/** Qué rebanada del día se quiere ver. */
+export type ModoDia = "pagos" | "no_pagos" | "efectivo" | "transferencia"
+
 /**
- * Los dos lados de la visita del día.
+ * LA FORMA DE PAGO DE UN EVENTO, con la misma regla del script 070:
  *
- *   'pagos'     quien dejó plata            (neto > 0)
- *   'no_pagos'  quien fue visitado y no     (neto <= 0 con un no_pago)
+ *   · lo que diga `metodo_pago`, si dice algo;
+ *   · si es una reversa, la del evento que revierte (`ref`) — sin esto,
+ *     anular una transferencia restaría del efectivo;
+ *   · y si no hay nada, EFECTIVO. Hoy 536 de 1.000 eventos vienen en null y
+ *     así los cuenta la vista, así que contarlos de otra forma acá dejaría la
+ *     lista peleada con la cifra que la abre.
+ */
+function formaDePago(g: Gestion, refs: Map<string, string | null>): "efectivo" | "transferencia" {
+  const propio = (g.metodo_pago ?? "").trim()
+  const heredado = g.referencia_gestion_id ? (refs.get(g.referencia_gestion_id) ?? "").trim() : ""
+  const m = (propio || heredado || "efectivo").toLowerCase()
+  return m === "transferencia" ? "transferencia" : "efectivo"
+}
+
+/**
+ * Las rebanadas de la visita del día.
  *
- * Los dos salen del MISMO colapso por cliente, que es la regla del script
- * 070: un cliente, un día, un resultado. Por eso las dos listas suman
- * exactamente los dos contadores de la tarjeta y nunca se pisan — nadie
- * puede estar en las dos.
+ *   'pagos'          quien dejó plata            (neto > 0)
+ *   'no_pagos'       quien fue visitado y no     (neto <= 0 con un no_pago)
+ *   'efectivo'       la parte del recaudo que entró en billetes
+ *   'transferencia'  la que entró por cuenta
+ *
+ * Las dos primeras salen del MISMO colapso por cliente, que es la regla del
+ * script 070: un cliente, un día, un resultado. Por eso suman exactamente los
+ * dos contadores de la tarjeta y nunca se pisan.
+ *
+ * LAS DOS ÚLTIMAS SE NETEAN POR CLIENTE **Y POR MÉTODO**, que es como las
+ * calcula `resumen_diario_v2`. Un cliente que pagó una parte en efectivo y
+ * otra por transferencia sale en las dos listas, con la parte que le toca a
+ * cada una — no es un duplicado, es que pagó de dos formas.
+ *
+ * Y se conservan los netos NEGATIVOS. Suena raro ver "−$19.500" en una lista
+ * de pagos, pero es lo que pasó: ese día se le anuló un pago en efectivo. Hay
+ * dos casos así en la base. Filtrarlos dejaría la suma de la lista por encima
+ * de la cifra de la tarjeta, y el ojito existe justamente para explicar esa
+ * cifra.
  */
 export async function getPagosDelDia(
   supabase: SupabaseClient,
   rutaId: number,
   fecha: string,
-  modo: "pagos" | "no_pagos" = "pagos",
+  modo: ModoDia = "pagos",
 ): Promise<PagoDelDiaRow[]> {
   try {
     const { data: ges, error } = await supabase
@@ -95,8 +129,51 @@ export async function getPagosDelDia(
       .neq("origen", "homologacion")
     if (error) throw error
 
-    const filas = colapsarPorCliente((ges ?? []) as unknown as Gestion[])
-      .filter((f) => (modo === "pagos" ? f.estado === "pagado" : f.estado === "no_pago"))
+    const eventos = (ges ?? []) as unknown as Gestion[]
+    const porMetodo = modo === "efectivo" || modo === "transferencia"
+
+    let filas: { loanId: string; neto: number }[]
+    if (porMetodo) {
+      // El método de una reversa lo pone el evento que revierte, y ese puede
+      // no estar en la tanda del día. Hoy no pasa —ninguna reversa de la base
+      // apunta a otro día— pero cuesta una consulta que casi siempre no se
+      // hace, y sin ella una anulación se contaría en el balde equivocado.
+      const enLaTanda = new Set(eventos.map((g) => g.id))
+      const refs = new Map<string, string | null>(
+        eventos.map((g) => [g.id, g.metodo_pago]),
+      )
+      const faltantes = [
+        ...new Set(
+          eventos
+            .map((g) => g.referencia_gestion_id)
+            .filter((id): id is string => !!id && !enLaTanda.has(id)),
+        ),
+      ]
+      if (faltantes.length > 0) {
+        const { data: ext } = await supabase
+          .from("gestiones")
+          .select("id, metodo_pago")
+          .in("id", faltantes)
+        for (const r of (ext ?? []) as { id: string; metodo_pago: string | null }[]) {
+          refs.set(r.id, r.metodo_pago)
+        }
+      }
+
+      const baldes = new Map<string, number>()
+      for (const g of eventos) {
+        const monto = montoEfectivo(g)
+        if (monto === 0) continue
+        if (formaDePago(g, refs) !== modo) continue
+        baldes.set(g.loan_id, (baldes.get(g.loan_id) ?? 0) + monto)
+      }
+      filas = [...baldes.entries()]
+        .filter(([, neto]) => neto !== 0)
+        .map(([loanId, neto]) => ({ loanId, neto }))
+    } else {
+      filas = colapsarPorCliente(eventos)
+        .filter((f) => (modo === "pagos" ? f.estado === "pagado" : f.estado === "no_pago"))
+        .map((f) => ({ loanId: f.loanId, neto: f.neto }))
+    }
     if (filas.length === 0) return []
 
     const loanIds = filas.map((f) => f.loanId)
@@ -132,11 +209,11 @@ export async function getPagosDelDia(
           // En un no pago el neto puede ser negativo (un pago anulado ese
           // mismo día). Mostrar "−$20.000" en la columna del pago no diría
           // nada: lo que pasó es que no pagó.
-          pago: modo === "pagos" ? f.neto : 0,
+          pago: modo === "no_pagos" ? 0 : f.neto,
           valorCuota,
           // Sin valor de cuota no se puede dividir; se muestra 0 en vez de
           // inventar un número o reventar con una división por cero.
-          cuotasPagas: modo === "pagos" && valorCuota > 0 ? f.neto / valorCuota : 0,
+          cuotasPagas: modo !== "no_pagos" && valorCuota > 0 ? f.neto / valorCuota : 0,
           cuotasTotales: Number(fin.get(f.loanId)?.cuotas_totales) || 0,
           movimiento: (modo === "no_pagos"
             ? "No pago"
