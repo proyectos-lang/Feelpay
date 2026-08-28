@@ -622,9 +622,9 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
           style={{ backfaceVisibility: "hidden" }}
         >
           {/* Header with gradient */}
-          <div className="bg-brand-gradient text-brand-foreground px-4 pt-4 pb-3 rounded-b-2xl shadow-lg">
-            <div className="flex items-center justify-between mb-2 gap-2">
-              <h1 className="text-2xl font-bold tracking-tight">Resumen del Día</h1>
+          <div className="bg-brand-gradient text-brand-foreground px-3 pt-2.5 pb-1.5 rounded-b-2xl shadow-lg">
+            <div className="flex items-center justify-between mb-1 gap-2">
+              <h1 className="text-lg font-bold tracking-tight">Resumen del Día</h1>
               {/* Barra de acciones. Los iconos van en pastilla blanca con el
                   icono a color: en ghost sobre el degradado de marca se
                   perdian contra el fondo y no se leian como botones.
@@ -638,7 +638,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     tamaño las barras casi no se distinguen. */}
                 <Button
                   size="icon"
-                  className="h-10 w-10 rounded-full bg-white hover:bg-white/90 shadow-sm shrink-0"
+                  className="h-8 w-8 rounded-full bg-white hover:bg-white/90 shadow-sm shrink-0"
                   title="Ver el Informe de Recaudo"
                   aria-label="Ver el Informe de Recaudo"
                   onClick={() => setIsFlipped(true)}
@@ -682,25 +682,33 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     vendedor sin poder registrar mas hasta mañana. */}
                 <Button
                   size="icon"
-                  className="h-10 w-10 rounded-full bg-white hover:bg-white/90 text-destructive shadow-sm shrink-0"
+                  className="h-8 w-8 rounded-full bg-white hover:bg-white/90 text-destructive shadow-sm shrink-0"
                   title="Cierre de Caja"
                   aria-label="Cierre de Caja"
                   onClick={() => onViewChange?.("cierre-caja")}
                 >
-                  <LockKeyhole className="h-[22px] w-[22px]" />
+                  <LockKeyhole className="h-5 w-5" />
                 </Button>
               </div>
             </div>
-            <div className="flex items-center gap-3 text-sm">
-              <div className="flex items-center gap-1.5 text-brand-foreground/90">
-                <Calendar className="h-4 w-4" />
-                <span>{selectedDate}</span>
+            {/* LA HORA VA DEBAJO DE LA FECHA, no al lado.
+                En una sola línea competían fecha, hora e insignia de estado
+                por el ancho del teléfono, y el que perdía era el "p. m." de la
+                hora: se cortaba justo en lo que dice si es mañana o tarde.
+                Apiladas, las dos caben enteras y sobra sitio para la
+                insignia. */}
+            <div className="flex items-center gap-3 text-xs">
+              <div className="flex flex-col gap-0.5 text-brand-foreground/90">
+                <div className="flex items-center gap-1.5">
+                  <Calendar className="h-3.5 w-3.5 shrink-0" />
+                  <span className="whitespace-nowrap">{selectedDate}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Clock className="h-3.5 w-3.5 shrink-0" />
+                  <span className="whitespace-nowrap">{currentTime}</span>
+                </div>
               </div>
-              <div className="flex items-center gap-1.5 text-brand-foreground/90">
-                <Clock className="h-4 w-4" />
-                <span>{currentTime}</span>
-              </div>
-              <Badge className="bg-white text-foreground border-0 ml-auto text-sm">
+              <Badge className="bg-white text-foreground border-0 ml-auto text-xs">
                 Estado:{" "}
                 {rutaDiariaEstado === "abierta" ? (
                   <span className="text-success ml-1 font-semibold">Abierta</span>
@@ -713,8 +721,12 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
             </div>
           </div>
 
-          {/* Content area - compact spacing */}
-          <div className="flex-1 px-3 py-2 space-y-2 overflow-auto">
+          {/* EL RESUMEN TIENE QUE CABER EN UNA PANTALLA.
+              Ese es el criterio de todos los tamaños de esta cara: se aprieta
+              hasta que entre en un teléfono sin bajar con el dedo. `overflow-auto`
+              se queda como red de seguridad para pantallas muy chicas o con el
+              texto del sistema agrandado, no como la forma normal de usarlo. */}
+          <div className="flex-1 px-2.5 py-1.5 space-y-1 overflow-auto">
             {/* Dia sin movimiento: la caja viene del ultimo dia con registro */}
             {diaSinMovimiento && (
               <p className="text-[10px] text-muted-foreground px-0.5">
@@ -726,7 +738,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
             {/* Caja Anterior & Efectivo */}
             <div className="grid grid-cols-2 gap-1.5">
               <Card className="bg-card shadow-sm border-0">
-                <CardContent className="px-2 py-px flex items-center gap-1">
+                <CardContent className="px-2 py-0.5 flex items-center gap-1.5">
                   <div className="h-5 w-5 rounded bg-warning-light flex items-center justify-center shrink-0">
                     <Wallet className="h-3.5 w-3.5 text-icon-wallet" />
                   </div>
@@ -738,7 +750,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
               </Card>
 
               <Card className="bg-card shadow-sm border-0">
-                <CardContent className="px-2 py-px flex items-center gap-1">
+                <CardContent className="px-2 py-0.5 flex items-center gap-1.5">
                   <div className="h-5 w-5 rounded bg-success-light flex items-center justify-center shrink-0">
                     <Banknote className="h-3.5 w-3.5 text-icon-cash" />
                   </div>
@@ -750,10 +762,156 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
               </Card>
             </div>
 
+            {/* ── EL COBRADO, DE PRIMERO ─────────────────────────────
+                Va pegado al efectivo y ENCIMA del Resumen Financiero. Es el
+                número con el que se abre el día y estaba de último, debajo de
+                cinco barras: en el teléfono había que bajar con el dedo para
+                ver lo primero que uno quiere ver.
+
+                El medidor y las cifras van LADO A LADO, no apilados. Apilado
+                gastaba el doble de alto para decir lo mismo, y era la razón
+                principal de que el resumen no cupiera de una sola vista. Se
+                quitó además el monto de la meta que salía DOS veces: una
+                suelta sobre el medidor y otra en la fila de valores. */}
+            <Card className="bg-card shadow-sm border-0">
+              <CardContent className="px-2.5 py-1">
+                <div className="flex items-center gap-2">
+                  {(() => {
+                    // Rojo hasta 50%, amarillo hasta 70%, verde por encima.
+                    const gaugeColor = collectionPercentage <= 50
+                      ? "var(--destructive)"
+                      : collectionPercentage <= 70
+                        ? "var(--warning)"
+                        : "var(--success)"
+
+                    return (
+                      <svg viewBox="0 0 200 110" className="h-16 w-28 shrink-0">
+                        <path
+                          d="M 20 100 A 80 80 0 0 1 180 100"
+                          fill="none"
+                          stroke="var(--border)"
+                          strokeWidth="14"
+                          strokeLinecap="round"
+                        />
+                        <path
+                          d="M 20 100 A 80 80 0 0 1 180 100"
+                          fill="none"
+                          stroke={gaugeColor}
+                          strokeWidth="14"
+                          strokeLinecap="round"
+                          strokeDasharray={`${(collectionPercentage / 100) * 251.2} 251.2`}
+                        />
+                        <text x="100" y="90" textAnchor="middle" className="text-4xl font-bold" fill={gaugeColor}>
+                          {Math.round(collectionPercentage)}%
+                        </text>
+                      </svg>
+                    )
+                  })()}
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">Recaudo</span>
+                      <span className="text-xl font-bold text-foreground tabular-nums leading-tight">
+                        ${collectedAmount.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">Meta</span>
+                      <span className="text-sm font-semibold text-muted-foreground tabular-nums leading-tight">
+                        ${metaAmount.toLocaleString()}
+                      </span>
+                    </div>
+
+                    {/* Tres casos, no dos. Sin meta (`metaAmount === 0`) caía
+                        en la rama de "Faltan" y mostraba un número sin
+                        sentido: no se puede incumplir una meta que no
+                        existe. */}
+                    {metaAmount <= 0 ? (
+                      <p className="mt-0.5 text-[11px] leading-tight text-muted-foreground">
+                        Sin meta para hoy
+                      </p>
+                    ) : collectedAmount >= metaAmount ? (
+                      <p className="mt-0.5 text-[11px] font-bold leading-tight text-success">
+                        Superaste la meta del día
+                      </p>
+                    ) : (
+                      <p className="mt-0.5 text-[11px] font-bold leading-tight text-destructive">
+                        Meta no superada por ${remaining.toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Pagos / No Pagos */}
+                <div className="mt-1 flex items-center justify-center gap-5 border-t border-border pt-1">
+                  <div className="flex items-center gap-1">
+                    <CheckCircle className="h-4 w-4 text-success" />
+                    <span className="text-xs text-muted-foreground">Pagos:</span>
+                    <span className="text-sm font-bold text-success">{cantidadPagos}</span>
+                    {/* El ojito de los pagos del día: quién pagó, cuánto, y
+                        cuántas cuotas alcanzó a cubrir. */}
+                    <Ojito
+                      disabled={cantidadPagos === 0}
+                      onClick={() =>
+                        setPagosDialog({ tipo: "dia", rutaId, fecha: todayColombia() })
+                      }
+                    />
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <XCircle className="h-4 w-4 text-destructive" />
+                    <span className="text-xs text-muted-foreground">No Pagos:</span>
+                    <span className="text-sm font-bold text-destructive">{cantidadNoPagos}</span>
+                  </div>
+                </div>
+
+                {/* ── Composición del recaudo del día ──────────────────
+                    Dos mini-tarjetas con el porcentaje sobre el recaudo.
+                    QUÉ muestran depende de cómo trabaje la unidad:
+
+                    · Con UN SOLO método de interés, el desglose
+                      Capital/Intereses es degenerado por construcción —
+                      sale del `tipo_amortizacion` del préstamo, así que
+                      una caja siempre marca $0 y la otra el total. En su
+                      lugar se muestra la FORMA DE PAGO, que sí dice algo:
+                      cuánto entró en efectivo y cuánto por transferencia.
+                    · Con los dos métodos habilitados, el desglose de
+                      siempre sí informa y se conserva. */}
+                {(() => {
+                  const totalRecaudo = collectedAmount
+                  const par = unidadDeUnSoloMetodo
+                    ? [
+                        { label: "Efectivo", valor: pagoEfectivo },
+                        { label: "Transferencia", valor: pagoTransferencia },
+                      ]
+                    : [
+                        { label: "Capital", valor: pagoCapital },
+                        { label: "Intereses", valor: pagoIntereses },
+                      ]
+                  return (
+                    <div className="mt-1 grid grid-cols-2 gap-1.5">
+                      {par.map((c) => (
+                        <div key={c.label} className="rounded-md border border-border bg-card px-2 py-0.5">
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-[11px] font-medium text-muted-foreground">{c.label}</span>
+                            <span className="text-[10px] font-bold text-primary">
+                              {(totalRecaudo > 0 ? (c.valor / totalRecaudo) * 100 : 0).toFixed(1)}%
+                            </span>
+                          </div>
+                          <p className="text-sm font-bold text-foreground leading-tight tabular-nums">
+                            ${c.valor.toLocaleString()}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
+              </CardContent>
+            </Card>
+
             {/* Resumen Financiero - Horizontal Bar Chart */}
             <Card className="bg-card shadow-sm border-0">
-              <CardContent className="px-3 py-2">
-                <p className="text-sm font-semibold text-foreground mb-1.5">Resumen Financiero</p>
+              <CardContent className="px-2.5 py-1">
+                <p className="text-xs font-semibold text-foreground mb-0.5">Resumen Financiero</p>
                 
                 {(() => {
                   const items: { label: string; value: number; color: string; textColor: string; icon: React.ElementType; detailType?: "Ingreso" | "Gasto" | "Retiro"; detalleClientes?: "canceladas" | "ventas"; maxOverride?: number }[] = [
@@ -766,7 +924,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                   const maxValue = Math.max(...items.map(i => i.value), 1)
                   
                   return (
-                    <div className="space-y-1">
+                    <div className="space-y-0.5">
                       {items.map((item) => {
                         const barMax = item.maxOverride ?? maxValue
                         const barPercent = barMax > 0 ? Math.min((item.value / barMax) * 100, 100) : 0
@@ -797,8 +955,8 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                             ) : (
                               <span className="h-4 w-4 shrink-0" aria-hidden="true" />
                             )}
-                            <span className="text-sm text-muted-foreground w-20 truncate">{item.label}</span>
-                            <div className="flex-1 h-3.5 bg-muted rounded-full overflow-hidden">
+                            <span className="text-xs text-muted-foreground w-[70px] truncate">{item.label}</span>
+                            <div className="flex-1 h-3 bg-muted rounded-full overflow-hidden">
                               <div
                                 className={`h-full ${item.color} rounded-full transition-all`}
                                 style={{ width: `${barPercent}%` }}
@@ -807,7 +965,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                             {/* min-w en vez de w: la cifra puede crecer sin
                                 desbordarse, y con shrink-0 no la comprime la
                                 barra. */}
-                            <span className="text-sm font-bold text-foreground min-w-16 text-right tabular-nums whitespace-nowrap shrink-0">
+                            <span className="text-xs font-bold text-foreground min-w-[62px] text-right tabular-nums whitespace-nowrap shrink-0">
                               ${item.value.toLocaleString()}
                             </span>
                           </div>
@@ -819,147 +977,6 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
               </CardContent>
             </Card>
 
-            {/* Meta vs Recaudo - Gauge */}
-            <Card className="bg-card shadow-sm border-0">
-              <CardContent className="px-3 py-2">
-                {/* Semi-circular gauge */}
-                <div className="relative flex flex-col items-center">
-                  {(() => {
-                    // Dynamic color based on percentage: 0-50% red, 51-70% yellow, >70% green
-                    const gaugeColor = collectionPercentage <= 50 
-                      ? "var(--destructive)" 
-                      : collectionPercentage <= 70 
-                        ? "var(--warning)" 
-                        : "var(--success)"
-                    
-                    return (
-                      <svg viewBox="0 0 200 110" className="w-36 h-20">
-                        {/* Background arc (gray) */}
-                        <path
-                          d="M 20 100 A 80 80 0 0 1 180 100"
-                          fill="none"
-                          stroke="var(--border)"
-                          strokeWidth="14"
-                          strokeLinecap="round"
-                        />
-                        {/* Progress arc */}
-                        <path
-                          d="M 20 100 A 80 80 0 0 1 180 100"
-                          fill="none"
-                          stroke={gaugeColor}
-                          strokeWidth="14"
-                          strokeLinecap="round"
-                          strokeDasharray={`${(collectionPercentage / 100) * 251.2} 251.2`}
-                        />
-                        {/* Center percentage text */}
-                        <text x="100" y="88" textAnchor="middle" className="text-4xl font-bold" fill={gaugeColor}>
-                          {Math.round(collectionPercentage)}%
-                        </text>
-                      </svg>
-                    )
-                  })()}
-                  
-                  {/* Labels below gauge */}
-                  <div className="flex justify-end w-full px-4 -mt-1">
-                    <span className="text-base font-semibold text-foreground">${metaAmount.toLocaleString()}</span>
-                  </div>
-                  
-                  {/* Values row */}
-                  <div className="flex items-center justify-center gap-6 mt-1">
-                    <div className="text-center">
-                      <p className="text-sm text-muted-foreground">Recaudo</p>
-                      <p className="text-2xl font-bold text-foreground">${collectedAmount.toLocaleString()}</p>
-                    </div>
-                    <div className="h-8 w-px bg-border" />
-                    <div className="text-center">
-                      <p className="text-sm text-muted-foreground">Meta</p>
-                      <p className="text-2xl font-bold text-foreground">${metaAmount.toLocaleString()}</p>
-                    </div>
-                  </div>
-                </div>
-                
-                {/* Tres casos, no dos. Sin meta (`metaAmount === 0`) caía en
-                    la rama de "Faltan" y mostraba un número sin sentido:
-                    no se puede incumplir una meta que no existe. */}
-                {metaAmount <= 0 ? (
-                  <p className="text-center text-base text-muted-foreground mt-0.5">
-                    Sin meta para hoy
-                  </p>
-                ) : collectedAmount >= metaAmount ? (
-                  <p className="text-center text-base font-bold text-success mt-0.5">
-                    Superaste la meta del día
-                  </p>
-                ) : (
-                  <p className="text-center text-base font-bold text-destructive mt-0.5">
-                    Meta no superada por ${remaining.toLocaleString()}
-                  </p>
-                )}
-
-                {/* Pagos / No Pagos counts */}
-                <div className="flex items-center justify-center gap-4 mt-1.5 pt-1.5 border-t border-border">
-                  <div className="flex items-center gap-1.5">
-                    <CheckCircle className="h-6 w-6 text-success" />
-                    <span className="text-base text-muted-foreground">Pagos:</span>
-                    <span className="text-base font-bold text-success">{cantidadPagos}</span>
-                    {/* El ojito de los pagos del día: quién pagó, cuánto, y
-                        cuántas cuotas alcanzó a cubrir. */}
-                    <Ojito
-                      disabled={cantidadPagos === 0}
-                      onClick={() =>
-                        setPagosDialog({ tipo: "dia", rutaId, fecha: todayColombia() })
-                      }
-                    />
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <XCircle className="h-6 w-6 text-destructive" />
-                    <span className="text-base text-muted-foreground">No Pagos:</span>
-                    <span className="text-base font-bold text-destructive">{cantidadNoPagos}</span>
-                  </div>
-                </div>
-
-                {/* ── Composición del recaudo del día ──────────────────
-                    Dos mini-tarjetas con el porcentaje sobre el recaudo.
-                    QUÉ muestran depende de cómo trabaje la unidad:
-
-                    · Con UN SOLO método de interés, el desglose
-                      Capital/Intereses es degenerado por construcción —
-                      sale del `tipo_amortizacion` del préstamo, así que
-                      una caja siempre marca $0 y la otra el total. En su
-                      lugar se muestra la FORMA DE PAGO, que sí dice algo:
-                      cuánto entró en efectivo y cuánto por transferencia.
-                    · Con los dos métodos habilitados, el desglose de
-                      siempre sí informa y se conserva. */}
-                {(() => {
-                  const totalRecaudo = collectedAmount
-                  const par = unidadDeUnSoloMetodo
-                    ? [
-                        { label: "Efectivo", valor: pagoEfectivo },
-                        { label: "Transferencia", valor: pagoTransferencia },
-                      ]
-                    : [
-                        { label: "Capital", valor: pagoCapital },
-                        { label: "Intereses", valor: pagoIntereses },
-                      ]
-                  return (
-                    <div className="grid grid-cols-2 gap-2 mt-2">
-                      {par.map((c) => (
-                        <div key={c.label} className="rounded-lg border border-border bg-card px-3 py-2">
-                          <div className="flex items-center justify-between gap-1">
-                            <span className="text-xs font-medium text-muted-foreground">{c.label}</span>
-                            <span className="text-[10px] font-bold text-primary">
-                              {(totalRecaudo > 0 ? (c.valor / totalRecaudo) * 100 : 0).toFixed(1)}%
-                            </span>
-                          </div>
-                          <p className="text-base font-bold text-foreground mt-0.5 leading-tight">
-                            ${c.valor.toLocaleString()}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )
-                })()}
-              </CardContent>
-            </Card>
           </div>
         </div>
 
