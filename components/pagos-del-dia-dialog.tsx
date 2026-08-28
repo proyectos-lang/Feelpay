@@ -267,9 +267,26 @@ export function PagosDelDiaDialog({ open, onOpenChange, fuente }: Props) {
                           {f.valorCuota > 0 ? fmtMoneda(f.valorCuota) : "—"}
                         </span>
                       ) : (
-                        <span className="inline-block rounded-full bg-success-light px-2 py-0.5 font-bold tabular-nums text-success">
-                          {fmtMoneda(f.pago)}
-                        </span>
+                        <>
+                          <span className="inline-block rounded-full bg-success-light px-2 py-0.5 font-bold tabular-nums text-success">
+                            {fmtMoneda(f.pago)}
+                          </span>
+                          {/* CÓMO pagó, debajo del cuánto.
+                              Va acá y no en una columna propia: en el teléfono
+                              la tabla ya lleva cinco, y una sexta obligaría a
+                              arrastrar de lado para leer un dato de una sola
+                              palabra. Debajo del monto se lee sin moverse, que
+                              es donde uno ya está mirando.
+
+                              Solo sale en la lista GENERAL de pagos: en las
+                              que ya vienen filtradas por método repetiría el
+                              título en cada fila. */}
+                          {f.formaPago && (
+                            <p className="mt-0.5 text-[10px] leading-tight text-muted-foreground">
+                              {f.formaPago}
+                            </p>
+                          )}
+                        </>
                       )}
                     </td>
                     {!soloNoPagos && (

@@ -45,6 +45,19 @@ export interface PagoDelDiaRow {
    *   'No pago'    se le visitó y no pagó
    */
   movimiento: "Abono" | "Cancelada" | "No pago"
+  /**
+   * CÓMO pagó ese día: 'Efectivo', 'Transferencia' o 'Mixto'.
+   *
+   * `null` donde la pregunta no aplica o la respuesta sería una columna
+   * repitiendo la misma palabra: en los no pagos, en el grupo de créditos, y
+   * en las listas que YA están filtradas por método —ahí todas las filas
+   * dirían lo mismo que el título.
+   *
+   * 'Mixto' no ha pasado nunca: en 497 clientes-día de la base, ninguno pagó
+   * de las dos formas el mismo día. Se contempla porque nada lo impide, no
+   * porque se espere.
+   */
+  formaPago: "Efectivo" | "Transferencia" | "Mixto" | null
   saldo: number
 }
 
@@ -83,6 +96,19 @@ export type ModoDia = "pagos" | "no_pagos" | "efectivo" | "transferencia"
  *     así los cuenta la vista, así que contarlos de otra forma acá dejaría la
  *     lista peleada con la cifra que la abre.
  */
+/** De los dos baldes de un cliente a la palabra que va en la tabla. */
+function clasificar(
+  b: { efectivo: number; transferencia: number } | undefined,
+): PagoDelDiaRow["formaPago"] {
+  if (!b) return null
+  const ef = Math.abs(b.efectivo) > 0.001
+  const tr = Math.abs(b.transferencia) > 0.001
+  if (ef && tr) return "Mixto"
+  if (tr) return "Transferencia"
+  if (ef) return "Efectivo"
+  return null
+}
+
 function formaDePago(g: Gestion, refs: Map<string, string | null>): "efectivo" | "transferencia" {
   const propio = (g.metodo_pago ?? "").trim()
   const heredado = g.referencia_gestion_id ? (refs.get(g.referencia_gestion_id) ?? "").trim() : ""
@@ -132,8 +158,13 @@ export async function getPagosDelDia(
     const eventos = (ges ?? []) as unknown as Gestion[]
     const porMetodo = modo === "efectivo" || modo === "transferencia"
 
+    // Lo pagado por cada cliente, separado por forma de pago. Sirve para dos
+    // cosas: armar las listas de 'efectivo' y 'transferencia', y clasificar
+    // cada fila de la lista general. Se calcula una vez.
+    const baldesPorLoan = new Map<string, { efectivo: number; transferencia: number }>()
+
     let filas: { loanId: string; neto: number }[]
-    if (porMetodo) {
+    if (modo !== "no_pagos") {
       // El método de una reversa lo pone el evento que revierte, y ese puede
       // no estar en la tanda del día. Hoy no pasa —ninguna reversa de la base
       // apunta a otro día— pero cuesta una consulta que casi siempre no se
@@ -159,16 +190,19 @@ export async function getPagosDelDia(
         }
       }
 
-      const baldes = new Map<string, number>()
       for (const g of eventos) {
         const monto = montoEfectivo(g)
         if (monto === 0) continue
-        if (formaDePago(g, refs) !== modo) continue
-        baldes.set(g.loan_id, (baldes.get(g.loan_id) ?? 0) + monto)
+        const b = baldesPorLoan.get(g.loan_id) ?? { efectivo: 0, transferencia: 0 }
+        b[formaDePago(g, refs)] += monto
+        baldesPorLoan.set(g.loan_id, b)
       }
-      filas = [...baldes.entries()]
-        .filter(([, neto]) => neto !== 0)
-        .map(([loanId, neto]) => ({ loanId, neto }))
+    }
+
+    if (porMetodo) {
+      filas = [...baldesPorLoan.entries()]
+        .map(([loanId, b]) => ({ loanId, neto: b[modo as "efectivo" | "transferencia"] }))
+        .filter((f) => f.neto !== 0)
     } else {
       filas = colapsarPorCliente(eventos)
         .filter((f) => (modo === "pagos" ? f.estado === "pagado" : f.estado === "no_pago"))
@@ -220,6 +254,9 @@ export async function getPagosDelDia(
             : saldo <= 0
               ? "Cancelada"
               : "Abono") as PagoDelDiaRow["movimiento"],
+          // Solo en la lista general. En las que ya vienen filtradas por
+          // método sería una columna repitiendo el título.
+          formaPago: modo === "pagos" ? clasificar(baldesPorLoan.get(f.loanId)) : null,
           saldo,
         }
       })
@@ -288,6 +325,10 @@ export async function getCreditosComoFilas(
           cuotasPagas: Number(f.cuotas_cubiertas) || 0,
           cuotasTotales: Number(f.cuotas_totales) || 0,
           movimiento: saldo <= 0 ? "Cancelada" : "Abono",
+          // La forma de pago es de UN día. Acá `pago` es lo acumulado del
+          // crédito entero, que puede haber entrado de las dos maneras a lo
+          // largo de meses: no hay una respuesta que dar.
+          formaPago: null,
           saldo,
         })
       }
