@@ -150,8 +150,10 @@ export async function encolar(args: {
   descripcion: string
   /** Llave ya generada por el caller (debe ser la misma que viaja al servidor). */
   id: string
+  /** Ver `enviarOEncolar`. */
+  rutaId?: number
 }): Promise<void> {
-  const identidad = getSessionIdentity()
+  const identidad = { ...getSessionIdentity(), ...(args.rutaId ? { ruta_id: args.rutaId } : {}) }
   const item: ItemCola = {
     id: args.id,
     tipo: args.tipo,
@@ -445,6 +447,22 @@ export async function enviarOEncolar(args: {
    * y tiene que ser idéntico al de la cola para que el reintento deduplique.
    */
   id?: string
+  /**
+   * LA RUTA EN LA QUE SE REGISTRA, cuando NO es la de la sesión.
+   *
+   * La identidad de una operación sale de `localStorage` —usuario, ruta, rol—
+   * y para el cobrador en la calle eso es exactamente lo correcto: la ruta que
+   * tiene abierta ES la ruta de lo que registra.
+   *
+   * Secretaría desde Control Total hace otra cosa: elige la ruta en la
+   * pantalla. Sin esta llave, `p_ruta_id` se armaba con la ruta de la sesión y
+   * la venta caía en la ruta equivocada — y el formulario ni se enteraba,
+   * porque el `p_ruta_id` que calculaba nunca llegaba a viajar.
+   *
+   * Se guarda en el ITEM, no solo en el envío: una venta capturada sin señal
+   * tiene que llegar a la misma ruta cuando se reenvíe mañana.
+   */
+  rutaId?: number
 }): Promise<{ encolado: boolean; resultado?: AtomicRpcResult; id: string }> {
   // La llave se genera AL CAPTURAR, y es la misma que se use ahora o dentro
   // de dos horas: es lo que permite al servidor reconocer el reintento.
@@ -453,7 +471,7 @@ export async function enviarOEncolar(args: {
     id,
     tipo: args.tipo,
     payload: args.payload,
-    identidad: getSessionIdentity(),
+    identidad: { ...getSessionIdentity(), ...(args.rutaId ? { ruta_id: args.rutaId } : {}) },
     capturadoEn: new Date().toISOString(),
     descripcion: args.descripcion,
     estado: "pendiente",
@@ -462,7 +480,7 @@ export async function enviarOEncolar(args: {
 
   const sinRed = typeof navigator !== "undefined" && !navigator.onLine
   if (sinRed) {
-    await encolar({ tipo: args.tipo, payload: args.payload, descripcion: args.descripcion, id })
+    await encolar({ tipo: args.tipo, payload: args.payload, descripcion: args.descripcion, id, rutaId: args.rutaId })
     return { encolado: true, id }
   }
 
@@ -471,7 +489,7 @@ export async function enviarOEncolar(args: {
     return { encolado: false, resultado, id }
   } catch (err) {
     if (esErrorDeRed(err)) {
-      await encolar({ tipo: args.tipo, payload: args.payload, descripcion: args.descripcion, id })
+      await encolar({ tipo: args.tipo, payload: args.payload, descripcion: args.descripcion, id, rutaId: args.rutaId })
       return { encolado: true, id }
     }
     throw err

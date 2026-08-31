@@ -1531,6 +1531,19 @@ export function NewLoan({
           tipo: "venta",
           descripcion: `Venta — ${nombreParaEtiqueta} ($${valorNum.toLocaleString()})`,
           payload: { p_cliente, p_loan, p_payment_plan },
+          // LA RUTA QUE SE ELIGIÓ, no la de la sesión.
+          //
+          // Sin esto, `p_ruta_id` se calculaba arriba con todo cuidado y NO
+          // VIAJABA: `enviarOEncolar` armaba la identidad por su cuenta con
+          // `getSessionIdentity()`, y la RPC usa esa. En la calle daba igual
+          // —la ruta de la sesión es la de la venta— pero desde Control Total
+          // la secretaria elegía la 151 y la venta quedaba en la ruta que
+          // tuviera abierta arriba. Pasó con tres ventas del 31/08.
+          //
+          // Se manda SIEMPRE, no solo desde Control Total: en la calle vale
+          // exactamente lo mismo que la de la sesión, y así la ruta de la
+          // venta es la que el formulario dice, no la que otro módulo suponga.
+          rutaId: p_ruta_id,
         })
         ventaEncolada = r.encolado
         resultadoVenta = r.resultado ?? null
