@@ -42,7 +42,46 @@ ALTER TABLE public.ingresos
   ADD COLUMN IF NOT EXISTS solo_sistema boolean NOT NULL DEFAULT false;
 
 
--- ── PASO 2) El concepto ───────────────────────────────────────────────────
+-- ── PASO 2) Las secuencias de los tres catálogos, en su sitio ─────────────
+-- Los conceptos de `ingresos`, `gastos` y `retiros` se crearon con el `id`
+-- puesto a mano, así que la secuencia que reparte los ids nunca avanzó: sigue
+-- en 1 mientras las filas van hasta la 4, la 40 y la 6. El primer INSERT que
+-- no traiga `id` pide el siguiente, le dan el 1, y choca:
+--
+--   ERROR: duplicate key value violates unique constraint "ingresos_pkey"
+--   DETAIL: Key (id)=(1) already exists.
+--
+-- No es un problema de este script — le pasa a cualquiera que agregue un
+-- concepto desde la base, hoy o dentro de un año. Por eso se arregla de raíz y
+-- para los tres catálogos, no solo para el que hacía falta acá.
+--
+-- Es una sola sentencia (el bloque entero) y se puede repetir sin daño: pone
+-- cada secuencia en el mayor id que exista, ni más ni menos.
+DO $seq083$
+DECLARE
+  v_tabla text;
+  v_seq   text;
+  v_max   bigint;
+BEGIN
+  FOREACH v_tabla IN ARRAY ARRAY['ingresos', 'gastos', 'retiros'] LOOP
+    v_seq := pg_get_serial_sequence('public.' || v_tabla, 'id');
+
+    IF v_seq IS NULL THEN
+      -- Sin secuencia el id se pone a mano siempre; no hay nada que arreglar.
+      RAISE NOTICE '% no reparte ids sola. Se salta.', v_tabla;
+      CONTINUE;
+    END IF;
+
+    EXECUTE format('SELECT COALESCE(MAX(id), 0) FROM public.%I', v_tabla) INTO v_max;
+    PERFORM setval(v_seq, GREATEST(v_max, 1));
+
+    RAISE NOTICE '% : el próximo id será %', v_tabla, GREATEST(v_max, 1) + 1;
+  END LOOP;
+END
+$seq083$;
+
+
+-- ── PASO 3) El concepto ───────────────────────────────────────────────────
 -- Va con `WHERE NOT EXISTS` y no con `ON CONFLICT` porque `ingresos.nombre` no
 -- tiene índice único: `ON CONFLICT (nombre)` fallaría con "no unique or
 -- exclusion constraint matching". Así es idempotente igual, sin tener que
@@ -54,7 +93,7 @@ SELECT 'Recaudo x Multa Clientes', true, NULL, true
  );
 
 
--- ── PASO 3) Y queda marcado ───────────────────────────────────────────────
+-- ── PASO 4) Y queda marcado ───────────────────────────────────────────────
 -- Cubre el caso de que alguien ya lo hubiera creado a mano desde el catálogo:
 -- existiría con `solo_sistema = false` y seguiría siendo elegible.
 UPDATE public.ingresos
@@ -62,7 +101,7 @@ UPDATE public.ingresos
  WHERE nombre = 'Recaudo x Multa Clientes';
 
 
--- ── PASO 4) Que el sistema lo use ─────────────────────────────────────────
+-- ── PASO 5) Que el sistema lo use ─────────────────────────────────────────
 -- NO se vuelve a escribir `registrar_gestion` a mano. Se lee la definición que
 -- está VIVA en la base, se le cambian esas dos líneas y se vuelve a instalar.
 --
@@ -116,7 +155,7 @@ END
 $fix083$;
 
 
--- ── PASO 5) Que el cambio quedó (SOLO LECTURA) ────────────────────────────
+-- ── PASO 6) Que el cambio quedó (SOLO LECTURA) ────────────────────────────
 -- `usa_el_concepto` = true y `queda_algo_viejo` = false.
 SELECT strpos(pg_get_functiondef(p.oid), '''Recaudo x Multa Clientes''') > 0 AS usa_el_concepto,
        strpos(pg_get_functiondef(p.oid), '''Multa — ''')                 > 0 AS queda_algo_viejo
@@ -124,7 +163,7 @@ SELECT strpos(pg_get_functiondef(p.oid), '''Recaudo x Multa Clientes''') > 0 AS 
  WHERE n.nspname = 'public' AND p.proname = 'registrar_gestion';
 
 
--- ── PASO 6) Las multas ya cobradas, al concepto nuevo ─────────────────────
+-- ── PASO 7) Las multas ya cobradas, al concepto nuevo ─────────────────────
 -- Son dos, las dos de la ruta 1. Si se quedan con el concepto viejo, la línea
 -- del informe arranca de cero y esas dos quedan sueltas para siempre. El nombre
 -- del cliente pasa a la observación, igual que hará el sistema de aquí en
@@ -139,7 +178,7 @@ UPDATE public.gastosregistros
    AND concepto LIKE 'Multa —%';
 
 
--- ── PASO 7) Cómo quedaron (SOLO LECTURA) ──────────────────────────────────
+-- ── PASO 8) Cómo quedaron (SOLO LECTURA) ──────────────────────────────────
 -- Todas bajo un solo concepto y con el cliente en la observación. No debe
 -- quedar ninguna fila con el concepto viejo.
 SELECT g.id,
@@ -154,7 +193,7 @@ SELECT g.id,
  ORDER BY g.fechahorasol DESC;
 
 
--- ── PASO 8) El catálogo (SOLO LECTURA) ────────────────────────────────────
+-- ── PASO 9) El catálogo (SOLO LECTURA) ────────────────────────────────────
 -- 'Recaudo x Multa Clientes' con `solo_sistema = true`, los otros cuatro en
 -- false. La app esconde de los formularios de registro todo lo que esté en
 -- true, así que ese concepto no se puede elegir a mano desde ningún lado.
