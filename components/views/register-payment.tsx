@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DollarSign, X, Check, Eye, Clock, ArrowLeftRight, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown, ChevronUp, ChevronDown } from "lucide-react"
+import { DollarSign, X, Check, Eye, Clock, ArrowLeftRight, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown, ChevronUp, ChevronDown, CalendarCheck } from "lucide-react"
 import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
 import { leerAplazados, aplazar, quitarAplazado } from "@/lib/aplazados"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -280,6 +280,18 @@ type GestionConUbicacion = Gestion & {
   geocerca_motivo: string | null
 }
 
+/**
+ * "11/09" — día y mes, sin año.
+ *
+ * Se usa en la fila del cliente que hoy no debe nada, para decir cuándo le
+ * vuelve a vencer. El año sobra: siempre está a días de distancia, y en una
+ * línea de 11px en un teléfono cada carácter cuenta.
+ */
+function diaYMes(iso: string | null | undefined): string {
+  if (!iso || iso.length < 10) return "—"
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
+}
+
 type ManagedClient = DisplayClient & {
   /**
    * Qué pasó hoy con este cliente.
@@ -290,7 +302,7 @@ type ManagedClient = DisplayClient & {
    * EN SU SITIO de la ruta, entre los que ya resolvió, y no en un apartado al
    * final por el que hay que bajar cinco pantallas.
    */
-  gestionTipo: "pago" | "no_pago" | "aplazado"
+  gestionTipo: "pago" | "no_pago" | "aplazado" | "al_dia"
   gestionHora: string
   /** Suma de lo cobrado HOY en este prestamo, no el monto de una sola cuota. */
   valorAbonado: number
@@ -806,9 +818,35 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     return isDiario ? true : !isDiarioFreq
   })
 
-  // La RUTA es lo que falta menos lo aplazado; los aplazados viven en su
-  // propia pestaña.
-  const pendientesDeLaRuta = sinGestionar.filter((c) => !aplazados.has(c.loanId))
+  /**
+   * LOS QUE HOY NO DEBEN NADA.
+   *
+   * `nextPaymentEsFuturo` significa: no hay ninguna cuota vencida sin cubrir —
+   * ni la de hoy ni una anterior—. O pagó adelantado, o es una venta cuyo
+   * primer cobro todavía no llega. Su próxima cuota está en el futuro.
+   *
+   * NO son tarea de hoy, y el sistema ya lo decía en dos sitios: el avance del
+   * día los saca del denominador ("contarlos dejaba el avance en 41 de 42 para
+   * siempre") y el cierre de caja usa el mismo criterio. Lo único que faltaba
+   * era sacarlos de la LISTA: seguían apareciendo como una parada más, así que
+   * el cobrador iba a tocarles la puerta a cobrar algo que ya está pagado.
+   *
+   * Caso real, ruta 190 el 31/08/2026: un crédito con un abono de venta de
+   * $508.800 tenía cubiertas las cuotas hasta el 10 de septiembre —la de hoy
+   * entre ellas, marcada `pagado` en el cronograma— y aun así salía en la ruta.
+   *
+   * Pasan a Gestionados, que es donde vive lo ya resuelto del día. Desde ahí se
+   * les puede seguir cobrando por adelantado, que era la razón de tenerlos a la
+   * vista.
+   */
+  const alDiaHoy = sinGestionar.filter(
+    (c) => c.nextPaymentEsFuturo && !aplazados.has(c.loanId),
+  )
+
+  // La RUTA es lo que falta, menos lo aplazado y menos lo que hoy no debe nada.
+  const pendientesDeLaRuta = sinGestionar.filter(
+    (c) => !aplazados.has(c.loanId) && !c.nextPaymentEsFuturo,
+  )
   const aplazadosDeLaRuta = sinGestionar
     .filter((c) => aplazados.has(c.loanId))
     .filter(coincideBusqueda)
@@ -872,7 +910,26 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       metodoPago: null,
     }))
 
-  const sortedManaged = [...managedToday, ...aplazadosComoGestion].sort((a, b) => {
+  /**
+   * LOS QUE HOY NO DEBEN NADA, TAMBIEN COMO FILA DE GESTIONADOS.
+   *
+   * Sin hora, porque no pasó nada a ninguna hora: no es una visita, es que hoy
+   * no había nada que cobrarle. La fila lo dice con todas las letras y muestra
+   * cuándo vuelve a vencerle.
+   *
+   * Como los aplazados, no tocan el avance del día: `managedToday` sigue siendo
+   * solo lo que el cobrador resolvió de verdad, y el denominador ya los excluía.
+   */
+  const alDiaComoGestion: ManagedClient[] = alDiaHoy.map((c) => ({
+    ...c,
+    gestionTipo: "al_dia" as const,
+    gestionHora: "",
+    valorAbonado: 0,
+    cuotasAbonadas: 0,
+    metodoPago: null,
+  }))
+
+  const sortedManaged = [...managedToday, ...aplazadosComoGestion, ...alDiaComoGestion].sort((a, b) => {
     const ordA = a.ordenvisita > 0 ? a.ordenvisita : 99999
     const ordB = b.ordenvisita > 0 ? b.ordenvisita : 99999
     return ordA - ordB
@@ -3814,7 +3871,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                             ? "border-l-green-500"
                             : m.gestionTipo === "aplazado"
                               ? "border-l-amber-500"
-                              : "border-l-red-500"
+                              : m.gestionTipo === "al_dia"
+                                ? "border-l-sky-500"
+                                : "border-l-red-500"
                         } ${index % 2 === 0 ? "bg-card" : "bg-muted"}`}
                       >
                         {/* Línea 1: SOLO el nombre, con todo el ancho.
@@ -3855,6 +3914,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               <CheckCircle2 className="h-3.5 w-3.5" />
                               Pago ${(m.valorAbonado ?? 0).toLocaleString()}
                             </span>
+                          ) : m.gestionTipo === "al_dia" ? (
+                            /* Ni pago ni no pago ni pendiente: hoy no debía
+                               nada. La fecha va pegada porque sin ella la
+                               etiqueta no explica por qué este cliente está
+                               acá y no en la ruta. */
+                            <span className="inline-flex items-center gap-1 text-[12px] font-bold text-sky-700 bg-sky-100 px-2 py-1 rounded-full shrink-0">
+                              <CalendarCheck className="h-3.5 w-3.5" />
+                              Al día
+                            </span>
                           ) : m.gestionTipo === "aplazado" ? (
                             /* La misma insignia que lleva en la pestaña
                                Pendientes, en el mismo sitio donde las otras
@@ -3881,7 +3949,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               {m.metodoPago === "mixto" ? "Mixto" : "Transferencia"}
                             </span>
                           )}
-                          <span className="text-[11px] text-muted-foreground shrink-0">{m.gestionHora}</span>
+                          {m.gestionTipo === "al_dia" ? (
+                            <span className="text-[11px] text-muted-foreground shrink-0">
+                              vuelve el {diaYMes(m.nextPaymentFecha)}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-muted-foreground shrink-0">{m.gestionHora}</span>
+                          )}
                         </div>
                         {/* Línea 3: los datos a la izquierda, las acciones a la
                             derecha. Los tres botones estaban arriba, apretando
@@ -3896,13 +3970,36 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                             <span className="text-[11px] text-muted-foreground">Saldo: <span className="font-semibold text-warning">${Math.round(m.saldo).toLocaleString()}</span></span>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
-                            {/* AL APLAZADO NO SE LE CORRIGE NADA: se le cobra.
+                            {/* NI AL APLAZADO NI AL QUE ESTA AL DIA SE LE CORRIGE
+                                NADA: se le cobra.
                                 No hay gestión detrás suyo —ni pago ni no pago—
                                 así que un lápiz que abre "corregir esta
                                 gestión" no tendría qué corregir. Lleva el mismo
                                 botón verde de la ruta, con el que se resuelve
                                 ahí mismo sin ir a buscarlo a la otra pestaña. */}
-                            {m.gestionTipo === "aplazado" ? (
+                            {m.gestionTipo === "al_dia" ? (
+                              /* UN BOTON, NO EL MENU.
+                                 Al que hoy no debe nada solo se le puede hacer
+                                 una cosa: cobrarle por adelantado. El menú
+                                 verde traería además "No Pago", y marcarle una
+                                 visita fallida a quien no debía nada mete en el
+                                 libro un evento que no ocurrió. La opción que
+                                 no debe existir se quita, no se explica. */
+                              <Button
+                                size="icon"
+                                className="h-10 w-10 shrink-0 rounded-full bg-success text-card hover:bg-success/80"
+                                title="Cobrar por adelantado"
+                                aria-label="Cobrar por adelantado"
+                                onClick={() =>
+                                  gpsStatus !== "granted"
+                                    ? handleLocationRequired()
+                                    : handleSelectClient(m)
+                                }
+                                disabled={canManageClient(m) === false && gpsStatus === "granted"}
+                              >
+                                <Check className="h-5 w-5" />
+                              </Button>
+                            ) : m.gestionTipo === "aplazado" ? (
                               menuGestion(m, true)
                             ) : (
                               <>
@@ -4039,7 +4136,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 </DropdownMenuItem>
                                 {/* Un aplazado no movió plata, así que no hay
                                     recibo que generar. */}
-                                {m.gestionTipo !== "aplazado" && (
+                                {m.gestionTipo !== "aplazado" && m.gestionTipo !== "al_dia" && (
                                   <DropdownMenuItem
                                     className="text-xs md:text-base cursor-pointer"
                                     onClick={() => handleGenerarRecibo(m)}

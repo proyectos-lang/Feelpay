@@ -118,6 +118,51 @@ export type DashboardPagosResult = {
 }
 
 /**
+ * EL TOPE DE 1000 FILAS.
+ *
+ * PostgREST devuelve como mucho 1000 filas por consulta y NO avisa: no hay
+ * error, no hay bandera, llega una respuesta con pinta de completa a la que le
+ * faltan filas. Hay que pedir por páginas hasta que una venga corta.
+ *
+ * No es teórico. El 31/08/2026 la ruta 190 tenía 1.071 filas de cronograma
+ * entre sus créditos activos y la app recibía 1.000. Como el orden era por
+ * `numero_cuota`, lo que se caía eran las ÚLTIMAS cuotas: 22 de los 49
+ * créditos perdían las suyas. Un crédito que solo tenía sin cubrir la #23 se
+ * quedaba sin ninguna cuota por cobrar y el módulo de pagos lo descartaba
+ * entero — no salía ni en la ruta ni en gestionados. Existía, debía plata, y
+ * era invisible. La 933 va en 1.563 filas.
+ *
+ * EL DESEMPATE NO ES OPCIONAL. Paginar con un orden que tiene empates
+ * (`numero_cuota` se repite en todos los créditos) no garantiza el mismo orden
+ * entre una página y la siguiente: se pueden repetir filas y, peor, saltarse
+ * otras. Por eso cada consulta paginada ordena además por `id`, que es único.
+ */
+const PAGINA = 1000
+const MAX_PAGINAS = 60
+
+async function todasLasFilas<T>(
+  consulta: (desde: number, hasta: number) => PromiseLike<{
+    data: unknown[] | null
+    error: { message: string } | null
+  }>,
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  const filas: T[] = []
+  for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
+    const desde = pagina * PAGINA
+    const { data, error } = await consulta(desde, desde + PAGINA - 1)
+    if (error) return { data: filas, error }
+    const lote = (data ?? []) as T[]
+    filas.push(...lote)
+    if (lote.length < PAGINA) return { data: filas, error: null }
+  }
+  // 60.000 filas en una sola ruta es un error de programación, no un dato.
+  // Se avisa y se sigue con lo que hay: mejor una lista incompleta con un
+  // rastro en la consola que un bucle infinito en el teléfono del cobrador.
+  console.error(`[v0] Se alcanzó el tope de ${MAX_PAGINAS} páginas; la lista puede estar incompleta`)
+  return { data: filas, error: null }
+}
+
+/**
  * Carga el módulo de pagos con SELECTs paralelos filtrando por ruta.
  * Sin RLS: cada consulta filtra explícitamente.
  */
@@ -155,18 +200,24 @@ export async function loadDashboardPagos(
   const desde = ayerColombia()
 
   const [loansRes, gesRes] = await Promise.all([
-    supabase
-      .from("loans")
-      .select("*, clients(nombre_completo, apodo, documento, latitud, longitud)")
-      .eq("ruta", args.rutaId)
-      .order("ordenvisita", { ascending: true }),
-    supabase
-      .from("gestiones")
-      .select(COLUMNAS_GESTION)
-      .eq("ruta", args.rutaId)
-      .eq("estado", "aplicada")
-      .gte("fecha_gestion", desde)
-      .order("fecha_hora", { ascending: true }),
+    todasLasFilas<LoanWithClient>((d, h) =>
+      supabase
+        .from("loans")
+        .select("*, clients(nombre_completo, apodo, documento, latitud, longitud)")
+        .eq("ruta", args.rutaId)
+        .order("ordenvisita", { ascending: true })
+        .order("id", { ascending: true })
+        .range(d, h)),
+    todasLasFilas<Gestion>((d, h) =>
+      supabase
+        .from("gestiones")
+        .select(COLUMNAS_GESTION)
+        .eq("ruta", args.rutaId)
+        .eq("estado", "aplicada")
+        .gte("fecha_gestion", desde)
+        .order("fecha_hora", { ascending: true })
+        .order("id", { ascending: true })
+        .range(d, h)),
   ])
 
   if (loansRes.error) {
@@ -190,10 +241,10 @@ export async function loadDashboardPagos(
   if (gesRes.error) {
     console.error("[v0] gestiones error:", gesRes.error.message)
   } else {
-    gestiones = (gesRes.data ?? []) as unknown as Gestion[]
+    gestiones = gesRes.data
   }
 
-  const loans = (loansRes.data ?? []) as unknown as LoanWithClient[]
+  const loans = loansRes.data
 
   // Préstamos que se movieron desde ayer. Un cancelado que esté acá sigue
   // entrando: `register-payment` ya lo excluye de Pendientes por su estado,
@@ -221,26 +272,32 @@ export async function loadDashboardPagos(
   // de prestamos. Estas dos sí se filtran por loan_id, para que hablen
   // exactamente del mismo conjunto.
   const [finRes, ppRes] = await Promise.all([
-    supabase
-      .from("v_loan_financiero")
-      .select(
-        "loan_id, total_a_pagar, total_pagado, saldo, saldo_hoy, saldo_en_mora, " +
-          "cuotas_mora, cuotas_cubiertas, cuotas_totales, cuotas_extra, fecha_ultimo_pago",
-      )
-      .in("loan_id", loanIds),
-    supabase
-      .from("payment_plan")
-      .select(
-        "id, loan_id, numero_cuota, valor_cuota, capital, interes, estado, fecha_pago, fecha_pago_real, monto_pagado, es_extra",
-      )
-      .in("loan_id", loanIds)
-      .order("numero_cuota", { ascending: true }),
+    todasLasFilas<LoanFinanciero>((d, h) =>
+      supabase
+        .from("v_loan_financiero")
+        .select(
+          "loan_id, total_a_pagar, total_pagado, saldo, saldo_hoy, saldo_en_mora, " +
+            "cuotas_mora, cuotas_cubiertas, cuotas_totales, cuotas_extra, fecha_ultimo_pago",
+        )
+        .in("loan_id", loanIds)
+        .order("loan_id", { ascending: true })
+        .range(d, h)),
+    todasLasFilas<PaymentPlanEntry>((d, h) =>
+      supabase
+        .from("payment_plan")
+        .select(
+          "id, loan_id, numero_cuota, valor_cuota, capital, interes, estado, fecha_pago, fecha_pago_real, monto_pagado, es_extra",
+        )
+        .in("loan_id", loanIds)
+        .order("numero_cuota", { ascending: true })
+        .order("id", { ascending: true })
+        .range(d, h)),
   ])
 
   if (finRes.error) {
     console.error("[v0] v_loan_financiero error:", finRes.error.message)
   } else {
-    for (const f of (finRes.data ?? []) as unknown as LoanFinanciero[]) {
+    for (const f of finRes.data) {
       finMap.set(f.loan_id, f)
       saldoMap.set(f.loan_id, Number(f.saldo_hoy) || 0)
       moraMap.set(f.loan_id, Number(f.cuotas_mora) || 0)
@@ -253,7 +310,7 @@ export async function loadDashboardPagos(
   if (ppRes.error) {
     console.error("[v0] payment_plan error:", ppRes.error.message)
   } else {
-    allPaymentPlans = (ppRes.data ?? []) as unknown as PaymentPlanEntry[]
+    allPaymentPlans = ppRes.data
   }
 
   const resultado: DashboardPagosResult = {
