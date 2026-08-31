@@ -281,7 +281,16 @@ type GestionConUbicacion = Gestion & {
 }
 
 type ManagedClient = DisplayClient & {
-  gestionTipo: "pago" | "no_pago"
+  /**
+   * Qué pasó hoy con este cliente.
+   *
+   * `aplazado` NO sale del libro de eventos —no hay gestión que lo respalde—:
+   * es la marca del teléfono (`lib/aplazados.ts`) convertida en una fila más
+   * de esta lista. Se hace así para que el cobrador vea al que dejó pendiente
+   * EN SU SITIO de la ruta, entre los que ya resolvió, y no en un apartado al
+   * final por el que hay que bajar cinco pantallas.
+   */
+  gestionTipo: "pago" | "no_pago" | "aplazado"
   gestionHora: string
   /** Suma de lo cobrado HOY en este prestamo, no el monto de una sola cuota. */
   valorAbonado: number
@@ -764,12 +773,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
   const managedIds = new Set(managedToday.map((m) => m.loanId))
 
-  const sortedManaged = [...managedToday].sort((a, b) => {
-    const ordA = a.ordenvisita > 0 ? a.ordenvisita : 99999
-    const ordB = b.ordenvisita > 0 ? b.ordenvisita : 99999
-    return ordA - ordB
-  })
-
   // Un solo predicado de busqueda para las dos pestanas: si Gestionados
   // buscara distinto que Pendientes, el mismo cliente aparece en una y se
   // esconde en la otra.
@@ -785,11 +788,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       c.documento.includes(searchTerm)
     )
   }
-
-  // Gestionados tambien se busca. Al final del dia esta lista tiene tantos
-  // clientes como la otra, y encontrar a alguien para corregirle un cobro
-  // obligaba a bajar por toda la ruta a ojo.
-  const filteredManaged = sortedManaged.filter(coincideBusqueda)
 
   // Base filtered clients: all filters except mora — used for the circle counts
   // so the totals per category are always visible regardless of active mora filter.
@@ -843,6 +841,47 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clients, managedToday, currentRutaId])
 
+
+  /**
+   * LOS APLAZADOS, COMO UNA FILA MAS DE GESTIONADOS.
+   *
+   * El mismo cliente sale en las DOS pestañas a propósito: en "Pendientes"
+   * porque hay que volver a visitarlo, y en "Gestionados" porque el cobrador
+   * YA pasó por él hoy. Sin esto, a media tarde no había forma de distinguir
+   * al que se aplazó del que todavía no se ha tocado.
+   *
+   * Antes vivían en un apartado al final de la pestaña. Medido con 30
+   * gestionados: el encabezado quedaba a 4.986px de una página de 5.164 —el
+   * 97% hacia abajo, cinco pantallas y media de scroll—. Estar ahí abajo y no
+   * estar es lo mismo. Ahora van MEZCLADOS y ordenados por orden de visita,
+   * que es como el cobrador recorre la ruta.
+   *
+   * No inventan plata: `valorAbonado` en 0 y `metodoPago` en null, porque un
+   * aplazado no movió un peso. Y no tocan el avance del día —"30 de 43"— que
+   * sigue saliendo de `managedToday`: contar como resuelto al que se pospuso
+   * haría subir el porcentaje por posponer clientes.
+   */
+  const aplazadosComoGestion: ManagedClient[] = sinGestionar
+    .filter((c) => aplazados.has(c.loanId))
+    .map((c) => ({
+      ...c,
+      gestionTipo: "aplazado" as const,
+      gestionHora: aplazados.get(c.loanId) ?? "",
+      valorAbonado: 0,
+      cuotasAbonadas: 0,
+      metodoPago: null,
+    }))
+
+  const sortedManaged = [...managedToday, ...aplazadosComoGestion].sort((a, b) => {
+    const ordA = a.ordenvisita > 0 ? a.ordenvisita : 99999
+    const ordB = b.ordenvisita > 0 ? b.ordenvisita : 99999
+    return ordA - ordB
+  })
+
+  // Gestionados tambien se busca. Al final del dia esta lista tiene tantos
+  // clientes como la otra, y encontrar a alguien para corregirle un cobro
+  // obligaba a bajar por toda la ruta a ojo.
+  const filteredManaged = sortedManaged.filter(coincideBusqueda)
 
   const preFilteredClients = pendientesDeLaRuta.filter(coincideBusqueda)
 
@@ -3750,13 +3789,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                         encontro a nadie": con el mismo texto para los dos, el
                         cobrador cree que perdio el trabajo del dia. */}
                     <p className="text-xs md:text-sm">
-                      {managedToday.length === 0
+                      {sortedManaged.length === 0
                         ? "No hay clientes gestionados hoy"
                         : `Ningún gestionado coincide con "${searchTerm}"`}
                     </p>
-                    {managedToday.length > 0 && (
+                    {sortedManaged.length > 0 && (
                       <Button variant="outline" size="sm" onClick={() => setSearchTerm("")}>
-                        Ver los {managedToday.length} gestionados
+                        Ver los {sortedManaged.length} gestionados
                       </Button>
                     )}
                   </div>
@@ -3771,7 +3810,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                         // contra blanco. Borde grueso + franja de color al
                         // inicio, verde si pagó y roja si no.
                         className={`rounded-lg border-2 border-border border-l-4 px-3 py-2 ${
-                          m.gestionTipo === "pago" ? "border-l-green-500" : "border-l-red-500"
+                          m.gestionTipo === "pago"
+                            ? "border-l-green-500"
+                            : m.gestionTipo === "aplazado"
+                              ? "border-l-amber-500"
+                              : "border-l-red-500"
                         } ${index % 2 === 0 ? "bg-card" : "bg-muted"}`}
                       >
                         {/* Línea 1: SOLO el nombre, con todo el ancho.
@@ -3812,6 +3855,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               <CheckCircle2 className="h-3.5 w-3.5" />
                               Pago ${(m.valorAbonado ?? 0).toLocaleString()}
                             </span>
+                          ) : m.gestionTipo === "aplazado" ? (
+                            /* La misma insignia que lleva en la pestaña
+                               Pendientes, en el mismo sitio donde las otras
+                               dicen Pago o No pago: la fila se lee igual que
+                               las demás y lo único que cambia es qué pasó.
+                               Sin monto, porque no hubo. */
+                            <span className="inline-flex items-center gap-1 text-[12px] font-bold text-amber-700 bg-amber-100 px-2 py-1 rounded-full shrink-0">
+                              <Clock className="h-3.5 w-3.5" />
+                              Pendiente
+                            </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 text-[12px] font-bold text-red-700 bg-red-100 px-2 py-1 rounded-full shrink-0">
                               <XCircle className="h-3.5 w-3.5" />No pago
@@ -3843,6 +3896,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                             <span className="text-[11px] text-muted-foreground">Saldo: <span className="font-semibold text-warning">${Math.round(m.saldo).toLocaleString()}</span></span>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
+                            {/* AL APLAZADO NO SE LE CORRIGE NADA: se le cobra.
+                                No hay gestión detrás suyo —ni pago ni no pago—
+                                así que un lápiz que abre "corregir esta
+                                gestión" no tendría qué corregir. Lleva el mismo
+                                botón verde de la ruta, con el que se resuelve
+                                ahí mismo sin ir a buscarlo a la otra pestaña. */}
+                            {m.gestionTipo === "aplazado" ? (
+                              menuGestion(m, true)
+                            ) : (
+                              <>
                             {/* EL LÁPIZ ES UN MENÚ, no un botón.
                                 Antes eran dos botones sueltos —lápiz y
                                 basurero— y el basurero, en rojo y del mismo
@@ -3855,7 +3918,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 ruta —Pago, No Pago, Pendiente— porque son las
                                 mismas tres cosas: lo que cambia es que acá ya
                                 hay una gestión y se está corrigiendo. */}
-                            <DropdownMenu>
+<DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button
                                   size="icon"
@@ -3929,6 +3992,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
+                              </>
+                            )}
 
                             {/* EL OJO, el mismo extracto del módulo de pagos.
                                 Mismo icono, mismo diálogo, misma información:
@@ -3972,13 +4037,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                   <User className="mr-2 h-3 w-3 md:h-4 md:w-4" />
                                   Info del cliente
                                 </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className="text-xs md:text-base cursor-pointer"
-                                  onClick={() => handleGenerarRecibo(m)}
-                                >
-                                  <Receipt className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                  Generar recibo
-                                </DropdownMenuItem>
+                                {/* Un aplazado no movió plata, así que no hay
+                                    recibo que generar. */}
+                                {m.gestionTipo !== "aplazado" && (
+                                  <DropdownMenuItem
+                                    className="text-xs md:text-base cursor-pointer"
+                                    onClick={() => handleGenerarRecibo(m)}
+                                  >
+                                    <Receipt className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                    Generar recibo
+                                  </DropdownMenuItem>
+                                )}
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </div>
@@ -3990,86 +4059,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                   </>
                 )}
 
-                {/* ── LOS QUE QUEDARON PENDIENTES ─────────────────────────
-                    El mismo cliente sale en las DOS pestañas, y a propósito:
-                    en "Pendientes" porque hay que volver a visitarlo, y acá
-                    porque el cobrador YA hizo algo con él hoy — pasó, no pudo
-                    cobrar, lo dejó para después. Sin esta sección, a media
-                    tarde no había forma de distinguir al que se aplazó del que
-                    todavía no se ha tocado.
-
-                    NO cuenta en la insignia de "Gestionados" ni en el avance
-                    del día: un aplazado no está resuelto, y sumarlo haría subir
-                    el porcentaje por posponer clientes. Por eso lleva su propio
-                    encabezado con su propio número. */}
-                {aplazadosDeLaRuta.length > 0 && (
-                  <div className="space-y-1.5 pt-3 mt-3 border-t-2 border-border">
-                    <div className="flex items-center gap-1.5 px-0.5">
-                      <Clock className="h-3.5 w-3.5 text-amber-600 shrink-0" />
-                      <span className="text-[12px] md:text-sm font-semibold text-amber-700">
-                        También quedaron pendientes hoy
-                      </span>
-                      <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                        {aplazadosDeLaRuta.length}
-                      </span>
-                    </div>
-                    <p className="px-0.5 text-[11px] leading-snug text-muted-foreground">
-                      Ni pago ni no pago: hay que volver a visitarlos.
-                    </p>
-
-                    {aplazadosDeLaRuta.map((c, index) => (
-                      <div
-                        key={c.loanId}
-                        className={`rounded-lg border-2 border-border border-l-4 border-l-amber-500 px-3 py-2 ${
-                          index % 2 === 0 ? "bg-card" : "bg-muted"
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <span className="block font-semibold text-[13px] md:text-sm leading-tight break-words [overflow-wrap:anywhere]">
-                            {c.nombreCompleto}
-                          </span>
-                          {c.apodo && (
-                            <span className="block text-[11px] md:text-xs text-muted-foreground leading-tight break-words [overflow-wrap:anywhere]">
-                              {c.apodo}
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-[12px] font-bold text-amber-700 shrink-0">
-                            <Clock className="h-3.5 w-3.5" />
-                            Pendiente
-                          </span>
-                          {/* La hora solo está si se aplazó con la versión que
-                              la guarda. Las marcas de antes no la tienen y no
-                              se inventa ninguna. */}
-                          {aplazados.get(c.loanId) && (
-                            <span className="text-[11px] text-muted-foreground shrink-0">
-                              {aplazados.get(c.loanId)}
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="mt-1.5 flex items-end justify-between gap-2">
-                          <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-0.5">
-                            <span className="text-[11px] text-muted-foreground">Cuota: <span className="font-semibold text-foreground">${c.valorCuota.toLocaleString()}</span></span>
-                            <span className="text-[11px] text-muted-foreground">Saldo: <span className="font-semibold text-warning">${Math.round(c.saldo).toLocaleString()}</span></span>
-                            <span className={`text-[11px] font-semibold ${moraTexto(c.mora)}`}>
-                              {c.mora > 0 ? `Mora: ${c.mora}` : "Al día"}
-                            </span>
-                          </div>
-                          {/* EL MISMO menú verde de las listas. Desde acá se le
-                              cobra sin tener que ir a buscarlo a la otra
-                              pestaña, que es la mitad de para qué sirve verlo
-                              acá. */}
-                          <div className="shrink-0">
-                            {menuGestion(c, true)}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
           </div>{/* fin Panel 1: Gestionados */}
 
