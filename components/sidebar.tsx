@@ -37,6 +37,7 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import type { AuthenticatedUser } from "./views/login-view"
 import { ALL_MODULES, type PermissionsMap } from "@/lib/modules-catalog"
+import { BotonActualizar } from "@/components/actualizar-app"
 
 // Tipo para el evento de instalación PWA (no está en los tipos estándar de TS)
 interface BeforeInstallPromptEvent extends Event {
@@ -385,6 +386,17 @@ export function Sidebar({
               )}
             </div>
           </button>
+
+          {/* TRAER LA VERSIÓN NUEVA A MANO.
+              El aviso automático aparece solo cuando hay algo nuevo publicado;
+              este botón está siempre, para cuando algo se ve raro y uno
+              prefiere forzarlo sin esperar. Va en el menú y no dentro de un
+              módulo: actualiza la app ENTERA, no los datos de una pantalla —
+              que es lo que hacen los otros botones de refrescar y por eso
+              refrescar módulo por módulo no traía los cambios. */}
+          <div className="mt-3">
+            <BotonActualizar className="border-white/30 bg-white/15 text-sidebar-foreground hover:bg-white/25 hover:text-sidebar-foreground" />
+          </div>
 
           {/* Instalar app — móvil: siempre visible mientras no esté instalada */}
           {!isStandalone && (

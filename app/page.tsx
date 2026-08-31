@@ -43,6 +43,7 @@ import { AdminDashboard } from "@/components/views/admin-dashboard"
 import { AdminRouteDetail } from "@/components/views/admin-route-detail"
 import { RouteSelector, type SelectedRuta } from "@/components/route-selector"
 import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
+import { AvisoVersionNueva } from "@/components/actualizar-app"
 import {
   marcarDiaDeSesion, limpiarDiaDeSesion, sesionVencioPorDia, MENSAJE_SESION_DIARIA,
 } from "@/lib/sesion-diaria"
@@ -1238,6 +1239,11 @@ export default function Page() {
         userPermissions={userPermissions}
         moduleBadgeCounts={moduleBadgeCounts}
       >
+        {/* EL AVISO DE VERSIÓN NUEVA, ARRIBA DE TODO Y EN CUALQUIER MÓDULO.
+            No sirve de nada ponerlo en una pantalla sola: la app se abre por la
+            mañana y se queda en el módulo de pagos el resto del día. Tiene que
+            aparecer donde la persona esté. */}
+        <AvisoVersionNueva />
         {rutaSinIniciar ? (
           <RutaNoIniciada
             rutaId={rutaId}
