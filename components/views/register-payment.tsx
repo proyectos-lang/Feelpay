@@ -9,8 +9,9 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DollarSign, X, Check, Eye, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown, ChevronUp, ChevronDown } from "lucide-react"
+import { DollarSign, X, Check, Eye, Clock, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown, ChevronUp, ChevronDown } from "lucide-react"
 import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
+import { leerAplazados, aplazar, quitarAplazado } from "@/lib/aplazados"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
@@ -298,8 +299,32 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
   // ── Managed-today state (loaded from Supabase payment_plan) ──
   const [managedToday, setManagedToday] = useState<ManagedClient[]>([])
-  const TAB_ORDER: Array<"pendientes" | "gestionados" | "ventas"> = ["pendientes", "gestionados", "ventas"]
-  const [activeTab, setActiveTab] = useState<"pendientes" | "gestionados" | "ventas">("pendientes")
+  // "pendientes" es la pestaña de la RUTA (así se llama por dentro desde
+  // siempre; en pantalla dice "Ruta"). "aplazados" es la de los que quedaron
+  // para después, que en pantalla dice "Pendientes".
+  const TAB_ORDER: Array<"pendientes" | "aplazados" | "gestionados" | "ventas"> =
+    ["pendientes", "aplazados", "gestionados", "ventas"]
+  const [activeTab, setActiveTab] = useState<"pendientes" | "aplazados" | "gestionados" | "ventas">("pendientes")
+
+  /**
+   * Los que hoy quedaron PARA DESPUÉS. Ni pago ni no pago: no pasó nada
+   * todavía y hay que volver. Ver `lib/aplazados.ts`.
+   */
+  const [aplazados, setAplazados] = useState<Set<string>>(new Set())
+  useEffect(() => { setAplazados(leerAplazados(currentRutaId)) }, [currentRutaId])
+
+  const marcarAplazado = (client: DisplayClient) => {
+    setAplazados(new Set(aplazar(currentRutaId, client.loanId)))
+    toast({
+      title: "Queda pendiente",
+      description: `${client.nombre} pasó a la pestaña Pendientes para volver a visitarlo.`,
+    })
+  }
+
+  const devolverALaRuta = (client: DisplayClient) => {
+    setAplazados(new Set(quitarAplazado(currentRutaId, client.loanId)))
+    toast({ title: "Vuelve a la ruta", description: `${client.nombre} salió de Pendientes.` })
+  }
   // Conteo de ventas registradas HOY en la ruta. Lo recibimos via callback
   // desde `<SalesTodayList>` para evitar duplicar la query y mostrarlo en
   // el badge del tab "Ventas del día" (mismo patron que Pendientes y
@@ -743,12 +768,28 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // avance de la ruta. Antes el avance salia de la lista ya buscada, asi que
   // escribir tres letras hacia saltar el porcentaje al 90% — el trabajo del
   // dia no cambia porque alguien escriba en un campo de texto.
-  const pendientesDeLaRuta = clients.filter((c) => {
+  // Todos los que le faltan al cobrador, aplazados incluidos: es el
+  // denominador del avance del día. Un aplazado NO está gestionado — sigue
+  // siendo trabajo pendiente — así que sacarlo de esta cuenta haría que el
+  // avance subiera solo por posponer clientes.
+  const sinGestionar = clients.filter((c) => {
     if (managedIds.has(c.loanId)) return false
     if (c.saldo <= 0) return false
     const isDiarioFreq = c.frecuenciaPago === "daily"
     return isDiario ? true : !isDiarioFreq
   })
+
+  // La RUTA es lo que falta menos lo aplazado; los aplazados viven en su
+  // propia pestaña.
+  const pendientesDeLaRuta = sinGestionar.filter((c) => !aplazados.has(c.loanId))
+  const aplazadosDeLaRuta = sinGestionar
+    .filter((c) => aplazados.has(c.loanId))
+    .filter(coincideBusqueda)
+    .sort((a, b) => {
+      const ordA = a.ordenvisita > 0 ? a.ordenvisita : 99999
+      const ordB = b.ordenvisita > 0 ? b.ordenvisita : 99999
+      return ordA - ordB
+    })
 
   const preFilteredClients = pendientesDeLaRuta.filter(coincideBusqueda)
 
@@ -2805,6 +2846,271 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     return "border-l-red-500"
   }
 
+  /**
+   * UNA fila de cliente. Se usa en las DOS listas — "Ruta" y "Pendientes"— y
+   * por eso es una función y no JSX repetido: son doscientas líneas con cuatro
+   * botones y un menú, y dos copias se separan al primer arreglo que se haga
+   * en una sola.
+   *
+   * `total` es el largo de la lista donde se está pintando, que es lo que
+   * decide si "Bajar en la ruta" está disponible.
+   */
+  const filaCliente = (
+    client: DisplayClient,
+    index: number,
+    total: number,
+    aplazado: boolean,
+  ) => {
+      const canManage = canManageClient(client)
+      const arrastre = {
+        draggable: true,
+        onDragStart: () => handleDragStart(index),
+        onDragOver: (e: React.DragEvent) => handleDragOver(e, index),
+        onDragEnd: () => { setDragIndex(null); setDragOverIndex(null) },
+        onDrop: () => handleDrop(index),
+      }
+      return (
+      <TableRow
+        key={client.loanId}
+        {...arrastre}
+        className={`${index % 2 === 0 ? "bg-card" : "bg-muted"} hover:bg-accent/30 transition-colors border-b-2 border-b-border ${
+          dragIndex === index ? "opacity-50" : ""
+        } ${!canManage ? "opacity-60" : ""} ${
+          dragOverIndex === index ? "border-t-2 border-t-brand" : ""
+        }`}
+      >
+        {/* La franja de color va en la CELDA y no en la fila:
+            la tabla le quita los bordes al último `<tr>`, así
+            que puesta en la fila el último cliente se
+            quedaría sin ella. */}
+        {/* UNA SOLA FILA POR CLIENTE.
+          Estuvo en dos —el nombre cruzando las tres columnas y debajo los
+          datos— porque con la columna de acciones en 152px al nombre le
+          quedaban 124 y se partía en cuatro renglones. Al juntar los dos
+          botones de plata en uno solo y apilar el ojo sobre los tres puntos,
+          esa columna bajó a 84 y el nombre pasó a tener ~196: ya cabe al lado
+          de todo lo demás, y el cliente vuelve a ocupar una línea. */}
+        <TableCell
+          className={`py-1 md:py-1.5 px-2 border-l-4 align-middle whitespace-normal ${getMoraBarra(client.mora)}`}
+        >
+          {/* Dos renglones como máximo. `line-clamp-2` envuelve —no corta a
+              media palabra— y deja la fila del mismo alto para todos. Lo que
+              no quepa se lee completo en el extracto, a un toque del ojito.
+              OJO: sin `block`, que pelea con `line-clamp` por el `display` y
+              lo deja sin efecto. */}
+          <span className="font-semibold text-[13px] md:text-base leading-tight break-words [overflow-wrap:anywhere] line-clamp-2">
+            <span className="mr-1 text-[10px] md:text-xs font-normal text-muted-foreground tabular-nums">
+              {index + 1}.
+            </span>
+            {client.nombreCompleto}
+          </span>
+
+          {/* Mora y cuota en el MISMO renglón. Apiladas, como en el boceto,
+              costaban una línea más por cliente — y con cuarenta clientes esa
+              línea es media pantalla. Las dos dicen "cómo va este cliente", así
+              que leídas juntas no se pierde nada. */}
+          <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 leading-tight">
+            <span className={`text-[11px] md:text-sm font-semibold ${moraTexto(client.mora)}`}>
+              {client.mora > 0 ? `Mora: ${client.mora}` : "Al día"}
+            </span>
+            <span className="text-[10px] md:text-sm text-muted-foreground tabular-nums">
+              Cta {client.cuotasPagadas}/{client.cuotasTotales}
+            </span>
+            {aplazado && (
+              <span className="rounded bg-amber-500/15 px-1 text-[9px] md:text-xs font-semibold text-amber-700">
+                Pendiente
+              </span>
+            )}
+            {/* El día de cobro SOLO en los no diarios, que es donde dice algo:
+                en una ruta diaria sería la misma etiqueta en las cuarenta
+                filas. Verde cuando es hoy. */}
+            {client.frecuenciaPago !== "daily" && client.diaSemana && (
+              <span className={`rounded px-1 text-[9px] md:text-xs font-semibold ${
+                isPaymentDayToday(client.diaSemana)
+                  ? "bg-success text-success-foreground"
+                  : "bg-muted-foreground/15 text-muted-foreground"
+              }`}>
+                {client.diaSemana.charAt(0).toUpperCase() + client.diaSemana.slice(1)}
+              </span>
+            )}
+          </span>
+        </TableCell>
+
+        <TableCell className="py-1 md:py-1.5 px-1 text-right align-middle">
+          <span className="block text-[12px] md:text-base font-semibold tabular-nums leading-tight">
+            ${Math.round(client.saldo).toLocaleString()}
+          </span>
+          {/* La multa sí se queda en la lista: es plata que
+              hay que cobrar HOY y encontrarla solo abriendo
+              el extracto sería enterrarla. */}
+          {client.multaPendiente && (
+            <span className="block text-[10px] md:text-sm font-semibold text-destructive tabular-nums leading-tight">
+              Multa ${client.multaPendiente.valor.toLocaleString()}
+            </span>
+          )}
+        </TableCell>
+
+        <TableCell className="py-1 md:py-1.5 px-1 align-middle">
+          {/* UNA SOLA PUERTA A LAS GESTIONES.
+              Antes eran dos botones sueltos, verde y rojo, pegados en la misma
+              fila. Estuvieron a 2px uno de otro y en la calle, a pulso, se
+              tocaba No pago queriendo Pago — y cada equivocación cuesta una
+              reversa. Ahora hay un solo botón y las tres acciones viven
+              adentro, separadas y con su nombre escrito: para equivocarse hay
+              que leer mal, no solo temblar.
+
+              Y libera ancho: la columna pasó de 152px a 84, y eso es lo que le
+              devuelve espacio al nombre del cliente.
+
+              Lo que cada acción hace al aplicarse NO cambia: el diálogo de
+              pago y el de no pago son los mismos de siempre. */}
+          <div className="flex items-center justify-end gap-1.5">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="icon"
+                  className="h-10 w-10 shrink-0 rounded-full bg-success text-card hover:bg-success/80"
+                  title="Gestionar este cliente"
+                  aria-label="Gestionar este cliente"
+                >
+                  <Check className="h-5 w-5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuItem
+                  className="cursor-pointer text-sm font-medium"
+                  onClick={() =>
+                    gpsStatus !== "granted"
+                      ? handleLocationRequired()
+                      : handleSelectClient(client)
+                  }
+                  disabled={canManage === false && gpsStatus === "granted"}
+                >
+                  <Check className="mr-2 h-4 w-4 text-success" />
+                  {client.nextPaymentEsFuturo ? "Pago adelantado" : "Registrar pago"}
+                </DropdownMenuItem>
+
+                <DropdownMenuItem
+                  className="cursor-pointer text-sm font-medium"
+                  onClick={() => {
+                    if (gpsStatus !== "granted") {
+                      handleLocationRequired()
+                      return
+                    }
+                    setAgregarCuotaSiDebeNoPago(true)
+                    setNoPaymentClient(client)
+                  }}
+                  disabled={canManage === false && gpsStatus === "granted"}
+                >
+                  <X className="mr-2 h-4 w-4 text-destructive" />
+                  Registrar no pago
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+
+                {/* APLAZAR no pide GPS ni día de cobro, y por eso NO lleva los
+                    guardas de los otros dos: no registra nada en el libro. Es
+                    una nota del cobrador sobre su propio día — "a este vuelvo
+                    más tarde"— y hasta ahora, para dejarla, había que marcarle
+                    no pago, que es una visita fallida y no lo fue. */}
+                <DropdownMenuItem
+                  className="cursor-pointer text-sm font-medium"
+                  onClick={() => (aplazado ? devolverALaRuta(client) : marcarAplazado(client))}
+                >
+                  <Clock className="mr-2 h-4 w-4 text-amber-600" />
+                  {aplazado ? "Volver a la ruta" : "Dejar pendiente"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* EL OJO ENCIMA DE LOS TRES PUNTOS, no al lado: apilados ocupan
+                una columna de 28px en vez de dos, y ese ancho se lo lleva el
+                nombre. */}
+            <div className="flex shrink-0 flex-col gap-0.5">
+              <Button
+                size="icon"
+                variant="outline"
+                className="h-[26px] w-[26px] rounded-full bg-transparent p-0"
+                onClick={() => setExtractoClient(client)}
+                title="Ver el extracto del cliente"
+                aria-label="Ver el extracto del cliente"
+              >
+                <Eye className="h-3.5 w-3.5" />
+              </Button>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon" variant="outline" className="h-[26px] w-[26px] rounded-full bg-transparent p-0">
+                    <MoreVertical className="h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52">
+                  {/* SUBIR Y BAJAR viven acá desde que la columna de flechas
+                      se fue: medía 95px de alto y era la que decidía cuánto
+                      media cada fila. Arrastrar la fila sigue funcionando. */}
+                  <DropdownMenuItem
+                    className="text-xs md:text-base cursor-pointer"
+                    disabled={index === 0 || savingOrder}
+                    onClick={() => handleMoveUp(index)}
+                  >
+                    <ArrowUp className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                    Subir en la ruta
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-xs md:text-base cursor-pointer"
+                    disabled={index >= total - 1 || savingOrder}
+                    onClick={() => handleMoveDown(index)}
+                  >
+                    <ArrowDown className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                    Bajar en la ruta
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-xs md:text-base cursor-pointer"
+                    onClick={() => {
+                      setPaymentHistoryClient(client)
+                      setPaymentHistoryOpen(true)
+                    }}
+                  >
+                    <History className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                    Historial de pagos
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-xs md:text-base cursor-pointer"
+                    onClick={() => {
+                      setLoanHistoryClient(client)
+                      setLoanHistoryOpen(true)
+                    }}
+                  >
+                    <FileText className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                    Historial de prestamos
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-xs md:text-base cursor-pointer"
+                    onClick={() => {
+                      setSelectedClientInfo(client)
+                      setClientInfoDialogOpen(true)
+                    }}
+                  >
+                    <User className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                    Info del cliente
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-xs md:text-base cursor-pointer"
+                    onClick={() => handleGenerarRecibo(client)}
+                  >
+                    <Receipt className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                    Generar recibo
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+        </TableCell>
+      </TableRow>
+      )
+  }
+
   // El guard y el boton de iniciar ruta viven en <RutaNoIniciada>: los usan
   // esta pantalla y el bloqueo global de los vendedores, y dos copias de la
   // logica terminarian discrepando en cuando se considera abierta una ruta.
@@ -2921,6 +3227,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                       // Plegado tambien se va la barra de pestanas, asi que
                       // esta linea tiene que decir DONDE esta parado: sin eso,
                       // Pendientes vacio y Gestionados vacio se ven igual.
+                      if (activeTab === "aplazados") return `Pendientes · ${aplazadosDeLaRuta.length}`
                       if (activeTab === "gestionados") return `Gestionados · ${filteredManaged.length}`
                       if (activeTab === "ventas") return `Ventas del día · ${salesTodayCount}`
                       return `Pendientes · ${isDiario ? "Diario" : "No Diario"} · ${displayClients.length}${
@@ -3020,7 +3327,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               // no son tarea de hoy, y contarlos dejaba el avance en "41 de 42"
               // para siempre. Es el mismo criterio que usa el cierre de caja
               // (`clientesSinGestionarHoy`), para que los dos no discrepen.
-              const total = gestionados + pendientesDeLaRuta.filter((c) => !c.nextPaymentEsFuturo).length
+              const total = gestionados + sinGestionar.filter((c) => !c.nextPaymentEsFuturo).length
               if (total === 0) return null
               const recaudado = managedToday.reduce((s, m) => s + (m.valorAbonado || 0), 0)
               const pct = Math.round((gestionados / total) * 100)
@@ -3051,7 +3358,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 la cabecera se le montaba encima: el campo quedaba tapado y el
                 toque se lo comia la cabecera. Aca queda siempre a la mano,
                 que es justo para lo que sirve buscar en una lista larga. */}
-            {(activeTab === "pendientes" || activeTab === "gestionados") && (
+            {activeTab !== "ventas" && (
               <Input
                 placeholder="Buscar cliente por nombre o documento..."
                 value={searchTerm}
@@ -3071,7 +3378,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 que los tres quepan exactamente en cualquier móvil sin
                 desbordarse ni necesitar scroll. El texto largo se acorta
                 en móvil con versiones compactas visibles solo en <md. */}
-            <div className={`${ocultoEnMovil()} grid grid-cols-3 mt-2 border-b border-border w-full`}>
+            {/* CUATRO pestañas. La de siempre pasa a llamarse RUTA —es el
+                recorrido del día— y "Pendientes" queda libre para los que se
+                aplazaron, que es lo que la palabra dice de verdad: gente a la
+                que hay que volver.
+
+                Con cuatro botones el texto ya no cabe en un teléfono, así que
+                las dos de la derecha se quedan solo con su ícono y su número.
+                Ruta y Pendientes conservan la palabra: son las dos entre las
+                que se salta todo el día. */}
+            <div className={`${ocultoEnMovil()} grid grid-cols-4 mt-2 border-b border-border w-full`}>
               <button
                 onClick={() => setActiveTab("pendientes")}
                 className={`flex items-center justify-center gap-1 px-1 py-1.5 text-[11px] md:text-sm font-medium border-b-2 transition-colors ${
@@ -3081,13 +3397,34 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 }`}
               >
                 <Users className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">Pendientes</span>
+                <span className="truncate">Ruta</span>
                 <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
                   activeTab === "pendientes" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
                 }`}>
                   {displayClients.length}
                 </span>
               </button>
+
+              {/* LOS APLAZADOS. Ámbar y no gris: no es una lista de archivo,
+                  es trabajo que quedó a medias y hay que cerrar antes de que
+                  termine el día. */}
+              <button
+                onClick={() => setActiveTab("aplazados")}
+                className={`flex items-center justify-center gap-1 px-1 py-1.5 text-[11px] md:text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === "aplazados"
+                    ? "border-amber-500 text-amber-600"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Clock className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">Pendientes</span>
+                <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                  activeTab === "aplazados" ? "bg-amber-500 text-white" : "bg-muted text-muted-foreground"
+                }`}>
+                  {aplazadosDeLaRuta.length}
+                </span>
+              </button>
+
               <button
                 onClick={() => setActiveTab("gestionados")}
                 className={`flex items-center justify-center gap-1 px-1 py-1.5 text-[11px] md:text-sm font-medium border-b-2 transition-colors ${
@@ -3097,9 +3434,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 }`}
               >
                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                {/* Etiqueta corta en móvil, completa en md+ */}
-                <span className="truncate md:hidden">Gestionados</span>
-                <span className="truncate hidden md:inline">Clientes gestionados</span>
+                {/* Con cuatro pestañas el texto no cabe en un teléfono: se
+                    queda el ícono y el número, que es lo que se mira. */}
+                <span className="truncate hidden md:inline">Gestionados</span>
                 <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
                   activeTab === "gestionados" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
                 }`}>
@@ -3115,7 +3452,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 }`}
               >
                 <ShoppingCart className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">Ventas del día</span>
+                <span className="truncate hidden md:inline">Ventas</span>
                 <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
                   activeTab === "ventas" ? "bg-green-600 text-white" : "bg-muted text-muted-foreground"
                 }`}>
@@ -3224,7 +3561,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                           para dos renglones. */}
                       <TableHead className="text-[12px] md:text-base whitespace-nowrap py-1 md:py-2 px-2">Cliente</TableHead>
                       <TableHead className="w-[84px] md:w-[130px] text-right text-[12px] md:text-base whitespace-nowrap py-1 md:py-2 px-1">Saldo / Cuota</TableHead>
-                      <TableHead className="w-[152px] md:w-[190px] text-center text-[12px] md:text-base whitespace-nowrap py-1 md:py-2 px-1">Acción</TableHead>
+                      <TableHead className="w-[84px] md:w-[120px] text-center text-[12px] md:text-base whitespace-nowrap py-1 md:py-2 px-1">Acción</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -3235,266 +3572,50 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                         </TableCell>
                       </TableRow>
                     ) : (
-                      displayClients.map((client, index) => {
-                        const canManage = canManageClient(client)
-                        const arrastre = {
-                          draggable: true,
-                          onDragStart: () => handleDragStart(index),
-                          onDragOver: (e: React.DragEvent) => handleDragOver(e, index),
-                          onDragEnd: () => { setDragIndex(null); setDragOverIndex(null) },
-                          onDrop: () => handleDrop(index),
-                        }
-                        return (
-                        <Fragment key={client.loanId}>
-                        <TableRow
-                          {...arrastre}
-                          className={`${index % 2 === 0 ? "bg-card" : "bg-muted"} hover:bg-accent/30 transition-colors border-b-0 ${
-                            dragIndex === index ? "opacity-50" : ""
-                          } ${!canManage ? "opacity-60" : ""} ${
-                            dragOverIndex === index ? "border-t-2 border-t-brand" : ""
-                          }`}
-                        >
-                          {/* La franja de color va en la CELDA y no en la fila:
-                              la tabla le quita los bordes al último `<tr>`, así
-                              que puesta en la fila el último cliente se
-                              quedaría sin ella. */}
-                          {/* EL NOMBRE, CRUZANDO LAS TRES COLUMNAS.
-                              Se intentó primero como en el boceto —nombre y
-                              saldo en el mismo renglón— y medido en un teléfono
-                              de 360px no da: al nombre le quedaban 104px, se
-                              partía en cuatro renglones y la fila subía a 96px,
-                              peor que los 110 de antes. Recortarlo a dos
-                              renglones lo dejaba en "kelly marcela ga…", y dos
-                              clientes del mismo apellido se vuelven el mismo
-                              cliente.
-
-                              Cruzando las tres columnas el nombre se lee
-                              entero, los cuatro botones caben sin apretarse, y
-                              la fila queda en ~68px contra los ~110 de antes.
-                              El ahorro real no estaba en el nombre: estaba en
-                              la columna de flechas, que medía 95px de alto y
-                              era la que decidía cuánto media cada fila. */}
-                          <TableCell
-                            colSpan={3}
-                            className={`pt-1.5 pb-0 px-2 border-l-4 align-bottom whitespace-normal ${getMoraBarra(client.mora)}`}
-                          >
-                            <span className="block font-semibold text-[13px] md:text-base leading-tight break-words [overflow-wrap:anywhere]">
-                              {/* La posición en la ruta. Perdió su columna
-                                  —eran 40px de ancho para dos dígitos— pero se
-                                  queda: es el orden en que se recorre la
-                                  calle. */}
-                              <span className="mr-1 text-[10px] md:text-xs font-normal text-muted-foreground tabular-nums">
-                                {index + 1}.
-                              </span>
-                              {client.nombreCompleto}
-                            </span>
-                          </TableCell>
-                        </TableRow>
-
-                        {/* SEGUNDA FILA: mora, plata y acciones. */}
-                        <TableRow
-                          {...arrastre}
-                          className={`${index % 2 === 0 ? "bg-card" : "bg-muted"} hover:bg-accent/30 transition-colors border-b-2 border-b-border ${
-                            dragIndex === index ? "opacity-50" : ""
-                          } ${!canManage ? "opacity-60" : ""}`}
-                        >
-                          <TableCell className={`py-1 md:py-1.5 px-2 border-l-4 align-middle ${getMoraBarra(client.mora)}`}>
-                            <span className="flex flex-wrap items-center gap-1">
-                              {/* Mora en CUOTAS vencidas sin cubrir. Texto de
-                                  color y no pastilla: la pastilla llevaba
-                                  relleno arriba y abajo, y multiplicada por
-                                  cuarenta filas costaba media pantalla. */}
-                              <span className={`text-[11px] md:text-sm font-semibold leading-tight ${moraTexto(client.mora)}`}>
-                                {client.mora > 0 ? `Mora: ${client.mora}` : "Al día"}
-                              </span>
-                              {/* El día de cobro SOLO en los no diarios, que es
-                                  donde dice algo: en una ruta diaria sería la
-                                  misma etiqueta en las cuarenta filas. Verde
-                                  cuando es hoy. */}
-                              {client.frecuenciaPago !== "daily" && client.diaSemana && (
-                                <span className={`rounded px-1 text-[9px] md:text-xs font-semibold leading-tight ${
-                                  isPaymentDayToday(client.diaSemana)
-                                    ? "bg-success text-success-foreground"
-                                    : "bg-muted-foreground/15 text-muted-foreground"
-                                }`}>
-                                  {client.diaSemana.charAt(0).toUpperCase() + client.diaSemana.slice(1)}
-                                </span>
-                              )}
-                            </span>
-                          </TableCell>
-
-                          <TableCell className="py-1 md:py-1.5 px-1 text-right align-middle">
-                            <span className="block text-[12px] md:text-base font-semibold tabular-nums leading-tight">
-                              ${Math.round(client.saldo).toLocaleString()}
-                            </span>
-                            <span className="block text-[10px] md:text-sm text-muted-foreground tabular-nums leading-tight">
-                              Cta {client.cuotasPagadas}/{client.cuotasTotales}
-                            </span>
-                            {/* La multa sí se queda en la lista: es plata que
-                                hay que cobrar HOY y encontrarla solo abriendo
-                                el extracto sería enterrarla. */}
-                            {client.multaPendiente && (
-                              <span className="block text-[10px] md:text-sm font-semibold text-destructive tabular-nums leading-tight">
-                                Multa ${client.multaPendiente.valor.toLocaleString()}
-                              </span>
-                            )}
-                          </TableCell>
-
-                          <TableCell className="py-1 md:py-1.5 px-1 align-middle">
-                            {/* LOS DOS BOTONES DE PLATA SIGUEN SIENDO GRANDES Y
-                                SIGUEN SEPARADOS.
-
-                                Estos dos estuvieron a 2px uno de otro y en la
-                                calle, a pulso, se tocaba No pago queriendo
-                                Pago: cada equivocación cuesta una reversa.
-                                Miden 36px con 8 de aire —44px entre centros,
-                                contra los 2 de entonces— y el ojo y el menú,
-                                que no mueven plata, van de 28 y al final. */}
-                            <div className="flex items-center justify-end gap-0">
-                              <Button
-                                size="icon"
-                                className="bg-success hover:bg-success/80 text-card h-9 w-9 shrink-0 rounded-full disabled:opacity-40 disabled:cursor-not-allowed"
-                                onClick={() =>
-                                  gpsStatus !== "granted"
-                                    ? handleLocationRequired()
-                                    : handleSelectClient(client)
-                                }
-                                disabled={canManage === false && gpsStatus === "granted"}
-                                title={
-                                  gpsStatus !== "granted"
-                                    ? "Debes habilitar la ubicacion para registrar pagos"
-                                    : !canManage
-                                    ? "No es el dia de pago de este cliente"
-                                    : client.nextPaymentEsFuturo
-                                    ? `Adelantar la cuota del ${client.nextPaymentFecha.split("-").reverse().slice(0, 2).join("/")}`
-                                    : "Registrar Pago"
-                                }
-                                aria-label="Registrar Pago"
-                              >
-                                <Check className="h-5 w-5" />
-                              </Button>
-
-                              <Button
-                                size="icon"
-                                className="bg-destructive hover:bg-destructive/80 text-destructive-foreground h-9 w-9 shrink-0 rounded-full ml-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                                onClick={() => {
-                                  if (gpsStatus !== "granted") {
-                                    handleLocationRequired()
-                                    return
-                                  }
-                                  setAgregarCuotaSiDebeNoPago(true)
-                                  setNoPaymentClient(client)
-                                }}
-                                disabled={canManage === false && gpsStatus === "granted"}
-                                title={
-                                  gpsStatus !== "granted"
-                                    ? "Debes habilitar la ubicacion para registrar no pagos"
-                                    : !canManage
-                                    ? "No es el dia de pago de este cliente"
-                                    : "Registrar No Pago"
-                                }
-                                aria-label="Registrar No Pago"
-                              >
-                                <X className="h-5 w-5" />
-                              </Button>
-
-                              {/* EL OJITO: todo lo que se sacó de la fila. */}
-                              <Button
-                                size="icon"
-                                variant="outline"
-                                className="h-7 w-7 shrink-0 rounded-full bg-transparent ml-1.5"
-                                onClick={() => setExtractoClient(client)}
-                                title="Ver el extracto del cliente"
-                                aria-label="Ver el extracto del cliente"
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                              </Button>
-
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button size="icon" variant="outline" className="h-7 w-7 shrink-0 rounded-full bg-transparent ml-1">
-                                    <MoreVertical className="h-3.5 w-3.5" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-52">
-                                  {/* SUBIR Y BAJAR SE VINIERON ACÁ.
-                                      Tenían columna propia con dos flechas, el
-                                      número y el asa de arrastre: ~40px de
-                                      ancho y, sobre todo, ~95px de ALTO que
-                                      eran los que decidían cuánto medía cada
-                                      fila. Arrastrar la fila sigue funcionando
-                                      igual; esto es el camino para quien
-                                      prefiere tocar. */}
-                                  <DropdownMenuItem
-                                    className="text-xs md:text-base cursor-pointer"
-                                    disabled={index === 0 || savingOrder}
-                                    onClick={() => handleMoveUp(index)}
-                                  >
-                                    <ArrowUp className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                    Subir en la ruta
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    className="text-xs md:text-base cursor-pointer"
-                                    disabled={index >= displayClients.length - 1 || savingOrder}
-                                    onClick={() => handleMoveDown(index)}
-                                  >
-                                    <ArrowDown className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                    Bajar en la ruta
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    className="text-xs md:text-base cursor-pointer"
-                                    onClick={() => {
-                                      setPaymentHistoryClient(client)
-                                      setPaymentHistoryOpen(true)
-                                    }}
-                                  >
-                                    <History className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                    Historial de pagos
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    className="text-xs md:text-base cursor-pointer"
-                                    onClick={() => {
-                                      setLoanHistoryClient(client)
-                                      setLoanHistoryOpen(true)
-                                    }}
-                                  >
-                                    <FileText className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                    Historial de prestamos
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    className="text-xs md:text-base cursor-pointer"
-                                    onClick={() => {
-                                      setSelectedClientInfo(client)
-                                      setClientInfoDialogOpen(true)
-                                    }}
-                                  >
-                                    <User className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                    Info del cliente
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    className="text-xs md:text-base cursor-pointer"
-                                    onClick={() => handleGenerarRecibo(client)}
-                                  >
-                                    <Receipt className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                                    Generar recibo
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                        </Fragment>
-                        )
-                      })
+                      displayClients.map((client, index) =>
+                        filaCliente(client, index, displayClients.length, false))
                     )}
                   </TableBody>
                 </Table>
               </div>
             )}
-          </div>{/* fin Panel 0: Pendientes */}
+          </div>{/* fin Panel 0: Ruta */}
 
-          {/* ── Panel 1: Gestionados ────────────────────────────────────── */}
+          {/* ── Panel 1: Pendientes (los aplazados) ────────────────────────
+              La MISMA fila que la ruta —`filaCliente`— porque es el mismo
+              cliente y las mismas acciones: desde acá también se le cobra o se
+              le marca no pago, que es a lo que va. Lo único que cambia es que
+              el reloj, en vez de aplazar, lo devuelve a la ruta. */}
+          <div className="w-full shrink-0 p-2 md:p-6">
+            {aplazadosDeLaRuta.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-10 text-center text-muted-foreground">
+                <Clock className="h-8 w-8 opacity-40" />
+                <span className="text-sm">Nadie quedó pendiente por ahora.</span>
+                <span className="max-w-xs text-xs">
+                  Con el reloj del botón verde puedes dejar a un cliente para volver más
+                  tarde, sin marcarle pago ni no pago.
+                </span>
+              </div>
+            ) : (
+              <div className="rounded-md border overflow-hidden">
+                <Table className="w-full table-fixed">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-[12px] md:text-base whitespace-nowrap py-1 md:py-2 px-2">Cliente</TableHead>
+                      <TableHead className="w-[84px] md:w-[130px] text-right text-[12px] md:text-base whitespace-nowrap py-1 md:py-2 px-1">Saldo / Cuota</TableHead>
+                      <TableHead className="w-[84px] md:w-[120px] text-center text-[12px] md:text-base whitespace-nowrap py-1 md:py-2 px-1">Acción</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {aplazadosDeLaRuta.map((client, index) =>
+                      filaCliente(client, index, aplazadosDeLaRuta.length, true))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>{/* fin Panel 1: Pendientes */}
+
+          {/* ── Panel 2: Gestionados ────────────────────────────────────── */}
           <div className="w-full shrink-0 p-2 md:p-6">
             <div className="space-y-2">
                 {filteredManaged.length === 0 ? (
