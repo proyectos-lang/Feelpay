@@ -2904,8 +2904,20 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           }
           disabled={canManage === false && gpsStatus === "granted"}
         >
-          <Check className="mr-2 h-4 w-4 text-success" />
-          {client.nextPaymentEsFuturo ? "Pago adelantado" : "Registrar pago"}
+          {/* Círculo LLENO con el visto en blanco, como el botón verde que
+              abre este menú. Lucide no trae la versión rellena, y un aro
+              contra un círculo lleno se leen como dos cosas distintas. */}
+          <span className="mr-2 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-600">
+            <Check className="h-3 w-3 text-white" strokeWidth={3} />
+          </span>
+          <span className="font-semibold text-green-700">Pago</span>
+          {/* La única variante que sobrevive al recorte de nombres. Cobrar una
+              cuota que todavía no vence es válido, pero es una decisión: sin
+              este aviso el cobrador no tiene cómo saber que está adelantando.
+              Va en gris y pequeño para no romper la fila de las tres. */}
+          {client.nextPaymentEsFuturo && (
+            <span className="ml-1 text-[11px] font-normal text-muted-foreground">adelantado</span>
+          )}
         </DropdownMenuItem>
 
         <DropdownMenuItem
@@ -2920,8 +2932,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           }}
           disabled={canManage === false && gpsStatus === "granted"}
         >
-          <X className="mr-2 h-4 w-4 text-destructive" />
-          Registrar no pago
+          <span className="mr-2 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-red-600">
+            <X className="h-3 w-3 text-white" strokeWidth={3} />
+          </span>
+          <span className="font-semibold text-red-700">No Pago</span>
         </DropdownMenuItem>
 
         <DropdownMenuSeparator />
@@ -2935,8 +2949,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           className="cursor-pointer text-sm font-medium"
           onClick={() => (aplazado ? devolverALaRuta(client) : marcarAplazado(client))}
         >
-          <Clock className="mr-2 h-4 w-4 text-amber-600" />
-          {aplazado ? "Volver a la ruta" : "Dejar pendiente"}
+          {/* El reloj se queda SIN rellenar, a diferencia de los otros dos.
+              No es un descuido de estilo: pago y no pago cierran el día del
+              cliente y por eso van sólidos; dejarlo pendiente no cierra nada.
+              La forma dice cuál de las tres no resuelve. */}
+          <Clock className="mr-2 h-5 w-5 shrink-0 text-orange-500" strokeWidth={2.5} />
+          <span className="font-semibold">{aplazado ? "Volver a la ruta" : "Pendiente"}</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -3055,6 +3073,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               reversa. Ahora hay un solo botón y las tres acciones viven
               adentro, separadas y con su nombre escrito: para equivocarse hay
               que leer mal, no solo temblar.
+
+              Los nombres son de UNA palabra —Pago, No Pago, Pendiente— y sin
+              el verbo delante. "Registrar pago" y "Registrar no pago"
+              empezaban igual, así que la palabra que de verdad distingue una
+              opción de la otra quedaba en segundo lugar, que es el peor sitio
+              para leer a pulso. Ahora la primera palabra es la que decide.
 
               Y libera ancho: la columna pasó de 152px a 84, y eso es lo que le
               devuelve espacio al nombre del cliente.
