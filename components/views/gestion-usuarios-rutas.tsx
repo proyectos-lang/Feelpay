@@ -16,7 +16,7 @@ import { useToast } from "@/hooks/use-toast"
 import { ALL_MODULES, MODULE_GROUPS, getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
 import { AMORTIZACIONES } from "@/lib/gestion-core"
 import { verPines } from "@/lib/pin-lock"
-import { getUsuarioSesion } from "@/lib/movimientos"
+import { getUsuarioSesion, conceptosElegiblesAMano } from "@/lib/movimientos"
 import type { ModuleDefinition } from "@/lib/modules-catalog"
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
@@ -479,7 +479,7 @@ type RutaConfigRow = {
  * Se trae acá porque es lo que rige mientras la ruta no configure el suyo, y
  * sin él esta pantalla no podía decir la verdad sobre lo que pasa hoy.
  */
-type CatalogItem = { id: number; nombre: string; limite: number | null }
+type CatalogItem = { id: number; nombre: string; limite: number | null; solo_sistema?: boolean | null }
 
 type ItemFormRow = { habilitado: boolean; umbral: string }
 
@@ -551,14 +551,20 @@ function RutasTab() {
       const [rutasRes, configsRes, ingresosRes, gastosRes, retirosRes] = await Promise.all([
         supabase.from("rutas").select("id, nombre, ciudad, pais").order("id", { ascending: true }),
         supabase.from("ruta_config_umbrales").select("*"),
-        supabase.from("ingresos").select("id, nombre, limite").order("nombre"),
+        // `*` en ingresos por `solo_sistema` (script 083). Pedirla por nombre
+        // reventaría la consulta con 42703 donde el script no haya corrido.
+        supabase.from("ingresos").select("*").order("nombre"),
         supabase.from("gastos").select("id, nombre, limite").order("nombre"),
         supabase.from("retiros").select("id, nombre, limite").order("nombre"),
       ])
       if (rutasRes.error) throw rutasRes.error
       setRutas((rutasRes.data as Ruta[]) ?? [])
       setConfigs(new Map(((configsRes.data as RutaConfigRow[]) ?? []).map((c) => [c.ruta_id, c])))
-      setIngresoItems((ingresosRes.data as CatalogItem[]) ?? [])
+      // Los conceptos que solo escribe el sistema no se listan acá tampoco:
+      // el umbral de aprobación no los toca —`registrar_gestion` inserta la
+      // multa directo, con estadoadmin 'NA'— así que configurarles un tope
+      // sería letra muerta que se lee como si hiciera algo.
+      setIngresoItems(conceptosElegiblesAMano((ingresosRes.data as CatalogItem[]) ?? []))
       setGastoItems((gastosRes.data as CatalogItem[]) ?? [])
       setRetiroItems((retirosRes.data as CatalogItem[]) ?? [])
     } catch (err) {

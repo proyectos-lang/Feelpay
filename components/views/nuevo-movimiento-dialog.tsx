@@ -46,7 +46,8 @@ import { saveTransaction } from "@/lib/actions/save-transaction"
 import { fmtMoneda } from "@/lib/gestion-core"
 import { todayColombia } from "@/lib/colombia-date"
 import {
-  getUsuarioSesion, TIPOS_MOVIMIENTO, TABLA_CATALOGO, type TipoMovimiento,
+  getUsuarioSesion, TIPOS_MOVIMIENTO, TABLA_CATALOGO, conceptosElegiblesAMano,
+  type TipoMovimiento,
 } from "@/lib/movimientos"
 
 interface Props {
@@ -107,13 +108,17 @@ export function NuevoMovimientoDialog({ open, onOpenChange, rutaActual, rutas, o
     let vigente = true
     setCargandoConceptos(true)
     ;(async () => {
-      const { data, error } = await createClient().from(tabla).select("nombre").order("nombre")
+      // `*` y no "nombre": hace falta `solo_sistema` para esconder los
+      // conceptos que solo escribe el sistema, y pedirla por nombre reventaria
+      // la consulta en `gastos` y `retiros`, que no la tienen.
+      const { data, error } = await createClient().from(tabla).select("*").order("nombre")
       if (!vigente) return
       if (error) {
         console.error("[v0] Error cargando conceptos:", error.message)
         setConceptos([])
       } else {
-        setConceptos(((data ?? []) as { nombre: string }[]).map((c) => c.nombre))
+        const filas = (data ?? []) as { nombre: string; solo_sistema?: boolean | null }[]
+        setConceptos(conceptosElegiblesAMano(filas).map((c) => c.nombre))
       }
       setCargandoConceptos(false)
     })()

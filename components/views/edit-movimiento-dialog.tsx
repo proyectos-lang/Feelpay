@@ -23,7 +23,8 @@ import { editTransaction } from "@/lib/actions/edit-transaction"
 import { fmtMoneda, fmtFechaHora } from "@/lib/gestion-core"
 import { todayColombia } from "@/lib/colombia-date"
 import {
-  getUsuarioSesion, movimientoAbierto, TABLA_CATALOGO, type Movimiento,
+  getUsuarioSesion, movimientoAbierto, TABLA_CATALOGO, conceptosElegiblesAMano,
+  type Movimiento,
 } from "@/lib/movimientos"
 
 interface Props {
@@ -58,13 +59,17 @@ export function EditMovimientoDialog({ movimiento, open, onOpenChange, comoAseso
     if (!tabla) return
     let vigente = true
     ;(async () => {
-      const { data, error } = await createClient().from(tabla).select("nombre").order("nombre")
+      // `*` y no "nombre": hace falta `solo_sistema` para esconder los
+      // conceptos que solo escribe el sistema, y pedirla por nombre reventaría
+      // la consulta en `gastos` y `retiros`, que no la tienen.
+      const { data, error } = await createClient().from(tabla).select("*").order("nombre")
       if (!vigente) return
       if (error) {
         console.error("[v0] No se pudo cargar el catálogo de conceptos:", error.message)
         return
       }
-      const nombres = ((data ?? []) as unknown as { nombre: string }[]).map((x) => x.nombre)
+      const filas = (data ?? []) as unknown as { nombre: string; solo_sistema?: boolean | null }[]
+      const nombres = conceptosElegiblesAMano(filas).map((x) => x.nombre)
       // El concepto actual puede no estar en el catálogo (item borrado, o
       // movimiento viejo). Se agrega para no perderlo al abrir el diálogo.
       if (movimiento.concepto && !nombres.includes(movimiento.concepto)) {

@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -16,6 +16,7 @@ import { getSessionIdentity } from "@/lib/api-helper"
 import { enviarOEncolar } from "@/lib/offline-queue"
 import { guardarCache, leerCache } from "@/lib/offline-cache"
 import { todayColombia } from "@/lib/colombia-date"
+import { conceptosElegiblesAMano } from "@/lib/movimientos"
 import { getRutaItemUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre, type ItemUmbral } from "@/lib/ruta-umbrales"
 import {
   Dialog,
@@ -29,6 +30,9 @@ type ItemOption = {
   id: number
   nombre: string
   limite?: number
+  // Solo la tienen los ingresos, y solo desde el script 083. Marca los
+  // conceptos que escribe el sistema y que nadie puede elegir a mano.
+  solo_sistema?: boolean | null
 }
 
 type PendingTransaction = {
@@ -155,6 +159,12 @@ export function RegisterTransaction({
     return cfg.habilitado ? cfg.umbral : null
   }
 
+  // Lo que el desplegable puede ofrecer. Se filtra aca y no al leer porque
+  // los items entran por tres caminos —consulta, cache offline y cache de
+  // ultimo recurso— y un filtro por camino es un filtro que algun dia se
+  // olvida en uno de ellos.
+  const incomeElegibles = useMemo(() => conceptosElegiblesAMano(incomeItems), [incomeItems])
+
   const incomeTope     = topeDelItem("ingreso", selectedIncomeItem, incomeLimite)
   const expenseTope    = topeDelItem("gasto", selectedExpenseItem, expenseLimite)
   const withdrawalTope = topeDelItem("retiro", selectedWithdrawalItem, withdrawalLimite)
@@ -203,9 +213,14 @@ export function RegisterTransaction({
       const supabase = createClient()
 
       try {
+        // `*` y no la lista de columnas a proposito: `solo_sistema` es nueva
+        // (script 083) y pedirla por nombre revienta la consulta ENTERA con
+        // 42703 en cualquier base donde el script todavia no haya corrido —
+        // el cobrador se quedaria sin poder registrar ningun ingreso. Con `*`
+        // llega lo que exista y el filtro de abajo se apana con lo que haya.
         const { data: ingresos, error: ingresosError } = await supabase
           .from("ingresos")
-          .select("id, nombre, limite")
+          .select("*")
           .order("nombre")
 
         if (ingresosError) {
@@ -640,7 +655,7 @@ export function RegisterTransaction({
                 </Label>
                 <ConceptoCombobox
                   id="incomeItem"
-                  opciones={incomeItems.map((i) => ({ valor: i.id.toString(), etiqueta: i.nombre }))}
+                  opciones={incomeElegibles.map((i) => ({ valor: i.id.toString(), etiqueta: i.nombre }))}
                   valor={selectedIncomeItem}
                   onValorChange={handleIncomeItemChange}
                   cargando={loading}

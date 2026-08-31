@@ -47,6 +47,31 @@ export const TABLA_CATALOGO: Record<string, string> = {
   Retiro: "retiros",
 }
 
+/**
+ * Los conceptos que un formulario de registro SÍ puede ofrecer.
+ *
+ * Hay conceptos del catálogo que solo escribe el sistema —hoy 'Recaudo x Multa
+ * Clientes', que alimenta `registrar_gestion` cuando un cliente paga una
+ * multa—. Van marcados con `solo_sistema` en la tabla (script 083).
+ *
+ * Se esconden porque si se pudieran elegir a mano dejarían de significar lo
+ * que dicen: la gracia de esa línea del informe es que es, exactamente, lo que
+ * el sistema cobró en multas. Un concepto que cualquiera puede usar a mano es
+ * un concepto del que ya no se puede afirmar nada.
+ *
+ * OJO: se filtra por la COLUMNA y no por el nombre. Comparar contra el texto
+ * 'Recaudo x Multa Clientes' se rompería solo el día que alguien lo retoque
+ * desde el catálogo, y en silencio.
+ *
+ * `gastos` y `retiros` no tienen la columna: ahí `solo_sistema` llega
+ * `undefined` y no se esconde nada, que es lo correcto.
+ */
+export function conceptosElegiblesAMano<T extends { solo_sistema?: boolean | null }>(
+  filas: T[] | null | undefined,
+): T[] {
+  return (filas ?? []).filter((f) => f.solo_sistema !== true)
+}
+
 export interface Movimiento {
   id: number
   fechahorasol: string
