@@ -3428,78 +3428,101 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 las dos de la derecha se quedan solo con su ícono y su número.
                 Ruta y Pendientes conservan la palabra: son las dos entre las
                 que se salta todo el día. */}
-            <div className={`${ocultoEnMovil()} grid grid-cols-4 mt-2 border-b border-border w-full`}>
-              <button
-                onClick={() => setActiveTab("pendientes")}
-                className={`flex items-center justify-center gap-1 px-1 py-1.5 text-[11px] md:text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === "pendientes"
-                    ? "border-primary text-primary"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <Users className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">Ruta</span>
-                <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                  activeTab === "pendientes" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                }`}>
-                  {displayClients.length}
-                </span>
-              </button>
+            {/* ── LAS CUATRO PESTAÑAS ──────────────────────────────────
+                Sin texto: un ícono con color y su número. Con cuatro pestañas
+                y un teléfono de 360px, "Gestionados" y "Ventas del día" ya
+                venían recortados a la mitad o escondidos en `md:`, así que el
+                nombre no estaba diciendo nada — y las pestañas quedaban de
+                anchos distintos según lo que cupiera en cada una.
 
-              {/* LOS APLAZADOS. Ámbar y no gris: no es una lista de archivo,
-                  es trabajo que quedó a medias y hay que cerrar antes de que
-                  termine el día. */}
-              <button
-                onClick={() => setActiveTab("aplazados")}
-                className={`flex items-center justify-center gap-1 px-1 py-1.5 text-[11px] md:text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === "aplazados"
-                    ? "border-amber-500 text-amber-600"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <Clock className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">Pendientes</span>
-                <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                  activeTab === "aplazados" ? "bg-amber-500 text-white" : "bg-muted text-muted-foreground"
-                }`}>
-                  {aplazadosDeLaRuta.length}
-                </span>
-              </button>
+                El nombre NO se pierde: va en `title` y en `aria-label`, así
+                que sigue estando para quien deje el dedo encima y para un
+                lector de pantalla. Lo que se va es el texto que no cabía.
 
-              <button
-                onClick={() => setActiveTab("gestionados")}
-                className={`flex items-center justify-center gap-1 px-1 py-1.5 text-[11px] md:text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === "gestionados"
-                    ? "border-primary text-primary"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                {/* Con cuatro pestañas el texto no cabe en un teléfono: se
-                    queda el ícono y el número, que es lo que se mira. */}
-                <span className="truncate hidden md:inline">Gestionados</span>
-                <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                  activeTab === "gestionados" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                }`}>
-                  {filteredManaged.length}
-                </span>
-              </button>
-              <button
-                onClick={() => setActiveTab("ventas")}
-                className={`flex items-center justify-center gap-1 px-1 py-1.5 text-[11px] md:text-sm font-medium border-b-2 transition-colors rounded-t-md bg-green-100 dark:bg-green-900/30 ${
-                  activeTab === "ventas"
-                    ? "border-green-600 text-green-700 dark:text-green-400"
-                    : "border-transparent text-green-700 dark:text-green-500 hover:border-green-400"
-                }`}
-              >
-                <ShoppingCart className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate hidden md:inline">Ventas</span>
-                <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                  activeTab === "ventas" ? "bg-green-600 text-white" : "bg-muted text-muted-foreground"
-                }`}>
-                  {salesTodayCount}
-                </span>
-              </button>
+                Las cuatro salen del MISMO arreglo, que es lo que garantiza que
+                midan igual: un `grid-cols-4` con `gap` reparte el ancho en
+                cuartos exactos, pase lo que pase con los números. */}
+            <div className={`${ocultoEnMovil()} mt-2 w-full`}>
+              <div className="grid grid-cols-4 gap-1.5">
+                {([
+                  {
+                    id: "pendientes" as const,
+                    nombre: "Ruta",
+                    Icono: MapPin,
+                    // La ruta es el recorrido: azul de marca, el color del
+                    // encabezado de la app.
+                    color: "text-brand",
+                    n: displayClients.length,
+                  },
+                  {
+                    id: "aplazados" as const,
+                    nombre: "Pendientes",
+                    // EL MISMO RELOJ que se usa dentro del módulo — en el menú
+                    // verde ("Dejar pendiente") y en la pastilla del aplazado.
+                    // Tres reloj distintos para la misma idea serían tres cosas
+                    // distintas a los ojos de quien cobra.
+                    Icono: Clock,
+                    color: "text-orange-500",
+                    n: aplazadosDeLaRuta.length,
+                  },
+                  {
+                    id: "gestionados" as const,
+                    nombre: "Gestionados",
+                    Icono: CheckCircle2,
+                    color: "text-green-600",
+                    n: filteredManaged.length,
+                  },
+                  {
+                    id: "ventas" as const,
+                    nombre: "Ventas del día",
+                    Icono: ShoppingCart,
+                    color: "text-green-600",
+                    n: salesTodayCount,
+                  },
+                ]).map(({ id, nombre, Icono, color, n }) => {
+                  const activa = activeTab === id
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setActiveTab(id)}
+                      title={nombre}
+                      aria-label={`${nombre}: ${n}`}
+                      aria-current={activa ? "true" : undefined}
+                      className={`flex items-center justify-center gap-1.5 rounded-xl px-1 py-2 shadow-sm transition-colors ${
+                        activa ? "bg-brand/10" : "bg-muted/60 hover:bg-muted"
+                      }`}
+                    >
+                      <Icono className={`h-5 w-5 shrink-0 ${color}`} />
+                      {/* El número de la pestaña ACTIVA va en un círculo
+                          lleno. Es la única marca que dice dónde estás cuando
+                          no hay texto que resaltar. */}
+                      <span
+                        className={`shrink-0 text-[13px] font-bold tabular-nums ${
+                          activa
+                            ? "flex h-6 min-w-6 items-center justify-center rounded-full bg-brand px-1 text-brand-foreground"
+                            : "text-brand"
+                        }`}
+                      >
+                        {n}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* El subrayado de la activa. Va en su propia rejilla de cuatro
+                  para caer justo debajo de su pestaña, y sobre la línea gris
+                  que separa la cabecera del listado. */}
+              <div className="mt-1.5 grid grid-cols-4 gap-1.5 border-b border-border">
+                {TAB_ORDER.map((t) => (
+                  <span
+                    key={t}
+                    aria-hidden="true"
+                    className={`h-[3px] rounded-full ${activeTab === t ? "bg-brand" : "bg-transparent"}`}
+                  />
+                ))}
+              </div>
             </div>
             {/* Puntos de navegación — solo móvil, y TAMBIÉN se pliegan.
                 Plegado no queda nada para cambiar de panel: hay que desplegar,
