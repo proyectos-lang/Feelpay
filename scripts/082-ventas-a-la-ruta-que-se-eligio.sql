@@ -26,21 +26,25 @@
 -- QUÉ MUEVE, MEDIDO
 --   cinthya panadera   $1.000.000   contada en el 28/08
 --   maribel eulalia    $2.000.000   contada en el 29/08
+--   IVANNA               $200.000   contada en el 29/08   (+ el cliente)
 --   ─────────────────────────────
---   TOTAL              $3.000.000   de la ruta 1 a la 151
+--   TOTAL              $3.200.000   de la ruta 1 a la 151
 --
 -- Y LO QUE VA A DESTAPAR — léelo antes de correr
--- La caja de la 151 pasa de −$285.200 a −$3.285.200. Eso NO es un error del
+-- La caja de la 151 pasa de −$285.200 a −$3.485.200. Eso NO es un error del
 -- script: es la verdad que estaba escondida en la ruta equivocada. Prestó
--- $3.000.000 y esa plata tuvo que salir de algún lado; si la 151 recibió una
+-- $3.200.000 y esa plata tuvo que salir de algún lado; si la 151 recibió una
 -- remesa para financiarlos, ESE INGRESO NO ESTÁ REGISTRADO. Después de correr
 -- esto hay que buscarlo y registrarlo, o la caja de la 151 va a seguir
--- diciendo que debe tres millones.
+-- diciendo que debe tres millones y medio.
 --
--- La ruta 1 queda en −$199.840, que son los $200.000 de la tercera venta
--- (IVANNA). Esa no se mueve acá: es un cliente NUEVO, así que el cliente
--- TAMBIÉN se creó en la ruta 1 y no hay forma de deducir de los datos a qué
--- ruta iba. Está en el PASO 6, comentado, para completarlo a mano.
+-- La ruta 1 vuelve a +$160, que es donde estaba antes de que le cayeran estas
+-- tres ventas encima.
+--
+-- La de IVANNA lleva un paso propio (el 6) porque es la única con cliente
+-- NUEVO: el cliente también se creó en la ruta 1, así que hay que moverlo a él
+-- además del préstamo. La ruta la confirmó el dueño, no se dedujo de los
+-- datos: de los datos no se podía.
 --
 -- Corre los pasos EN ORDEN. Cada uno es una sola sentencia.
 -- ============================================================================
@@ -131,9 +135,8 @@ SELECT t.tgname, t.tgenabled
 
 
 -- ── PASO 5) Ningún préstamo en desacuerdo con su cliente (SOLO LECTURA) ───
--- Debe quedar SOLO la venta de IVANNA si todavía no se resolvió el PASO 6, y
--- ahí los dos están en la 1, así que ni siquiera aparece. Lo ideal es CERO
--- filas.
+-- Tiene que dar CERO filas. Un préstamo en una ruta y su cliente en otra es
+-- justamente la forma del error que este script viene a deshacer.
 SELECT l.id, c.apodo, l.valor, l.ruta AS ruta_prestamo, c.ruta AS ruta_cliente
   FROM public.loans l
   JOIN public.clients c ON c.id = l.client_id
@@ -142,42 +145,70 @@ SELECT l.id, c.apodo, l.valor, l.ruta AS ruta_prestamo, c.ruta AS ruta_cliente
  ORDER BY l.created_at DESC;
 
 
--- ── PASO 6) LA VENTA DE IVANNA — completar a mano ─────────────────────────
--- $200.000, cliente NUEVO, contada en el reporte del 29/08. El cliente se creó
--- en la ruta 1 junto con el préstamo, así que de los datos NO se puede deducir
--- a qué ruta iba: hay que preguntarle a quien la registró.
+-- ── PASO 6) La venta de IVANNA, y su cliente ──────────────────────────────
+-- $200.000, contada en el reporte del 29/08. Va también a la 151 — lo confirmó
+-- el dueño; de los datos no se podía deducir, porque el cliente es NUEVO y se
+-- creó en la ruta 1 junto con el préstamo.
 --
--- Cuando sepas la ruta, cambia los 151 de abajo por la correcta y quítale los
--- comentarios a las cuatro sentencias. Fíjate que acá SÍ se mueve también el
--- CLIENTE, que es lo que no hacía falta en las otras dos.
---
--- UPDATE public.clients SET ruta = 151, updated_at = NOW()
---  WHERE id = (SELECT client_id FROM public.loans WHERE id = 'b6a7b3ef-ae1a-4522-98fa-215cc1f615f2');
---
--- UPDATE public.loans SET ruta = 151, updated_at = NOW()
---  WHERE id = 'b6a7b3ef-ae1a-4522-98fa-215cc1f615f2' AND ruta = 1;
---
--- UPDATE public.payment_plan SET ruta = 151
---  WHERE loan_id = 'b6a7b3ef-ae1a-4522-98fa-215cc1f615f2' AND ruta = 1;
---
--- DO $$
--- BEGIN
---   ALTER TABLE public.gestiones DISABLE TRIGGER trg_gestiones_inmutables;
---   UPDATE public.gestiones SET ruta = 151
---    WHERE loan_id = 'b6a7b3ef-ae1a-4522-98fa-215cc1f615f2' AND ruta = 1;
---   ALTER TABLE public.gestiones ENABLE TRIGGER trg_gestiones_inmutables;
--- END $$;
+-- Por eso este paso mueve una pieza más que los anteriores: EL CLIENTE. En las
+-- otras dos ya estaba en la 151 y solo el préstamo se había ido de sitio.
+UPDATE public.clients
+   SET ruta = 151, updated_at = NOW()
+ WHERE id = (SELECT client_id FROM public.loans
+              WHERE id = 'b6a7b3ef-ae1a-4522-98fa-215cc1f615f2')
+   AND ruta = 1;
 
 
--- ── PASO 7) Cómo quedaron las dos cajas (SOLO LECTURA) ────────────────────
+-- ── PASO 7) Su préstamo ───────────────────────────────────────────────────
+UPDATE public.loans
+   SET ruta = 151, updated_at = NOW()
+ WHERE id = 'b6a7b3ef-ae1a-4522-98fa-215cc1f615f2'
+   AND ruta = 1;
+
+
+-- ── PASO 8) Su cronograma ─────────────────────────────────────────────────
+UPDATE public.payment_plan
+   SET ruta = 151
+ WHERE loan_id = 'b6a7b3ef-ae1a-4522-98fa-215cc1f615f2'
+   AND ruta = 1;
+
+
+-- ── PASO 9) Y su rastro en el libro ───────────────────────────────────────
+-- Mismo bloque atómico del PASO 3, por el mismo motivo.
+DO $$
+BEGIN
+  ALTER TABLE public.gestiones DISABLE TRIGGER trg_gestiones_inmutables;
+
+  UPDATE public.gestiones
+     SET ruta = 151
+   WHERE loan_id = 'b6a7b3ef-ae1a-4522-98fa-215cc1f615f2'
+     AND ruta = 1;
+
+  ALTER TABLE public.gestiones ENABLE TRIGGER trg_gestiones_inmutables;
+END $$;
+
+
+-- ── PASO 10) El trigger, otra vez (SOLO LECTURA) ──────────────────────────
+-- `tgenabled` tiene que seguir en 'O'.
+SELECT t.tgname, t.tgenabled
+  FROM pg_trigger t
+  JOIN pg_class c ON c.oid = t.tgrelid
+ WHERE c.relname = 'gestiones'
+   AND NOT t.tgisinternal;
+
+
+-- ── PASO 11) Cómo quedaron las dos cajas (SOLO LECTURA) ───────────────────
 -- Lo que debe verse, medido antes de correr nada:
 --
---   ruta   1   efectivo  −$3.199.840  →  −$199.840   (los $200.000 de IVANNA)
---   ruta 151   efectivo    −$285.200  →  −$3.285.200
+--   ruta   1   efectivo  −$3.199.840  →       +$160
+--   ruta 151   efectivo    −$285.200  →  −$3.485.200
 --
--- El −$3.285.200 de la 151 es el número que hay que perseguir: prestó tres
--- millones y no hay un ingreso que los respalde. No lo inventó este script,
--- lo destapó.
+-- El +$160 de la ruta 1 es exactamente donde estaba antes de que le cayeran
+-- estas tres ventas: $20 el 27/08 más $140 de recaudo el 28.
+--
+-- El −$3.485.200 de la 151 es el número que hay que perseguir: prestó tres
+-- millones doscientos mil y no hay un ingreso que los respalde. No lo inventó
+-- este script, lo destapó.
 SELECT r.ruta,
        r.fecha_pago,
        r.valor_ventas,
