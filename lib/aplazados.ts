@@ -44,42 +44,68 @@ function clave(rutaId: number): string {
   return `${PREFIJO}_${rutaId}_${todayColombia()}`
 }
 
-/** Los créditos aplazados hoy en esta ruta. */
-export function leerAplazados(rutaId: number): Set<string> {
-  if (typeof window === "undefined") return new Set()
+/**
+ * Los créditos aplazados hoy en esta ruta, con LA HORA en que se aplazaron.
+ *
+ * La hora existe porque el aplazado también sale en la pestaña de Gestionados,
+ * y ahí cada tarjeta dice a qué hora pasó lo que pasó. Sin ella, la del
+ * aplazado sería la única sin hora en una lista donde todas la tienen.
+ *
+ * SE LEEN LAS DOS FORMAS. La primera versión guardaba un array de ids a secas.
+ * Un teléfono que aplazó clientes esta mañana tiene ese formato en disco, y
+ * descartarlo le devolvería los clientes a la ruta a media jornada.
+ */
+export function leerAplazados(rutaId: number): Map<string, string> {
+  const m = new Map<string, string>()
+  if (typeof window === "undefined") return m
   try {
     const raw = localStorage.getItem(clave(rutaId))
-    if (!raw) return new Set()
-    const ids = JSON.parse(raw) as unknown
-    return new Set(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [])
+    if (!raw) return m
+    const dato = JSON.parse(raw) as unknown
+    if (Array.isArray(dato)) {
+      // Formato viejo: solo ids. Se conservan, sin hora.
+      for (const id of dato) if (typeof id === "string") m.set(id, "")
+    } else if (dato && typeof dato === "object") {
+      for (const [id, hora] of Object.entries(dato as Record<string, unknown>)) {
+        m.set(id, typeof hora === "string" ? hora : "")
+      }
+    }
   } catch {
-    return new Set()
+    /* dato corrupto: se empieza de cero */
   }
+  return m
 }
 
-function guardar(rutaId: number, ids: Set<string>): void {
+function guardar(rutaId: number, m: Map<string, string>): void {
   if (typeof window === "undefined") return
   try {
-    if (ids.size === 0) localStorage.removeItem(clave(rutaId))
-    else localStorage.setItem(clave(rutaId), JSON.stringify([...ids]))
+    if (m.size === 0) localStorage.removeItem(clave(rutaId))
+    else localStorage.setItem(clave(rutaId), JSON.stringify(Object.fromEntries(m)))
     limpiarViejos()
   } catch (err) {
     console.warn("[v0] No se pudieron guardar los aplazados:", err)
   }
 }
 
-export function aplazar(rutaId: number, loanId: string): Set<string> {
-  const ids = leerAplazados(rutaId)
-  ids.add(loanId)
-  guardar(rutaId, ids)
-  return ids
+/** La hora, en el formato corto que ya usan las tarjetas de Gestionados. */
+function horaAhora(): string {
+  return new Date().toLocaleTimeString("es-CO", {
+    hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "America/Bogota",
+  })
 }
 
-export function quitarAplazado(rutaId: number, loanId: string): Set<string> {
-  const ids = leerAplazados(rutaId)
-  ids.delete(loanId)
-  guardar(rutaId, ids)
-  return ids
+export function aplazar(rutaId: number, loanId: string): Map<string, string> {
+  const m = leerAplazados(rutaId)
+  m.set(loanId, horaAhora())
+  guardar(rutaId, m)
+  return m
+}
+
+export function quitarAplazado(rutaId: number, loanId: string): Map<string, string> {
+  const m = leerAplazados(rutaId)
+  m.delete(loanId)
+  guardar(rutaId, m)
+  return m
 }
 
 /**

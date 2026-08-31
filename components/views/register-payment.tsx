@@ -310,11 +310,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
    * Los que hoy quedaron PARA DESPUÉS. Ni pago ni no pago: no pasó nada
    * todavía y hay que volver. Ver `lib/aplazados.ts`.
    */
-  const [aplazados, setAplazados] = useState<Set<string>>(new Set())
+  // `loanId → hora`. La hora se muestra en la tarjeta de Gestionados, donde
+  // todas las demás la llevan.
+  const [aplazados, setAplazados] = useState<Map<string, string>>(new Map())
   useEffect(() => { setAplazados(leerAplazados(currentRutaId)) }, [currentRutaId])
 
   const marcarAplazado = (client: DisplayClient) => {
-    setAplazados(new Set(aplazar(currentRutaId, client.loanId)))
+    setAplazados(new Map(aplazar(currentRutaId, client.loanId)))
     toast({
       title: "Queda pendiente",
       description: `${client.nombre} pasó a la pestaña Pendientes para volver a visitarlo.`,
@@ -322,7 +324,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   }
 
   const devolverALaRuta = (client: DisplayClient) => {
-    setAplazados(new Set(quitarAplazado(currentRutaId, client.loanId)))
+    setAplazados(new Map(quitarAplazado(currentRutaId, client.loanId)))
     toast({ title: "Vuelve a la ruta", description: `${client.nombre} salió de Pendientes.` })
   }
   // Conteo de ventas registradas HOY en la ruta. Lo recibimos via callback
@@ -790,6 +792,30 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       const ordB = b.ordenvisita > 0 ? b.ordenvisita : 99999
       return ordA - ordB
     })
+
+  /**
+   * LIMPIAR LOS APLAZADOS QUE YA SE RESOLVIERON.
+   *
+   * Cuando a un aplazado se le registra el pago, sale de `sinGestionar` y las
+   * listas dejan de mostrarlo — pero la marca sigue en el teléfono. Si después
+   * se anula ese pago, el cliente volvería a "Pendientes" en vez de a la ruta,
+   * arrastrando una decisión de hace tres horas que ya se cumplió.
+   *
+   * Se hace acá y no en cada camino de éxito porque los caminos son varios
+   * —pago, no pago, cancelación, la cola offline— y el que se olvide es el que
+   * deja la marca colgada.
+   */
+  useEffect(() => {
+    if (aplazados.size === 0) return
+    const vivos = new Set(sinGestionar.map((c) => c.loanId))
+    const resueltos = [...aplazados.keys()].filter((id) => !vivos.has(id))
+    if (resueltos.length === 0) return
+    let m = aplazados
+    for (const id of resueltos) m = quitarAplazado(currentRutaId, id)
+    setAplazados(new Map(m))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clients, managedToday, currentRutaId])
+
 
   const preFilteredClients = pendientesDeLaRuta.filter(coincideBusqueda)
 
@@ -2847,6 +2873,77 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   }
 
   /**
+   * EL BOTÓN VERDE Y SUS TRES ACCIONES.
+   *
+   * Lo usan la lista de la ruta, la de Pendientes y la tarjeta del aplazado en
+   * Gestionados. Es una función y no JSX repetido porque de las tres opciones
+   * dos mueven plata: tres copias del mismo menú son tres sitios donde una
+   * guarda puede quedar sin poner.
+   */
+  const menuGestion = (client: DisplayClient, aplazado: boolean) => {
+    const canManage = canManageClient(client)
+    return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          size="icon"
+          className="h-10 w-10 shrink-0 rounded-full bg-success text-card hover:bg-success/80"
+          title="Gestionar este cliente"
+          aria-label="Gestionar este cliente"
+        >
+          <Check className="h-5 w-5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuItem
+          className="cursor-pointer text-sm font-medium"
+          onClick={() =>
+            gpsStatus !== "granted"
+              ? handleLocationRequired()
+              : handleSelectClient(client)
+          }
+          disabled={canManage === false && gpsStatus === "granted"}
+        >
+          <Check className="mr-2 h-4 w-4 text-success" />
+          {client.nextPaymentEsFuturo ? "Pago adelantado" : "Registrar pago"}
+        </DropdownMenuItem>
+
+        <DropdownMenuItem
+          className="cursor-pointer text-sm font-medium"
+          onClick={() => {
+            if (gpsStatus !== "granted") {
+              handleLocationRequired()
+              return
+            }
+            setAgregarCuotaSiDebeNoPago(true)
+            setNoPaymentClient(client)
+          }}
+          disabled={canManage === false && gpsStatus === "granted"}
+        >
+          <X className="mr-2 h-4 w-4 text-destructive" />
+          Registrar no pago
+        </DropdownMenuItem>
+
+        <DropdownMenuSeparator />
+
+        {/* APLAZAR no pide GPS ni día de cobro, y por eso NO lleva los
+            guardas de los otros dos: no registra nada en el libro. Es
+            una nota del cobrador sobre su propio día — "a este vuelvo
+            más tarde"— y hasta ahora, para dejarla, había que marcarle
+            no pago, que es una visita fallida y no lo fue. */}
+        <DropdownMenuItem
+          className="cursor-pointer text-sm font-medium"
+          onClick={() => (aplazado ? devolverALaRuta(client) : marcarAplazado(client))}
+        >
+          <Clock className="mr-2 h-4 w-4 text-amber-600" />
+          {aplazado ? "Volver a la ruta" : "Dejar pendiente"}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+    )
+  }
+
+  /**
    * UNA fila de cliente. Se usa en las DOS listas — "Ruta" y "Pendientes"— y
    * por eso es una función y no JSX repetido: son doscientas líneas con cuatro
    * botones y un menú, y dos copias se separan al primer arreglo que se haga
@@ -2965,63 +3062,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               Lo que cada acción hace al aplicarse NO cambia: el diálogo de
               pago y el de no pago son los mismos de siempre. */}
           <div className="flex items-center justify-end gap-1.5">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="icon"
-                  className="h-10 w-10 shrink-0 rounded-full bg-success text-card hover:bg-success/80"
-                  title="Gestionar este cliente"
-                  aria-label="Gestionar este cliente"
-                >
-                  <Check className="h-5 w-5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52">
-                <DropdownMenuItem
-                  className="cursor-pointer text-sm font-medium"
-                  onClick={() =>
-                    gpsStatus !== "granted"
-                      ? handleLocationRequired()
-                      : handleSelectClient(client)
-                  }
-                  disabled={canManage === false && gpsStatus === "granted"}
-                >
-                  <Check className="mr-2 h-4 w-4 text-success" />
-                  {client.nextPaymentEsFuturo ? "Pago adelantado" : "Registrar pago"}
-                </DropdownMenuItem>
-
-                <DropdownMenuItem
-                  className="cursor-pointer text-sm font-medium"
-                  onClick={() => {
-                    if (gpsStatus !== "granted") {
-                      handleLocationRequired()
-                      return
-                    }
-                    setAgregarCuotaSiDebeNoPago(true)
-                    setNoPaymentClient(client)
-                  }}
-                  disabled={canManage === false && gpsStatus === "granted"}
-                >
-                  <X className="mr-2 h-4 w-4 text-destructive" />
-                  Registrar no pago
-                </DropdownMenuItem>
-
-                <DropdownMenuSeparator />
-
-                {/* APLAZAR no pide GPS ni día de cobro, y por eso NO lleva los
-                    guardas de los otros dos: no registra nada en el libro. Es
-                    una nota del cobrador sobre su propio día — "a este vuelvo
-                    más tarde"— y hasta ahora, para dejarla, había que marcarle
-                    no pago, que es una visita fallida y no lo fue. */}
-                <DropdownMenuItem
-                  className="cursor-pointer text-sm font-medium"
-                  onClick={() => (aplazado ? devolverALaRuta(client) : marcarAplazado(client))}
-                >
-                  <Clock className="mr-2 h-4 w-4 text-amber-600" />
-                  {aplazado ? "Volver a la ruta" : "Dejar pendiente"}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {menuGestion(client, aplazado)}
 
             {/* EL OJO ENCIMA DE LOS TRES PUNTOS, no al lado: apilados ocupan
                 una columna de 28px en vez de dos, y ese ancho se lo lleva el
@@ -3797,6 +3838,88 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                   </div>
 
                   </>
+                )}
+
+                {/* ── LOS QUE QUEDARON PENDIENTES ─────────────────────────
+                    El mismo cliente sale en las DOS pestañas, y a propósito:
+                    en "Pendientes" porque hay que volver a visitarlo, y acá
+                    porque el cobrador YA hizo algo con él hoy — pasó, no pudo
+                    cobrar, lo dejó para después. Sin esta sección, a media
+                    tarde no había forma de distinguir al que se aplazó del que
+                    todavía no se ha tocado.
+
+                    NO cuenta en la insignia de "Gestionados" ni en el avance
+                    del día: un aplazado no está resuelto, y sumarlo haría subir
+                    el porcentaje por posponer clientes. Por eso lleva su propio
+                    encabezado con su propio número. */}
+                {aplazadosDeLaRuta.length > 0 && (
+                  <div className="space-y-1.5 pt-3 mt-3 border-t-2 border-border">
+                    <div className="flex items-center gap-1.5 px-0.5">
+                      <Clock className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                      <span className="text-[12px] md:text-sm font-semibold text-amber-700">
+                        También quedaron pendientes hoy
+                      </span>
+                      <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                        {aplazadosDeLaRuta.length}
+                      </span>
+                    </div>
+                    <p className="px-0.5 text-[11px] leading-snug text-muted-foreground">
+                      Ni pago ni no pago. Siguen en la pestaña Pendientes para volver a
+                      visitarlos.
+                    </p>
+
+                    {aplazadosDeLaRuta.map((c, index) => (
+                      <div
+                        key={c.loanId}
+                        className={`rounded-lg border-2 border-border border-l-4 border-l-amber-500 px-3 py-2 ${
+                          index % 2 === 0 ? "bg-card" : "bg-muted"
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <span className="block font-semibold text-[13px] md:text-sm leading-tight break-words [overflow-wrap:anywhere]">
+                            {c.nombreCompleto}
+                          </span>
+                          {c.apodo && (
+                            <span className="block text-[11px] md:text-xs text-muted-foreground leading-tight break-words [overflow-wrap:anywhere]">
+                              {c.apodo}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-[12px] font-bold text-amber-700 shrink-0">
+                            <Clock className="h-3.5 w-3.5" />
+                            Pendiente
+                          </span>
+                          {/* La hora solo está si se aplazó con la versión que
+                              la guarda. Las marcas de antes no la tienen y no
+                              se inventa ninguna. */}
+                          {aplazados.get(c.loanId) && (
+                            <span className="text-[11px] text-muted-foreground shrink-0">
+                              {aplazados.get(c.loanId)}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="mt-1.5 flex items-end justify-between gap-2">
+                          <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-0.5">
+                            <span className="text-[11px] text-muted-foreground">Cuota: <span className="font-semibold text-foreground">${c.valorCuota.toLocaleString()}</span></span>
+                            <span className="text-[11px] text-muted-foreground">Saldo: <span className="font-semibold text-warning">${Math.round(c.saldo).toLocaleString()}</span></span>
+                            <span className={`text-[11px] font-semibold ${moraTexto(c.mora)}`}>
+                              {c.mora > 0 ? `Mora: ${c.mora}` : "Al día"}
+                            </span>
+                          </div>
+                          {/* EL MISMO menú verde de las listas. Desde acá se le
+                              cobra sin tener que ir a buscarlo a la otra
+                              pestaña, que es la mitad de para qué sirve verlo
+                              acá. */}
+                          <div className="shrink-0">
+                            {menuGestion(c, true)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
           </div>{/* fin Panel 1: Gestionados */}
