@@ -270,6 +270,16 @@ export interface ResumenDia {
   monto: number
   cuotas: number
   hora: string
+  /**
+   * CÓMO pagó ese día: 'efectivo', 'transferencia' o 'mixto'.
+   *
+   * `null` cuando no entró plata (un no pago no tiene forma de pago).
+   *
+   * Sale del `metodo_pago` de los eventos que trajeron dinero, con la regla de
+   * siempre: vacío cuenta como efectivo, porque así lo cuenta la vista del
+   * resumen y la lista no puede decir otra cosa que la cifra.
+   */
+  metodo: "efectivo" | "transferencia" | "mixto" | null
 }
 
 /**
@@ -307,17 +317,29 @@ export function resumenDelDia(gestiones: Gestion[], loanId: string, dia: string)
 
   const visitas = vivos.filter(esVisita)
   if (visitas.length === 0) {
-    return { gestionado: false, tipo: null, monto: 0, cuotas: 0, hora: "" }
+    return { gestionado: false, tipo: null, monto: 0, cuotas: 0, hora: "", metodo: null }
   }
   const monto = vivos.reduce((s, g) => s + montoEfectivo(g), 0)
   const conPlata = visitas.filter((g) => Number(g.monto) > 0)
   const ultima = visitas.reduce((a, b) => (a.fecha_hora > b.fecha_hora ? a : b))
+  // La forma de pago solo se mira en los eventos que trajeron plata: una
+  // visita sin pago no tiene forma de pago que mostrar.
+  const formas = new Set(
+    conPlata.map((g) =>
+      (g.metodo_pago ?? "").trim().toLowerCase() === "transferencia" ? "transferencia" : "efectivo",
+    ),
+  )
+
   return {
     gestionado: true,
     tipo: conPlata.length > 0 ? "pago" : "no_pago",
     monto,
     cuotas: conPlata.reduce((s, g) => s + (g.num_cuotas || 1), 0),
     hora: horaColombia(ultima.fecha_hora),
+    metodo:
+      formas.size === 0 ? null
+      : formas.size > 1 ? "mixto"
+      : (formas.has("transferencia") ? "transferencia" : "efectivo"),
   }
 }
 

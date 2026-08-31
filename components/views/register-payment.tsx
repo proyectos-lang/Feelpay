@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DollarSign, X, Check, Eye, Clock, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown, ChevronUp, ChevronDown } from "lucide-react"
+import { DollarSign, X, Check, Eye, Clock, ArrowLeftRight, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown, ChevronUp, ChevronDown } from "lucide-react"
 import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
 import { leerAplazados, aplazar, quitarAplazado } from "@/lib/aplazados"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -287,6 +287,15 @@ type ManagedClient = DisplayClient & {
   valorAbonado: number
   /** Cuantas cuotas cubrio el cobro de hoy. Se imprime en el recibo. */
   cuotasAbonadas: number
+  /**
+   * Con qué pagó hoy. `null` en un no pago.
+   *
+   * Existe para poder marcar las transferencias EN LA LISTA. Un cobrador que
+   * cuadra su bolsillo al final del día necesita separar lo que recibió en
+   * billetes de lo que le entró a la cuenta, y hasta ahora las dos cosas se
+   * veían igual: "Pago $20.000".
+   */
+  metodoPago: "efectivo" | "transferencia" | "mixto" | null
   paymentPlanId?: string
 }
 
@@ -314,6 +323,24 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // todas las demás la llevan.
   const [aplazados, setAplazados] = useState<Map<string, string>>(new Map())
   useEffect(() => { setAplazados(leerAplazados(currentRutaId)) }, [currentRutaId])
+
+  /**
+   * DE GESTIONADO A PENDIENTE.
+   *
+   * Es "me equivoqué, este quedó a medias": se anula la gestión —con su
+   * reversa, como manda el libro— y el cliente queda marcado para volver a
+   * visitarlo. Sin esto había que anular, buscarlo otra vez en la ruta y
+   * aplazarlo: tres pasos para deshacer uno.
+   *
+   * El orden importa. Primero la anulación, que es la que puede fallar (red,
+   * revisión de secretaría); la marca de aplazado se pone solo si el servidor
+   * aceptó. Al revés, un cliente con la gestión intacta aparecería además en
+   * Pendientes.
+   */
+  const gestionadoAPendiente = async (m: ManagedClient) => {
+    await handleDeleteManagedPayment(m)
+    setAplazados(new Map(aplazar(currentRutaId, m.loanId)))
+  }
 
   const marcarAplazado = (client: DisplayClient) => {
     setAplazados(new Map(aplazar(currentRutaId, client.loanId)))
@@ -1265,6 +1292,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             gestionHora: gestionHoy.hora,
             valorAbonado: gestionHoy.monto,
             cuotasAbonadas: gestionHoy.cuotas,
+            metodoPago: gestionHoy.metodo,
             paymentPlanId: targetEntry?.id ?? "",
           })
         } else {
@@ -1619,6 +1647,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               saldo: Math.max(0, clientSnapshot.saldo - monto),
               multaPendiente: pagarMultaSnap ? null : clientSnapshot.multaPendiente,
               gestionTipo: "pago",
+              // El método que se acaba de elegir en el formulario: la lista lo
+              // marca al instante, sin esperar al refetch.
+              metodoPago: paymentMethod === "transferencia" ? "transferencia" : "efectivo",
               gestionHora: fechaPagoReal.slice(11, 16),
               valorAbonado: monto,
               cuotasAbonadas: numCuotasEfectivo,
@@ -1700,6 +1731,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       setManagedToday((prev) => [
         {
           ...clientSnapshot,
+          // El método que se acaba de elegir: la lista lo marca al instante,
+          // sin esperar al refetch.
+          metodoPago: paymentMethod === "transferencia" ? "transferencia" : "efectivo",
           saldo: nuevoSaldo,
           cuotasPagadas: Number(rpcResult.cuotas_cubiertas ?? clientSnapshot.cuotasPagadas),
           multaPendiente: multaCobrada ? null : clientSnapshot.multaPendiente,
@@ -1867,6 +1901,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             {
               ...clientSnapshot,
               gestionTipo: "no_pago",
+              // Un no pago no tiene forma de pago.
+              metodoPago: null,
               gestionHora: fechaPagoReal.slice(11, 16),
               valorAbonado: 0,
               cuotasAbonadas: 0,
@@ -1919,6 +1955,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         {
           ...clientSnapshot,
           gestionTipo: "no_pago",
+          metodoPago: null,
           gestionHora: fechaPagoReal.slice(11, 16),
           valorAbonado: 0,
           cuotasAbonadas: 0,
@@ -3780,6 +3817,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               <XCircle className="h-3.5 w-3.5" />No pago
                             </span>
                           )}
+                          {/* TRANSFERENCIA. Va pegada a la insignia del pago
+                              porque es parte de la misma frase: cuánto y cómo.
+                              Solo sale cuando NO fue efectivo — el efectivo es
+                              lo normal, y marcarlo también dejaría la lista
+                              llena de etiquetas que no distinguen nada. */}
+                          {m.metodoPago && m.metodoPago !== "efectivo" && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-info-light px-2 py-1 text-[11px] font-bold text-info shrink-0">
+                              <ArrowLeftRight className="h-3.5 w-3.5" />
+                              {m.metodoPago === "mixto" ? "Mixto" : "Transferencia"}
+                            </span>
+                          )}
                           <span className="text-[11px] text-muted-foreground shrink-0">{m.gestionHora}</span>
                         </div>
                         {/* Línea 3: los datos a la izquierda, las acciones a la
@@ -3795,51 +3843,106 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                             <span className="text-[11px] text-muted-foreground">Saldo: <span className="font-semibold text-warning">${Math.round(m.saldo).toLocaleString()}</span></span>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
-                            {/* El lápiz sale TAMBIÉN en los no pagos. Antes
-                                solo editaba el monto de un pago; ahora es el
-                                único sitio donde se cambia pago ↔ no pago, que
-                                obligaba a anular y volver a gestionar al
-                                cliente entero pasando por Pendientes. */}
+                            {/* EL LÁPIZ ES UN MENÚ, no un botón.
+                                Antes eran dos botones sueltos —lápiz y
+                                basurero— y el basurero, en rojo y del mismo
+                                tamaño que el otro, invitaba a tocarlo. Ahora
+                                las cuatro salidas viven detrás del lápiz, con
+                                su nombre escrito, y para llegar a la que
+                                deshace hay que bajar hasta el final.
+
+                                Los nombres son los MISMOS del menú verde de la
+                                ruta —Pago, No Pago, Pendiente— porque son las
+                                mismas tres cosas: lo que cambia es que acá ya
+                                hay una gestión y se está corrigiendo. */}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  size="icon"
+                                  variant="outline"
+                                  title="Corregir esta gestión"
+                                  aria-label="Corregir esta gestión"
+                                  className="h-10 w-10 border-info/40 text-info hover:text-info hover:bg-info-light"
+                                  disabled={savingManaged}
+                                >
+                                  <Pencil className="h-5 w-5" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-52">
+                                <DropdownMenuItem
+                                  className="cursor-pointer text-sm font-medium"
+                                  onClick={() => {
+                                    setEditingManaged(m)
+                                    setEditTipo("pago")
+                                    // Viniendo de un no pago no hay monto
+                                    // anterior que proponer: se ofrece la
+                                    // cuota, que es lo que debía ese día.
+                                    setEditMonto(
+                                      m.gestionTipo === "pago"
+                                        ? (m.valorAbonado ?? 0).toString()
+                                        : (m.valorCuota ?? 0).toString(),
+                                    )
+                                  }}
+                                >
+                                  <span className="mr-2 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-600">
+                                    <Check className="h-3 w-3 text-white" strokeWidth={3} />
+                                  </span>
+                                  <span className="font-semibold text-green-700">Pago</span>
+                                </DropdownMenuItem>
+
+                                <DropdownMenuItem
+                                  className="cursor-pointer text-sm font-medium"
+                                  onClick={() => {
+                                    setEditingManaged(m)
+                                    setEditTipo("no_pago")
+                                    setEditMonto((m.valorCuota ?? 0).toString())
+                                  }}
+                                >
+                                  <span className="mr-2 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-red-600">
+                                    <X className="h-3 w-3 text-white" strokeWidth={3} />
+                                  </span>
+                                  <span className="font-semibold text-red-700">No Pago</span>
+                                </DropdownMenuItem>
+
+                                <DropdownMenuItem
+                                  className="cursor-pointer text-sm font-medium"
+                                  onClick={() => { void gestionadoAPendiente(m) }}
+                                >
+                                  <Clock className="mr-2 h-5 w-5 shrink-0 text-orange-500" strokeWidth={2.5} />
+                                  <span className="font-semibold">Pendiente</span>
+                                </DropdownMenuItem>
+
+                                <DropdownMenuSeparator />
+
+                                {/* ELIMINAR es la palabra que el cobrador
+                                    busca, pero por dentro NO borra nada:
+                                    registra una reversa. El evento original y
+                                    su anulación quedan los dos en el
+                                    historial, y el diálogo de confirmación lo
+                                    dice con todas las letras. */}
+                                <DropdownMenuItem
+                                  className="cursor-pointer text-sm font-medium"
+                                  onClick={() => setAnularManaged(m)}
+                                >
+                                  <Trash2 className="mr-2 h-5 w-5 shrink-0 text-destructive" />
+                                  <span className="font-semibold text-destructive">Eliminar</span>
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+
+                            {/* EL OJO, el mismo extracto del módulo de pagos.
+                                Mismo icono, mismo diálogo, misma información:
+                                dos fichas distintas del mismo cliente según
+                                por qué pestaña se entre serían dos verdades. */}
                             <Button
                               size="icon"
                               variant="outline"
-                              title="Editar esta gestión"
-                              aria-label="Editar esta gestión"
-                              className="h-10 w-10 border-info/40 text-info hover:text-info hover:bg-info-light"
-                              onClick={() => {
-                                setEditingManaged(m)
-                                setEditTipo(m.gestionTipo)
-                                // Viniendo de un no pago no hay monto anterior
-                                // que proponer: se ofrece la cuota, que es lo
-                                // que el cliente debía ese día.
-                                setEditMonto(
-                                  m.gestionTipo === "pago"
-                                    ? (m.valorAbonado ?? 0).toString()
-                                    : (m.valorCuota ?? 0).toString(),
-                                )
-                              }}
-                              disabled={savingManaged}
+                              className="h-10 w-10"
+                              onClick={() => setExtractoClient(m)}
+                              title="Ver el extracto del cliente"
+                              aria-label="Ver el extracto del cliente"
                             >
-                              <Pencil className="h-5 w-5" />
-                            </Button>
-                            {/* El icono es un basurero rojo porque es lo que el
-                                cobrador busca cuando quiere deshacer algo. Pero
-                                OJO al tocar este flujo: por dentro NO borra
-                                nada. Registra una reversa — quedan el evento
-                                original y su anulación en el historial, y el
-                                cliente vuelve a Pendientes para gestionarlo
-                                bien. El texto dice "Anular", no "Eliminar",
-                                y el diálogo de confirmación lo repite. */}
-                            <Button
-                              size="icon"
-                              variant="outline"
-                              title="Anular esta gestión"
-                              aria-label="Anular esta gestión"
-                              className="h-10 w-10 border-destructive/40 text-destructive hover:text-destructive hover:bg-destructive-light"
-                              onClick={() => setAnularManaged(m)}
-                              disabled={savingManaged}
-                            >
-                              <Trash2 className="h-5 w-5" />
+                              <Eye className="h-5 w-5" />
                             </Button>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
@@ -3911,8 +4014,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                       </span>
                     </div>
                     <p className="px-0.5 text-[11px] leading-snug text-muted-foreground">
-                      Ni pago ni no pago. Siguen en la pestaña Pendientes para volver a
-                      visitarlos.
+                      Ni pago ni no pago: hay que volver a visitarlos.
                     </p>
 
                     {aplazadosDeLaRuta.map((c, index) => (

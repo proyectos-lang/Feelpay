@@ -45,7 +45,8 @@ import { RouteSelector, type SelectedRuta } from "@/components/route-selector"
 import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
 import { AvisoVersionNueva } from "@/components/actualizar-app"
 import {
-  marcarDiaDeSesion, limpiarDiaDeSesion, sesionVencioPorDia, MENSAJE_SESION_DIARIA,
+  marcarDiaDeSesion, limpiarDiaDeSesion, marcarActividad,
+  motivoDeCaducidad, mensajeDeCaducidad,
 } from "@/lib/sesion-diaria"
 import { LoginView, type AuthenticatedUser } from "@/components/views/login-view"
 import { LoginSplash } from "@/components/login-splash"
@@ -190,18 +191,20 @@ export default function Page() {
       if (typeof window !== "undefined") {
         const rawUser = localStorage.getItem(USER_STORAGE_KEY)
 
-        // ── LA SESIÓN DURA UN DÍA ──────────────────────────────────────
-        // Se comprueba ANTES de hidratar nada: si se hidratara primero y se
-        // cerrara después, habría un parpadeo del dashboard con los datos del
-        // día anterior. Ver `lib/sesion-diaria.ts` para el porqué.
-        if (rawUser && sesionVencioPorDia(true)) {
+        // ── ¿LA SESIÓN SIGUE VIVA? ─────────────────────────────────────
+        // Dos motivos: cambió el día, o pasaron dos horas sin tocar nada. Se
+        // comprueba ANTES de hidratar nada: si se hidratara primero y se
+        // cerrara después, habría un parpadeo del dashboard con los datos de
+        // la sesión vieja. Ver `lib/sesion-diaria.ts`.
+        const motivo = rawUser ? motivoDeCaducidad(true) : null
+        if (motivo) {
           try {
             localStorage.removeItem(USER_STORAGE_KEY)
             localStorage.removeItem(RUTA_STORAGE_KEY)
             localStorage.removeItem(RUTA_ACTIVA_CACHE_KEY)
           } catch { /* modo privado */ }
           limpiarDiaDeSesion()
-          setAvisoSesion(MENSAJE_SESION_DIARIA)
+          setAvisoSesion(mensajeDeCaducidad(motivo))
           setSessionPhase("idle")
           // El cache de LECTURA se va; la cola de escrituras pendientes vive
           // en otra base y no se toca.
@@ -525,8 +528,10 @@ export default function Page() {
     } catch (err) {
       console.error("[v0] Error writing currentUser to localStorage:", err)
     }
-    // El día en que se entró. Es lo que hace que mañana se vuelva a pedir.
+    // El día en que se entró y el momento: uno hace que mañana se vuelva a
+    // pedir, el otro que se pida tras el tope de inactividad sin tocar nada.
     marcarDiaDeSesion()
+    marcarActividad()
     setAvisoSesion(null)
     setCurrentUser(user)
     // Acaba de escribir usuario y contraseña: no tiene sentido pedirle
@@ -702,15 +707,51 @@ export default function Page() {
    */
   useEffect(() => {
     if (!currentUser) return
+
     const revisar = () => {
       if (document.visibilityState === "hidden") return
-      if (!sesionVencioPorDia(true)) return
-      setAvisoSesion(MENSAJE_SESION_DIARIA)
+      const motivo = motivoDeCaducidad(true)
+      if (!motivo) return
+      setAvisoSesion(mensajeDeCaducidad(motivo))
       handleLogout()
     }
+
+    /**
+     * "SIGO ACÁ". Cualquier señal de que hay alguien del otro lado.
+     *
+     * Se escucha en fase de captura y con `passive` para no estorbarle a nadie
+     * el scroll, y se escribe como mucho una vez por minuto: con cada toque
+     * serían cientos de escrituras a `localStorage` en una jornada, para un
+     * dato cuya precisión útil se mide en horas.
+     */
+    let ultimaMarca = 0
+    const hayAlguien = () => {
+      const ahora = Date.now()
+      if (ahora - ultimaMarca < 60_000) return
+      ultimaMarca = ahora
+      marcarActividad()
+    }
+    const senales = ["pointerdown", "keydown", "scroll", "touchstart"] as const
+    for (const s of senales) document.addEventListener(s, hayAlguien, { capture: true, passive: true })
+
+    // Se marca al entrar: acaba de escribir su contraseña, está acá.
+    marcarActividad()
+
+    /**
+     * El reloj que la saca sin tener que esperar a que vuelva al frente.
+     *
+     * Comprobar solo al volver dejaba un hueco: la app en primer plano y
+     * quieta encima de un mostrador no dispara `visibilitychange` nunca. Cada
+     * minuto es barato —compara dos números— y no interrumpe a nadie que esté
+     * usando la app, porque tocar la pantalla reinicia la cuenta.
+     */
+    const reloj = setInterval(revisar, 60_000)
+
     document.addEventListener("visibilitychange", revisar)
     window.addEventListener("focus", revisar)
     return () => {
+      clearInterval(reloj)
+      for (const s of senales) document.removeEventListener(s, hayAlguien, { capture: true })
       document.removeEventListener("visibilitychange", revisar)
       window.removeEventListener("focus", revisar)
     }
