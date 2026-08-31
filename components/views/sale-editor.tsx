@@ -15,10 +15,15 @@
  *   gestiones     = el libro de eventos, INSERT-only: nada se borra ni se
  *                   modifica, ni siquiera para corregir.
  *
- * Todo lo financiero (saldo, mora, cuotas cubiertas) se DERIVA de esos dos
- * por cascada: la plata neta se reparte sobre las cuotas de la más antigua a
- * la más nueva. Por eso regenerar el plan no pierde un peso — la plata se
- * vuelve a repartir sola sobre el plan nuevo.
+ * Todo lo financiero (saldo, mora, cuotas cubiertas) se DERIVA de esos dos:
+ * la plata libre cae en cascada sobre las cuotas de la más antigua a la más
+ * nueva, y la que está CLAVADA a una cuota —un cobro de campo, un ajuste de
+ * secretaría— se queda ahí (script 075).
+ *
+ * Por eso regenerar el plan no pierde un peso Y TAMPOCO LO MUEVE DE SITIO: al
+ * regenerar, cada evento se vuelve a colgar de la cuota con su mismo número
+ * (script 081). Cambiar el interés cambia lo que VALE cada cuota, no dónde
+ * está aplicado lo que ya se pagó.
  *
  * LAS TRES ESCRITURAS (todas RPC atómicas, ninguna toca tablas a mano)
  *   · editar_venta_atomica  → regenera el cronograma desde el servidor.
@@ -1861,8 +1866,17 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
                 <p>
                   Este préstamo ya tiene {gestionesVivas.length} gestion
                   {gestionesVivas.length === 1 ? "" : "es"} registrada
-                  {gestionesVivas.length === 1 ? "" : "s"}. Al cambiar los términos se regenera el plan de cuotas;
-                  los pagos NO se pierden: se vuelven a repartir sobre el plan nuevo.
+                  {gestionesVivas.length === 1 ? "" : "s"}. Al cambiar los términos se regenera
+                  el plan de cuotas.
+                </p>
+                {/* Decía «los pagos se vuelven a repartir sobre el plan
+                    nuevo». Dejó de ser verdad con el script 081: cada pago se
+                    queda en SU cuota. Y la diferencia importa, porque es justo
+                    lo que uno quiere saber antes de tocar el interés. */}
+                <p>
+                  Lo que el cliente pagó <strong>no se mueve</strong>: cada pago se queda en la
+                  cuota a la que se aplicó. Lo que cambia es cuánto vale esa cuota — si el
+                  interés nuevo la sube, una cuota que estaba saldada puede quedar parcial.
                 </p>
                 {simulacion && (
                   <p className="tabular-nums">
