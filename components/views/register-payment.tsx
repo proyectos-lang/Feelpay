@@ -3144,6 +3144,21 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           <span className="block text-[12px] md:text-base font-semibold tabular-nums leading-tight">
             ${Math.round(client.saldo).toLocaleString()}
           </span>
+          {/* LO QUE HAY QUE COBRARLE HOY.
+              La columna se llama "Saldo / Cuota" desde siempre, pero la cuota
+              no estaba: el cobrador veía la deuda entera y tenía que abrir el
+              diálogo para saber cuánto pedir. Con cuarenta clientes eso son
+              cuarenta aperturas para leer un número que cabe acá.
+
+              Va en verde y debajo del saldo a propósito: el saldo dice cuánto
+              debe —contexto—, la cuota dice cuánto se le pide —la acción—. Con
+              los dos del mismo color se leían como dos cifras intercambiables,
+              y en la calle, a pulso, se cobra la que se lee primero. */}
+          {client.nextPaymentValorCuota > 0 && (
+            <span className="block text-[11px] md:text-sm font-bold text-success tabular-nums leading-tight">
+              ${Math.round(client.nextPaymentValorCuota).toLocaleString()}
+            </span>
+          )}
           {/* La multa sí se queda en la lista: es plata que
               hay que cobrar HOY y encontrarla solo abriendo
               el extracto sería enterrarla. */}
