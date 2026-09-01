@@ -127,6 +127,13 @@ export function SalesTodayList({ currentRutaId, onCountChange }: SalesTodayListP
           "id, valor, valor_cuota, numero_cuotas, tipo_venta, tipo_amortizacion, frecuencia_pago, estado, fecha_creacion, clients(nombre_completo, apodo)",
         )
         .eq("ruta", currentRutaId)
+        // UNA VENTA ANULADA NO ES UNA VENTA DEL DÍA.
+        //
+        // El caso típico de anular es "me equivoqué" el mismo día en que se
+        // hizo, así que la venta anulada caía justo en este rango y seguía
+        // contando en la lista y en la insignia. Al cobrador le aparecían las
+        // dos ventas de la ruta 196 que la secretaría acababa de anular.
+        .neq("estado", "anulado")
         .gte("fecha_creacion", startISO)
         .lte("fecha_creacion", endISO)
         .order("fecha_creacion", { ascending: false })

@@ -453,6 +453,11 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
             .from("loans")
             .select("id, client_id")
             .eq("ruta", rutaId)
+            // Una venta anulada no cuenta como venta del día. Anular es casi
+            // siempre "me equivoqué" el mismo día en que se hizo, así que cae
+            // justo en este rango y engordaba el conteo con una venta que ya
+            // no existe.
+            .neq("estado", "anulado")
             .gte("fecha_creacion", `${fechaHoy}T00:00:00-05:00`)
             .lte("fecha_creacion", `${fechaHoy}T23:59:59-05:00`),
         ])

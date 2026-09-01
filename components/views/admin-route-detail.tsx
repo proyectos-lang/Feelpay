@@ -153,6 +153,8 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
           .from("loans")
           .select("id, ruta, valor, valor_cuota, numero_cuotas, frecuencia_pago, tipo_amortizacion, tipo_venta, estado, fecha_creacion, clients(nombre_completo, documento)")
           .in("ruta", rutaIds)
+          // Las anuladas no son ventas del día: ver `sales-today-list.tsx`.
+          .neq("estado", "anulado")
           .gte("fecha_creacion", dayStart)
           .lte("fecha_creacion", dayEnd)
           .order("fecha_creacion", { ascending: true }),

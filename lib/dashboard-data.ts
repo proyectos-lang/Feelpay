@@ -252,9 +252,20 @@ export async function loadDashboardPagos(
   // quiere. Un cancelado SIN eventos recientes se queda fuera, y por eso el
   // historial viejo de la ruta no engorda ninguna de las consultas de abajo.
   const tocadosRecientemente = new Set(gestiones.map((g) => g.loan_id))
-  const activeLoans = loans.filter(
-    (l) => l.estado === "activo" || !l.estado || tocadosRecientemente.has(l.id),
-  )
+  const activeLoans = loans.filter((l) => {
+    // UNA VENTA ANULADA NO VUELVE, LA TOQUE QUIEN LA TOQUE.
+    //
+    // Va ANTES que el resto de la regla y no después, porque `anular_venta`
+    // deja un evento de tipo 'ajuste' con la fecha de hoy —el rastro de quién
+    // anuló y por qué, que tiene que quedar— y ese evento metía el crédito en
+    // `tocadosRecientemente`. Resultado: el propio acto de anular la venta era
+    // lo que la mantenía en la ruta.
+    //
+    // Pasó de verdad: dos ventas de la ruta 196 anuladas el 01/09/2026 le
+    // seguían apareciendo al cobrador al día siguiente.
+    if (l.estado === "anulado") return false
+    return l.estado === "activo" || !l.estado || tocadosRecientemente.has(l.id)
+  })
   const loanIds = activeLoans.map((l) => l.id)
 
   if (loanIds.length === 0) {
