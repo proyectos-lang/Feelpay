@@ -24,6 +24,8 @@
  *   · Semanal con día de cobro: la primera cuota se corre al siguiente día
  *     de la semana elegido, y de ahí cada 7 días.
  *   · Semanal sin día / quincenal / mensual: +7 / +15 / +30 desde el inicio.
+ *   · La cuota se redondea al MILLAR más cercano, con el 500 subiendo
+ *     ($19.500 → $20.000, $19.499 → $19.000). Ver `redondearCuota`.
  *   · La ÚLTIMA cuota absorbe el residuo del redondeo, para que la suma del
  *     plan dé exactamente el total a pagar.
  */
@@ -84,6 +86,36 @@ export interface ScheduleResult {
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
+/**
+ * La cuota, en números redondos. ESPEJO de `public.redondear_cuota`
+ * (scripts/087-las-cuotas-en-numeros-redondos.sql).
+ *
+ * Al millar más cercano, y el 500 sube: $19.500 queda en $20.000 y $19.499 en
+ * $19.000. Lo que se recorta o se agrega lo absorbe la última cuota, así que
+ * la suma del plan sigue dando exactamente el total.
+ *
+ * DOS GUARDAS, las dos medidas contra los créditos reales antes de escribirlas:
+ *
+ * 1. POR DEBAJO DE MIL NO SE REDONDEA. La ruta 933 es de Ecuador y trabaja en
+ *    dólares: sus cuotas van de $2 a $80, y al millar quedarían todas en cero.
+ *    No hace falta configurar nada por país — una cuota de $6 no se redondea a
+ *    millares en ninguna moneda.
+ *
+ * 2. LA ÚLTIMA NUNCA QUEDA EN CERO NI NEGATIVA. Subir la cuota le quita hasta
+ *    $500 a cada una de las n−1 primeras, y eso puede pasarse de lo que vale
+ *    la última. Caso real de la ruta 154: 20 cuotas sobre $150.000 dan $7.500,
+ *    que sube a $8.000 — pero 8.000 × 19 = 152.000, más que el total. La cuota
+ *    baja un escalón, a $7.000, y la última queda en $17.000.
+ */
+export function redondearCuota(base: number, total: number, cuotas: number): number {
+  if (!Number.isFinite(base) || !Number.isFinite(total) || cuotas < 1) return base
+  if (base < 1000) return round2(base)
+
+  let r = Math.floor(base / 1000 + 0.5) * 1000
+  while (r > 0 && total - r * (cuotas - 1) <= 0) r -= 1000
+  return r > 0 ? r : round2(base)
+}
+
 // `domingo: 1` NO es un error: se manda a lunes. Los domingos no se cobra,
 // asi que un credito semanal fechado en domingo dejaba TODAS sus cuotas en un
 // dia en que nadie sale a la ruta. Espejo de `generar_cronograma` (script 067).
@@ -141,13 +173,13 @@ export function buildPaymentSchedule(p: BuildScheduleParams): ScheduleResult {
 
   if (tipo === "empleado") {
     valorAPagar = valor
-    capitalBase = round2(valor / numeroCuotas)
+    capitalBase = redondearCuota(valor / numeroCuotas, valor, numeroCuotas)
   } else if (tipo === "americano") {
     interesPorCuota = round2(valor * tasa)
     valorAPagar = valor + interesPorCuota * numeroCuotas
   } else {
     valorAPagar = round2(valor * (1 + tasa))
-    cuotaBase = round2(valorAPagar / numeroCuotas)
+    cuotaBase = redondearCuota(valorAPagar / numeroCuotas, valorAPagar, numeroCuotas)
     capitalBase = round2(valor / numeroCuotas)
   }
 
