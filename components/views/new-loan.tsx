@@ -23,7 +23,10 @@ import {
   fmtFecha, fmtMoneda, sumarDias, ayerColombia,
   AMORTIZACIONES, etiquetaAmortizacion,
 } from "@/lib/gestion-core"
-import { buildPaymentSchedule, type Frecuencia, type TipoAmortizacion } from "@/lib/loan-schedule"
+import {
+  buildPaymentSchedule, redondearCuota,
+  type Frecuencia, type TipoAmortizacion,
+} from "@/lib/loan-schedule"
 import { useToast } from "@/hooks/use-toast"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre } from "@/lib/ruta-umbrales"
 import { avisarSolicitudPendiente } from "@/lib/avisos-revision"
@@ -582,6 +585,16 @@ export function NewLoan({
     return { pagado, noPagos, cuotas: cuotasVigentes.length + pagosManuales.length }
   }, [cuotasVigentes, marcasHomologacion, pagosManuales])
 
+  /**
+   * La cuota, escrita sin decimales cuando es redonda.
+   *
+   * `toFixed(2)` a secas ponía "20000.00" en el campo aunque la cuota ya
+   * fuera un número cerrado, que es justo lo que se pidió quitar. Los
+   * decimales solo aparecen cuando de verdad los hay — el americano, donde la
+   * cuota es el interés del período y no se redondea.
+   */
+  const comoTexto = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2))
+
   // Auto-calculate Saldo (Valor a Pagar) y valor de cuota.
   // - Empleado: sin interes, saldo = valor.
   // - Aleman: interes total unico → saldo = valor + (valor * tasa).
@@ -599,7 +612,7 @@ export function NewLoan({
       // No interest for employee loans
       setValorAPagar(valorNum.toFixed(2))
       const diasNum = Number.parseInt(dias)
-      if (diasNum > 0) setValorCuota((valorNum / diasNum).toFixed(2))
+      if (diasNum > 0) setValorCuota(comoTexto(redondearCuota(valorNum / diasNum, valorNum, diasNum)))
       else setValorCuota("")
       return
     }
@@ -632,7 +645,7 @@ export function NewLoan({
     // Aleman (o cuando aun no se elige tipoAmortizacion): saldo = valor + (valor*tasa)
     const valorTotal = valorNum + valorNum * tasaNum
     setValorAPagar(valorTotal.toFixed(2))
-    if (diasNum > 0) setValorCuota((valorTotal / diasNum).toFixed(2))
+    if (diasNum > 0) setValorCuota(comoTexto(redondearCuota(valorTotal / diasNum, valorTotal, diasNum)))
     else setValorCuota("")
   }, [valor, tasaInteres, dias, prestamoEmpleado, tipoAmortizacion])
 
@@ -845,17 +858,24 @@ export function NewLoan({
 
     if (prestamoEmpleado) {
       // Employee loan: no interest, divide valor evenly by number of installments (daily)
-      const cuotaDiaria = valorPrestamo / numeroCuotas
+      // La cuota en números cerrados, y la ÚLTIMA absorbe el residuo para que
+      // la suma siga dando el total. Es la misma regla del servidor
+      // (`redondear_cuota`, script 087) y de `lib/loan-schedule.ts`.
+      const cuotaDiaria = redondearCuota(valorPrestamo / numeroCuotas, valorPrestamo, numeroCuotas)
       for (let i = 1; i <= numeroCuotas; i++) {
         const fechaPago = fechaDeCuota(fechaInicio, i, diasEntrePagos)
+        const esUltima = i === numeroCuotas
+        const cuota = esUltima
+          ? Math.round((valorPrestamo - cuotaDiaria * (numeroCuotas - 1)) * 100) / 100
+          : cuotaDiaria
         schedule.push({
           cuota: i,
           fecha: fechaPago.toLocaleDateString("es-ES"),
           saldoInicial: Math.round((valorPrestamo - cuotaDiaria * (i - 1)) * 100) / 100,
           interes: 0,
-          capital: Math.round(cuotaDiaria * 100) / 100,
-          cuotaPago: Math.round(cuotaDiaria * 100) / 100,
-          saldoFinal: Math.round(Math.max(0, valorPrestamo - cuotaDiaria * i) * 100) / 100,
+          capital: cuota,
+          cuotaPago: cuota,
+          saldoFinal: Math.round(Math.max(0, valorPrestamo - cuotaDiaria * (i - 1) - cuota) * 100) / 100,
         })
       }
     } else {
@@ -892,22 +912,27 @@ export function NewLoan({
         // Cuota fija simple: el saldo total ya incluye intereses (valor + valor*tasa)
         // cuota = saldoTotal / numCuotas  →  siempre igual
         const saldoTotal = valorPrestamo + valorPrestamo * tasa
-        const cuotaFija = Math.round((saldoTotal / numeroPagos) * 100) / 100
+        // Números cerrados, con la última absorbiendo el residuo: la misma
+        // regla del servidor (`redondear_cuota`, script 087).
+        const cuotaFija = redondearCuota(saldoTotal / numeroPagos, saldoTotal, numeroPagos)
+        const cuotaUltima = Math.round((saldoTotal - cuotaFija * (numeroPagos - 1)) * 100) / 100
         const interesTotal = valorPrestamo * tasa
         const interesPorCuota = Math.round((interesTotal / numeroPagos) * 100) / 100
         const capitalPorCuota = Math.round((valorPrestamo / numeroPagos) * 100) / 100
         let saldoRestante = saldoTotal
         for (let i = 1; i <= numeroPagos; i++) {
           const fechaPago = fechaDeCuota(fechaInicio, i, diasEntrePagos)
+          const esUltima = i === numeroPagos
+          const cuota = esUltima ? cuotaUltima : cuotaFija
           const saldoInicial = Math.round(saldoRestante * 100) / 100
-          saldoRestante = Math.max(0, saldoRestante - cuotaFija)
+          saldoRestante = Math.max(0, saldoRestante - cuota)
           schedule.push({
             cuota: i,
             fecha: fechaPago.toLocaleDateString("es-ES"),
             saldoInicial,
             interes: interesPorCuota,
-            capital: capitalPorCuota,
-            cuotaPago: cuotaFija,
+            capital: esUltima ? Math.round((cuota - interesPorCuota) * 100) / 100 : capitalPorCuota,
+            cuotaPago: cuota,
             saldoFinal: Math.round(saldoRestante * 100) / 100,
           })
         }
@@ -1183,11 +1208,15 @@ export function NewLoan({
       } else {
         valorAPagarNum = valorAPagar ? Number.parseFloat(valorAPagar) : valorNum + valorNum * tasaNum
       }
-      // Para americano la "cuota" tipica es solo el interes; para aleman es el promedio.
+      // Para americano la "cuota" tipica es solo el interes; para aleman es el
+      // promedio, ya redondeado a números cerrados con la misma regla que usa
+      // el servidor al generar el cronograma (`redondear_cuota`, script 087).
+      // Sin esto, `loans.valor_cuota` guardaba 216.666,67 mientras el plan
+      // llevaba cuotas cerradas: dos números distintos para lo mismo.
       const valorCuotaNum =
         tipoAmortizacion === "americano" && !prestamoEmpleado
           ? valorNum * tasaNum
-          : valorAPagarNum / numeroCuotasNum
+          : redondearCuota(valorAPagarNum / numeroCuotasNum, valorAPagarNum, numeroCuotasNum)
 
       // Calculate days between payments based on frequency
       let diasEntrePagos = 1
