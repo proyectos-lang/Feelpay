@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DollarSign, X, Check, Eye, Clock, ArrowLeftRight, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown, ChevronUp, ChevronDown } from "lucide-react"
 import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
-import { leerAplazados, aplazar, quitarAplazado } from "@/lib/aplazados"
+import { leerAplazados, aplazar, quitarAplazado, horaDeAplazado } from "@/lib/aplazados"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
@@ -293,6 +293,14 @@ type ManagedClient = DisplayClient & {
    */
   gestionTipo: "pago" | "no_pago" | "aplazado"
   gestionHora: string
+  /**
+   * El instante CRUDO de la gestión, para poder ordenar.
+   *
+   * `gestionHora` es para leer y no sirve para esto: comparando texto,
+   * "12:58 p. m." va después de "01:05 p. m." y la lista quedaría al revés
+   * justo en el cambio de mediodía.
+   */
+  gestionInstante: string
   /** Suma de lo cobrado HOY en este prestamo, no el monto de una sola cuota. */
   valorAbonado: number
   /** Cuantas cuotas cubrio el cobro de hoy. Se imprime en el recibo. */
@@ -880,13 +888,38 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     .map((c) => ({
       ...c,
       gestionTipo: "aplazado" as const,
-      gestionHora: aplazados.get(c.loanId) ?? "",
+      gestionHora: horaDeAplazado(aplazados.get(c.loanId)),
+      gestionInstante: aplazados.get(c.loanId) ?? "",
       valorAbonado: 0,
       cuotasAbonadas: 0,
       metodoPago: null,
     }))
 
+  /**
+   * DE LA ÚLTIMA GESTIÓN A LA PRIMERA.
+   *
+   * Iba por orden de visita, que es el orden en que se RECORRE la ruta — el
+   * correcto para la lista de lo que falta. Pero esta es la lista de lo ya
+   * hecho, y ahí lo que se busca es casi siempre lo último: el cobro que se
+   * acaba de registrar, para comprobarlo o corregirlo. Estaba enterrado a
+   * treinta filas de distancia.
+   *
+   * Ordena por el INSTANTE, no por la hora escrita: comparando texto,
+   * "12:58 p. m." va después de "01:05 p. m." y la lista salía al revés justo
+   * en el cambio de mediodía.
+   *
+   * Los que no tienen instante —aplazados marcados con una versión anterior,
+   * que guardaba la hora ya escrita— se van al final en vez de mezclarse en un
+   * sitio arbitrario.
+   */
   const sortedManaged = [...managedToday, ...aplazadosComoGestion].sort((a, b) => {
+    const ta = Date.parse(a.gestionInstante)
+    const tb = Date.parse(b.gestionInstante)
+    const va = Number.isNaN(ta) ? -Infinity : ta
+    const vb = Number.isNaN(tb) ? -Infinity : tb
+    if (va !== vb) return vb - va
+    // Empate exacto (dos gestiones en el mismo segundo): el orden de la ruta
+    // desempata, para que la lista no baile entre renders.
     const ordA = a.ordenvisita > 0 ? a.ordenvisita : 99999
     const ordB = b.ordenvisita > 0 ? b.ordenvisita : 99999
     return ordA - ordB
@@ -1340,6 +1373,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             ...clientData,
             gestionTipo: gestionHoy.tipo === "pago" ? "pago" : "no_pago",
             gestionHora: gestionHoy.hora,
+            gestionInstante: gestionHoy.instante,
             valorAbonado: gestionHoy.monto,
             cuotasAbonadas: gestionHoy.cuotas,
             metodoPago: gestionHoy.metodo,
@@ -1701,6 +1735,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               // marca al instante, sin esperar al refetch.
               metodoPago: paymentMethod === "transferencia" ? "transferencia" : "efectivo",
               gestionHora: fechaPagoReal.slice(11, 16),
+              gestionInstante: fechaPagoReal,
               valorAbonado: monto,
               cuotasAbonadas: numCuotasEfectivo,
               paymentPlanId: clientSnapshot.nextPaymentId || undefined,
@@ -1789,6 +1824,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           multaPendiente: multaCobrada ? null : clientSnapshot.multaPendiente,
           gestionTipo: "pago",
           gestionHora,
+          gestionInstante: fechaPagoReal,
           valorAbonado: monto,
           cuotasAbonadas: isCanceladaSnap
             ? Math.max(1, Number(rpcResult.cuotas_cubiertas ?? 0) - clientSnapshot.cuotasPagadas)
@@ -1954,6 +1990,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               // Un no pago no tiene forma de pago.
               metodoPago: null,
               gestionHora: fechaPagoReal.slice(11, 16),
+              gestionInstante: fechaPagoReal,
               valorAbonado: 0,
               cuotasAbonadas: 0,
               paymentPlanId: clientSnapshot.nextPaymentId || undefined,
@@ -2007,6 +2044,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           gestionTipo: "no_pago",
           metodoPago: null,
           gestionHora: fechaPagoReal.slice(11, 16),
+          gestionInstante: fechaPagoReal,
           valorAbonado: 0,
           cuotasAbonadas: 0,
           paymentPlanId: clientSnapshot.nextPaymentId || undefined,

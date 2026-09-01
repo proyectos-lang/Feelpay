@@ -271,6 +271,15 @@ export interface ResumenDia {
   cuotas: number
   hora: string
   /**
+   * La marca de tiempo CRUDA de la última visita del día, tal como vino de la
+   * base. `""` cuando no hubo ninguna.
+   *
+   * Existe aparte de `hora` porque `hora` es para leer —"01:05 p. m."— y con
+   * eso no se puede ordenar: comparando texto, "12:58 p. m." va DESPUÉS de
+   * "01:05 p. m." y la lista queda al revés justo en el cambio de mediodía.
+   */
+  instante: string
+  /**
    * CÓMO pagó ese día: 'efectivo', 'transferencia' o 'mixto'.
    *
    * `null` cuando no entró plata (un no pago no tiene forma de pago).
@@ -317,7 +326,7 @@ export function resumenDelDia(gestiones: Gestion[], loanId: string, dia: string)
 
   const visitas = vivos.filter(esVisita)
   if (visitas.length === 0) {
-    return { gestionado: false, tipo: null, monto: 0, cuotas: 0, hora: "", metodo: null }
+    return { gestionado: false, tipo: null, monto: 0, cuotas: 0, hora: "", instante: "", metodo: null }
   }
   const monto = vivos.reduce((s, g) => s + montoEfectivo(g), 0)
   const conPlata = visitas.filter((g) => Number(g.monto) > 0)
@@ -336,6 +345,7 @@ export function resumenDelDia(gestiones: Gestion[], loanId: string, dia: string)
     monto,
     cuotas: conPlata.reduce((s, g) => s + (g.num_cuotas || 1), 0),
     hora: horaColombia(ultima.fecha_hora),
+    instante: ultima.fecha_hora,
     metodo:
       formas.size === 0 ? null
       : formas.size > 1 ? "mixto"

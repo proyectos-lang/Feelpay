@@ -45,11 +45,12 @@ function clave(rutaId: number): string {
 }
 
 /**
- * Los créditos aplazados hoy en esta ruta, con LA HORA en que se aplazaron.
+ * Los créditos aplazados hoy en esta ruta, con el INSTANTE en que se aplazaron.
  *
- * La hora existe porque el aplazado también sale en la pestaña de Gestionados,
- * y ahí cada tarjeta dice a qué hora pasó lo que pasó. Sin ella, la del
- * aplazado sería la única sin hora en una lista donde todas la tienen.
+ * El instante existe porque el aplazado también sale en la pestaña de
+ * Gestionados: ahí cada tarjeta dice a qué hora pasó lo que pasó, y la lista va
+ * de la última gestión a la primera. Para lo primero hace falta el texto
+ * (`horaDeAplazado`) y para lo segundo el ISO, que es lo que se guarda.
  *
  * SE LEEN LAS DOS FORMAS. La primera versión guardaba un array de ids a secas.
  * Un teléfono que aplazó clientes esta mañana tiene ese formato en disco, y
@@ -87,16 +88,38 @@ function guardar(rutaId: number, m: Map<string, string>): void {
   }
 }
 
-/** La hora, en el formato corto que ya usan las tarjetas de Gestionados. */
-function horaAhora(): string {
-  return new Date().toLocaleTimeString("es-CO", {
+/**
+ * Lo que se guarda es el INSTANTE en ISO, no la hora ya escrita.
+ *
+ * Se guardaba "01:50 p. m." y con eso no se puede ordenar: comparando texto,
+ * "12:58 p. m." va después de "01:50 p. m." y la lista de Gestionados —que
+ * ahora va de la última gestión a la primera— quedaba al revés justo en el
+ * cambio de mediodía. El texto se arma al pintar, que es donde hace falta.
+ */
+function instanteAhora(): string {
+  return new Date().toISOString()
+}
+
+/**
+ * La hora legible de un aplazado, en el formato corto de las tarjetas.
+ *
+ * Aguanta las DOS formas: el ISO que se guarda ahora y el texto que guardaban
+ * las versiones anteriores. Un teléfono que aplazó clientes esta mañana tiene
+ * el texto viejo en disco, y descartarlo le borraría la hora a media jornada.
+ */
+export function horaDeAplazado(valor: string | undefined | null): string {
+  if (!valor) return ""
+  if (!valor.includes("T")) return valor // formato viejo: ya venía escrito
+  const d = new Date(valor)
+  if (Number.isNaN(d.getTime())) return ""
+  return d.toLocaleTimeString("es-CO", {
     hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "America/Bogota",
   })
 }
 
 export function aplazar(rutaId: number, loanId: string): Map<string, string> {
   const m = leerAplazados(rutaId)
-  m.set(loanId, horaAhora())
+  m.set(loanId, instanteAhora())
   guardar(rutaId, m)
   return m
 }

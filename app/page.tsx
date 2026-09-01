@@ -1121,17 +1121,29 @@ export default function Page() {
   // movimiento posterior lo descuadraria hacia atras. El vendedor queda
   // bloqueado hasta el dia siguiente, cuando vuelve a iniciar ruta.
   //
-  // UNICA EXCEPCION: `cierre-caja`. Es la pantalla donde acaba de cerrar y
-  // donde esta el resumen y el PDF de la jornada. Bloquearla le arrancaria el
-  // comprobante de las manos en el mismo momento de generarlo, y ademas no
-  // permite hacer ningun movimiento: el propio cierre solo aplica sobre una
-  // ruta 'abierta', asi que volver a entrar ahi no puede reabrir ni alterar
-  // nada.
+  // DOS EXCEPCIONES.
+  //
+  // `cierre-caja`, porque es la pantalla donde acaba de cerrar y donde esta el
+  // resumen y el PDF de la jornada. Bloquearla le arrancaria el comprobante de
+  // las manos en el mismo momento de generarlo, y ademas no permite hacer
+  // ningun movimiento: el propio cierre solo aplica sobre una ruta 'abierta',
+  // asi que volver a entrar ahi no puede reabrir ni alterar nada.
+  //
+  // Y el CHAT. Al cerrar la caja la app entera quedaba bloqueada, justo cuando
+  // al cobrador le falta lo ultimo del dia: mandar el reporte y cuadrar con la
+  // secretaria. Se quedaba sin poder escribir por donde se escribe. El chat no
+  // mueve un peso —no registra pagos, ni gastos, ni ventas— asi que no hay
+  // nada que descuadre por dejarlo abierto.
+  //
+  // Va exento en los DOS estados, no solo despues del cierre: antes de iniciar
+  // la ruta tambien hace falta poder avisar que algo pasa. Un bloqueo que
+  // impide pedir ayuda no protege nada.
   const rolExigeRutaIniciada = ["vendedor", "asesor"].includes(userRol)
+  const VISTAS_SIN_RUTA: string[] = ["cierre-caja", "chat"]
   const rutaSinIniciar =
     rolExigeRutaIniciada &&
     !!selectedRuta &&
-    currentView !== "cierre-caja" &&
+    !VISTAS_SIN_RUTA.includes(currentView) &&
     (!rutaActivaResolved || rutaActivaEstado !== "abierta")
 
   const renderView = () => {
@@ -1347,6 +1359,7 @@ export default function Page() {
             estado={rutaActivaEstado}
             onEstadoChange={handleRutaActivaEstadoChange}
             mensaje="Antes de trabajar tienes que iniciar la ruta del dia. Hasta entonces no se puede entrar a ningun modulo."
+            onIrAlChat={() => handleViewChange("chat")}
           />
         ) : (
           renderView()

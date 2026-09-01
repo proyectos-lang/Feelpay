@@ -12,7 +12,7 @@
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { AlertCircle, Loader2, Play } from "lucide-react"
+import { AlertCircle, Loader2, Play, MessageSquare } from "lucide-react"
 import { getSupabaseSafe } from "@/lib/api-helper"
 import { useToast } from "@/hooks/use-toast"
 import { todayColombia } from "@/lib/colombia-date"
@@ -29,10 +29,12 @@ interface Props {
   mensaje: string
   /** Si viene, se ofrece el atajo al Resumen del Día. */
   onIrAResumen?: () => void
+  /** Si viene, se ofrece el atajo al chat, que queda abierto con la ruta cerrada. */
+  onIrAlChat?: () => void
 }
 
 export function RutaNoIniciada({
-  rutaId, resuelto, estado, onEstadoChange, mensaje, onIrAResumen,
+  rutaId, resuelto, estado, onEstadoChange, mensaje, onIrAResumen, onIrAlChat,
 }: Props) {
   const { toast } = useToast()
   const [iniciando, setIniciando] = useState(false)
@@ -168,7 +170,23 @@ export function RutaNoIniciada({
             ? "La caja de hoy ya se cuadró y se cerró. No se pueden registrar más movimientos hasta mañana, cuando inicies la ruta de nuevo. Si necesitas reabrir el día, contacta al administrador."
             : mensaje}
         </p>
+        {/* SE DICE que el chat sigue abierto, no se deja que lo descubran.
+            Cerrar la caja bloquea la app entera y lo último del día es
+            justamente mandar el reporte: sin este renglón, el cobrador ve una
+            pantalla que dice "no se puede nada" y no se le ocurre buscar el
+            chat en el menú. */}
+        {onIrAlChat && (
+          <p className="max-w-sm text-sm text-muted-foreground leading-relaxed">
+            El chat sigue disponible para que termines de enviar tus reportes.
+          </p>
+        )}
       </div>
+      {onIrAlChat && (
+        <Button size="lg" variant="outline" className="gap-2" onClick={onIrAlChat}>
+          <MessageSquare className="h-4 w-4" />
+          Ir al chat
+        </Button>
+      )}
       {estado !== "cerrada" && (
         <div className="flex flex-col items-center gap-2 sm:flex-row">
           <Button
