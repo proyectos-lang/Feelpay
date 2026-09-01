@@ -44,7 +44,15 @@
 -- el cliente debe, que es otra cosa y no es lo que se pidió. Hoy no hay un
 -- solo crédito americano en la base — los 178 son alemán.
 --
--- Corre los pasos EN ORDEN. Cada uno es una sola sentencia.
+-- CORRE LOS PASOS DE A UNO, NO TODO PEGADO.
+-- El editor de Supabase mete todo lo que se le pega en UNA transacción: si el
+-- último paso falla, se deshacen también los primeros. Pasó con la primera
+-- versión de este script — la consulta de prueba del PASO 6 llamaba a
+-- `generar_cronograma` con la firma equivocada, y el error borró de vuelta la
+-- función del PASO 1 y el parche del PASO 4. Parecía que el script no había
+-- hecho nada, y literalmente no lo había hecho.
+--
+-- Cada paso es una sola sentencia. Corre uno, mira el resultado, sigue.
 -- ============================================================================
 
 
@@ -183,8 +191,19 @@ SELECT strpos(pg_get_functiondef(p.oid), 'redondear_cuota(v_total / p_num_cuotas
 -- 25 cuotas diarias sobre $600.000 al 40% — el crédito típico de la ruta 190.
 -- Antes daban $33.600 cada una. Ahora deben dar $34.000, y la última el
 -- acumulado: 840.000 − 34.000 × 24 = $24.000.
+-- Los tipos van escritos a la fuerza (`::numeric`, `::text`) porque un
+-- literal suelto entra como `unknown` y PostgreSQL no sabe cuál de las
+-- funciones elegir. Con eso falló la primera versión de este script.
 SELECT numero_cuota, fecha_pago, valor_cuota
-  FROM public.generar_cronograma(600000, 40, 25, 'daily', CURRENT_DATE, 'aleman', NULL)
+  FROM public.generar_cronograma(
+         600000::numeric,   -- p_valor
+         40::numeric,       -- p_tasa
+         25,                -- p_num_cuotas
+         'aleman'::text,    -- p_tipo_amortizacion
+         'daily'::text,     -- p_frecuencia
+         false,             -- p_empleado
+         CURRENT_DATE,      -- p_fecha_inicio
+         NULL::text)        -- p_dia_semana
  ORDER BY numero_cuota;
 
 
@@ -194,4 +213,6 @@ SELECT numero_cuota, fecha_pago, valor_cuota
 SELECT SUM(valor_cuota) AS suma,
        840000           AS deberia_dar,
        SUM(valor_cuota) = 840000 AS ok
-  FROM public.generar_cronograma(600000, 40, 25, 'daily', CURRENT_DATE, 'aleman', NULL);
+  FROM public.generar_cronograma(
+         600000::numeric, 40::numeric, 25, 'aleman'::text, 'daily'::text,
+         false, CURRENT_DATE, NULL::text);
