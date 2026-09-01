@@ -54,8 +54,8 @@ import { PinLockView } from "@/components/views/pin-lock-view"
 import { RutaCongelada, AvisoJornadaCongelada } from "@/components/jornada-congelada"
 import { buscarJornadaPendiente, puedeDescongelar, type JornadaPendiente } from "@/lib/jornada-pendiente"
 import {
-  abriendoAlgoDelSistema, salidaExenta, volvioTarde, requierePin,
-  fueRecargaPropia, INACTIVIDAD_PIN_MS,
+  requierePin, INACTIVIDAD_PIN_MS, marcarActividadPin, pasoElTiempoSinTocar,
+  inactividadPin,
 } from "@/lib/pin-lock"
 import { SESSION_LOST_EVENT, getSupabaseSafe } from "@/lib/api-helper"
 import { limpiarCache } from "@/lib/offline-cache"
@@ -237,15 +237,18 @@ export default function Page() {
             // ocurra en esta misma vida de la pagina — y eso pasa por
             // `handleLoginSuccess`, que apaga el candado en memoria.
             //
-            // Solo para la gente de calle: lo decide `requierePin`. Secretaria,
-            // admin, gerencia, liquidador y socioadmin entran directo.
+            // ABRIR LA APP YA NO ARMA EL CANDADO POR SI SOLA.
             //
-            // La EXCEPCION es la recarga que hizo la app misma para traer la
-            // version nueva. Para el candado se veia igual que cerrar y volver
-            // a abrir, asi que apretar "Actualizar" costaba teclear el PIN.
-            // `fueRecargaPropia` consume la marca: vale una sola vez, y como
-            // vive en `sessionStorage` no sobrevive a cerrar la app.
-            if (requierePin(parsed.rol) && !fueRecargaPropia()) setBloqueado(true)
+            // Antes arrancaba bloqueada siempre que hubiera sesion guardada, y
+            // eso hacia que cerrar y volver a abrir —o actualizar— costara
+            // teclear el PIN aunque hubieran pasado diez segundos. Ahora la
+            // unica pregunta es la de siempre: ¿cuanto lleva sin tocarse?
+            //
+            // La respuesta NO se reinicia al cerrar: la marca vive en
+            // `localStorage`, asi que el tiempo corre con la app cerrada.
+            // Volver a los diez minutos pide PIN; volver a los diez segundos,
+            // no. Ver `lib/pin-lock.ts`.
+            if (requierePin(parsed.rol) && pasoElTiempoSinTocar()) setBloqueado(true)
             loadUserPermissions(parsed.id, parsed.rol ?? "").then(setUserPermissions).catch(() => {})
             // Refresca la foto de perfil por si cambio desde otro dispositivo
             // desde la ultima vez que se guardo la sesion en este localStorage.
@@ -637,74 +640,26 @@ export default function Page() {
   }, [])
 
   /**
-   * SE FUE DE LA APP → SE ARMA EL CANDADO.
+   * LA INACTIVIDAD, LA ÚNICA RAZÓN POR LA QUE SE PIDE EL PIN.
    *
-   * Solo `visibilitychange`, no `blur`. Un `<input type="file">` abriendo la
-   * galeria, el permiso de ubicacion o un dialogo del navegador roban el foco
-   * sin que la pagina deje de estar visible; con `blur` el cobrador estaria
-   * tecleando el PIN varias veces por cliente.
+   * Cinco minutos sin tocar la app y se arma el candado. Ni minimizar, ni
+   * cerrarla, ni actualizar la disparan por sí solos — pero el tiempo que pasa
+   * mientras está cerrada o en segundo plano CUENTA, porque la marca de la
+   * última actividad vive en `localStorage`.
    *
-   * Se arma al OCULTARSE, no al volver: cuando la persona regresa, el estado
-   * ya esta puesto y la pantalla del PIN aparece de una, sin un parpadeo en
-   * el que se alcance a ver la informacion.
-   */
-  useEffect(() => {
-    if (!currentUser) return
-    // Sin candado no hay nada que vigilar: los listeners ni se registran.
-    if (!requierePin(currentUser.rol)) return
-    const alCambiarVisibilidad = () => {
-      if (document.visibilityState === "hidden") {
-        // Salida que provoco la app misma (abrir la camara para la cedula o
-        // la foto del pago): la persona no se fue, esta en mitad de lo suyo.
-        // `salidaExenta` la consume, asi que solo vale para esa.
-        if (salidaExenta()) return
-        setBloqueado(true)
-      } else if (volvioTarde()) {
-        // Volvio de una salida exenta, pero tardo mas de lo que toma una
-        // foto. Se fue a otra cosa con el telefono: el candado se arma.
-        setBloqueado(true)
-      }
-    }
-    // CUALQUIER `<input type="file">` abre algo del sistema: la camara o la
-    // galeria. Se escucha en el documento y no en cada input porque hay TRECE
-    // repartidos por la app —cedula, foto del pago, del no pago, gastos,
-    // reportes, chat, documentos, perfil— y el catorce se le olvidaria a
-    // cualquiera. Asi queda cubierto el que exista y el que se agregue.
-    //
-    // En fase de captura para que nadie pueda detenerlo antes con un
-    // `stopPropagation`. Sirve igual si al input lo dispara un `<label>` o un
-    // `.click()` desde codigo: los dos despachan el evento sobre el input.
-    const alHacerClic = (e: MouseEvent) => {
-      const t = e.target
-      if (t instanceof HTMLInputElement && t.type === "file") abriendoAlgoDelSistema()
-    }
-
-    document.addEventListener("visibilitychange", alCambiarVisibilidad)
-    document.addEventListener("click", alHacerClic, true)
-    return () => {
-      document.removeEventListener("visibilitychange", alCambiarVisibilidad)
-      document.removeEventListener("click", alHacerClic, true)
-    }
-  }, [currentUser])
-
-  /**
-   * SE QUEDÓ QUIETO → SE ARMA EL CANDADO.
+   * Por eso hay dos comprobaciones y no una:
    *
-   * A los 45 segundos sin tocar nada, con la app A LA VISTA. Es el hueco que
-   * `visibilitychange` no cubre: el teléfono que queda encima de un mostrador
-   * o pasa a otra mano nunca se minimiza, así que sin este reloj el candado no
-   * se armaba jamás mientras la pantalla siguiera prendida.
+   *   · El TEMPORIZADOR, para la app abierta y quieta encima de un mostrador.
+   *     Ese caso no dispara ningún evento del navegador.
+   *   · La comprobación AL VOLVER (`visibilitychange` y `focus`), porque el
+   *     navegador estrangula los temporizadores en segundo plano y el de cinco
+   *     minutos puede no haber corrido. Al volver se mira el reloj de disco,
+   *     que no se estrangula.
    *
-   * EL RELOJ SE PARA MIENTRAS LA APP ESTÁ OCULTA, y eso no es un detalle: si
-   * corriera en segundo plano, volver de tomar la foto de una cédula —la
-   * salida exenta, que puede tomar más de 45 segundos— encontraría el candado
-   * armado igual y la exención no serviría para nada. Oculta, el que manda es
-   * `visibilitychange`; a la vista, este.
-   *
-   * Las señales son las mismas cuatro de la sesión diaria, y acá SIN
-   * estrangular: allá se escribe en disco y una vez por minuto basta; acá solo
-   * se reinicia un temporizador, que es gratis, y estrangularlo a un minuto
-   * sobre una cuenta de 45 segundos la volvería inútil.
+   * Las señales se escuchan en captura y con `passive` para no estorbar el
+   * scroll. Cada una escribe la marca: es una escritura pequeña a
+   * `localStorage` y sin ella el reloj no sobreviviría al cierre, que es
+   * justamente lo que impide esquivar el candado cerrando la app.
    */
   useEffect(() => {
     if (!currentUser) return
@@ -715,21 +670,33 @@ export default function Page() {
 
     let reloj: ReturnType<typeof setTimeout> | null = null
     const parar = () => { if (reloj) { clearTimeout(reloj); reloj = null } }
-    const arrancar = () => {
+
+    const hayAlguien = () => {
+      marcarActividadPin()
       parar()
-      if (document.visibilityState !== "visible") return
       reloj = setTimeout(() => setBloqueado(true), INACTIVIDAD_PIN_MS)
     }
 
-    const senales = ["pointerdown", "keydown", "scroll", "touchstart"] as const
-    for (const s of senales) document.addEventListener(s, arrancar, { capture: true, passive: true })
-    document.addEventListener("visibilitychange", arrancar)
+    const alVolver = () => {
+      if (document.visibilityState !== "visible") return
+      if (pasoElTiempoSinTocar()) { setBloqueado(true); return }
+      // No estuvo quieta lo suficiente: se reprograma con lo que le queda.
+      parar()
+      reloj = setTimeout(() => setBloqueado(true), INACTIVIDAD_PIN_MS - inactividadPin())
+    }
 
-    arrancar()
+    const senales = ["pointerdown", "keydown", "scroll", "touchstart"] as const
+    for (const s of senales) document.addEventListener(s, hayAlguien, { capture: true, passive: true })
+    document.addEventListener("visibilitychange", alVolver)
+    window.addEventListener("focus", alVolver)
+
+    // Se marca al entrar: acaba de abrir la app o de teclear el PIN, está acá.
+    hayAlguien()
     return () => {
       parar()
-      for (const s of senales) document.removeEventListener(s, arrancar, { capture: true })
-      document.removeEventListener("visibilitychange", arrancar)
+      for (const s of senales) document.removeEventListener(s, hayAlguien, { capture: true })
+      document.removeEventListener("visibilitychange", alVolver)
+      window.removeEventListener("focus", alVolver)
     }
   }, [currentUser, bloqueado])
 

@@ -24,7 +24,6 @@ import { Button } from "@/components/ui/button"
 import { ChevronLeft, FileDown, Loader2, MessageSquare, Share2, Users } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { createClient } from "@/lib/supabase/client"
-import { abriendoAlgoDelSistema } from "@/lib/pin-lock"
 
 interface Conversacion {
   conversation_id: string
@@ -144,9 +143,9 @@ export function CompartirComprobanteDialog({
       return
     }
 
-    // Igual que arriba: el menu nativo manda la app al fondo, pero la abrio
-    // la app. No cuenta como salir.
-    abriendoAlgoDelSistema()
+    // El menu nativo manda la app al fondo, y antes eso armaba el candado:
+    // habia que avisarle que no contara como irse. Desde que el PIN solo lo
+    // dispara la inactividad, no hay nada que avisar.
     navigator
       .share({ files: [file], title: titulo })
       .then(() => onOpenChange(false))

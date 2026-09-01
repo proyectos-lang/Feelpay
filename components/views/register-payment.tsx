@@ -31,7 +31,6 @@ import { useToast } from "@/hooks/use-toast"
   // Supabase: RLS eliminado. `getSupabaseSafe` y `callRpcAtomic` se conservan
   // como atajos delgados sobre `createClient()`.
 import { getSupabaseSafe, getSessionIdentity } from "@/lib/api-helper"
-import { abriendoAlgoDelSistema } from "@/lib/pin-lock"
 import { enviarOEncolar } from "@/lib/offline-queue"
 import { SalesTodayList } from "@/components/views/sales-today-list"
 // Helper que centraliza la carga del dashboard: prueba la RPC atomica
@@ -2639,9 +2638,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       navigator.canShare &&
       navigator.canShare({ files: [file] })
     ) {
-      // El menu nativo tambien manda la app a segundo plano. Es la app
-      // abriendolo, no la persona yendose: no cuenta como salir.
-      abriendoAlgoDelSistema()
+      // El menu nativo manda la app a segundo plano, y antes eso armaba el
+      // candado: habia que avisarle que no contara como irse. Desde que el PIN
+      // solo lo dispara la inactividad, no hay nada que avisar.
       navigator
         .share({ files: [file], title: "Comprobante de pago" })
         .then(() => cerrarShare())
