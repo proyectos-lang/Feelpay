@@ -51,6 +51,8 @@ import {
 import { LoginView, type AuthenticatedUser } from "@/components/views/login-view"
 import { LoginSplash } from "@/components/login-splash"
 import { PinLockView } from "@/components/views/pin-lock-view"
+import { RutaCongelada, AvisoJornadaCongelada } from "@/components/jornada-congelada"
+import { buscarJornadaPendiente, puedeDescongelar, type JornadaPendiente } from "@/lib/jornada-pendiente"
 import {
   abriendoAlgoDelSistema, salidaExenta, volvioTarde, requierePin,
   fueRecargaPropia, INACTIVIDAD_PIN_MS,
@@ -145,6 +147,16 @@ export default function Page() {
   // decir nada se lee como una falla, no como una regla.
   const [avisoSesion, setAvisoSesion] = useState<string | null>(null)
   const [rutaActivaEstado, setRutaActivaEstado] = useState<"abierta" | "cerrada" | null>(null)
+
+  /**
+   * LA JORNADA VIEJA QUE NADIE CERRÓ.
+   *
+   * Mientras exista, la ruta está congelada: el cobrador no empieza un día
+   * nuevo dejando el anterior sin cuadrar. Ver `lib/jornada-pendiente.ts` —
+   * ahí está por qué esto no se enciende hasta que corra el script 086.
+   */
+  const [jornadaPendiente, setJornadaPendiente] = useState<JornadaPendiente | null>(null)
+  const [releerJornada, setReleerJornada] = useState(0)
   // `rutaActivaResolved` distingue entre "todavía no he resuelto el estado
   // de la ruta" (false → mostrar spinner/skeleton, NO el guard) y "ya tengo
   // respuesta definitiva" (true → renderizar guard si null/cerrada o el
@@ -1108,6 +1120,20 @@ export default function Page() {
   const rutaId = selectedRuta?.id ?? 0
   const rutaPais = selectedRuta?.pais ?? ""
 
+  /**
+   * ¿Quedó una jornada vieja sin cerrar en esta ruta?
+   *
+   * Se pregunta al elegir ruta y cada vez que alguien la descongela. No hace
+   * falta un reloj: una jornada vieja no aparece sola a mitad del día — la
+   * deja el día anterior, y para verla basta con haber abierto la app hoy.
+   */
+  useEffect(() => {
+    if (!selectedRuta) { setJornadaPendiente(null); return }
+    let vigente = true
+    buscarJornadaPendiente(selectedRuta.id).then((j) => { if (vigente) setJornadaPendiente(j) })
+    return () => { vigente = false }
+  }, [selectedRuta, releerJornada])
+
   // ── El vendedor no entra a nada antes de iniciar la ruta ──────────────
   //
   // Antes el guard vivia solo dentro del modulo de pagos, asi que un vendedor
@@ -1140,9 +1166,26 @@ export default function Page() {
   // impide pedir ayuda no protege nada.
   const rolExigeRutaIniciada = ["vendedor", "asesor"].includes(userRol)
   const VISTAS_SIN_RUTA: string[] = ["cierre-caja", "chat"]
+  const puedeLevantarElCongelamiento = puedeDescongelar(userRol)
+
+  /**
+   * LA RUTA CONGELADA GANA SOBRE "no iniciada".
+   *
+   * Las dos tapan la pantalla, pero dicen cosas distintas y solo una es cierta:
+   * con una jornada vieja sin cerrar, el botón "Iniciar Ruta" no serviría de
+   * nada —y ofrecerlo sería mandar al cobrador a tocar algo que no lo va a
+   * desbloquear—. El chat sigue exento en las dos.
+   */
+  const rutaCongelada =
+    rolExigeRutaIniciada &&
+    !!selectedRuta &&
+    !!jornadaPendiente &&
+    !VISTAS_SIN_RUTA.includes(currentView)
+
   const rutaSinIniciar =
     rolExigeRutaIniciada &&
     !!selectedRuta &&
+    !jornadaPendiente &&
     !VISTAS_SIN_RUTA.includes(currentView) &&
     (!rutaActivaResolved || rutaActivaEstado !== "abierta")
 
@@ -1352,7 +1395,23 @@ export default function Page() {
             mañana y se queda en el módulo de pagos el resto del día. Tiene que
             aparecer donde la persona esté. */}
         <AvisoVersionNueva />
-        {rutaSinIniciar ? (
+        {/* EL AVISO DE CONGELADA, para quien puede levantarla.
+            A la secretaría no se le tapa la app: se le avisa y se le da el
+            botón donde esté. Al cobrador se le tapa, que es el punto. */}
+        {jornadaPendiente && puedeLevantarElCongelamiento && currentUser && (
+          <AvisoJornadaCongelada
+            jornada={jornadaPendiente}
+            rutaNombre={selectedRuta?.nombre ?? ""}
+            usuario={{ id: currentUser.id, nombre: currentUser.nombre }}
+            onDescongelada={() => setReleerJornada((n) => n + 1)}
+          />
+        )}
+        {rutaCongelada && jornadaPendiente ? (
+          <RutaCongelada
+            jornada={jornadaPendiente}
+            onIrAlChat={() => handleViewChange("chat")}
+          />
+        ) : rutaSinIniciar ? (
           <RutaNoIniciada
             rutaId={rutaId}
             resuelto={rutaActivaResolved}
