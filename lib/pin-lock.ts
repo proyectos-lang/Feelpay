@@ -14,12 +14,32 @@
  * visible. Con `blur` el cobrador quedaría pidiendo el PIN cada vez que la
  * app le pide la cámara, que es varias veces por cliente.
  *
+ * QUEDARSE QUIETO TAMBIÉN CUENTA
+ * A los 45 segundos sin tocar nada, con la app en primer plano, el candado se
+ * arma solo. Es el caso del teléfono que se queda encima de un mostrador o en
+ * la mano de otro: no hubo `visibilitychange` porque nadie minimizó nada.
+ *
+ * El reloj se PARA mientras la app está oculta. Si corriera en segundo plano,
+ * volver de tomar una foto de cédula —la salida exenta— encontraría el candado
+ * armado igual, y la exención no serviría de nada.
+ *
  * ABRIR LA APP TAMBIÉN CUENTA
  * "Cerrar el sistema y volverlo a abrir" es una recarga de la página. Al
  * montar, si hay sesión guardada, se arranca BLOQUEADO. La única forma de
  * arrancar abierto es que el login haya ocurrido en esta misma vida de la
  * página, y eso vive en memoria (`recienAutenticado`), no en `localStorage`:
  * si viviera en disco, sobreviviría al cierre y el candado no serviría.
+ *
+ * ...SALVO CUANDO LA RECARGA LA HIZO LA APP
+ * Actualizar a la versión nueva es una recarga, y para el candado se veía
+ * idéntica a cerrar y volver a abrir: el cobrador tecleaba el PIN cada vez que
+ * apretaba "Actualizar". La app avisa antes de recargarse (`marcarRecargaPropia`)
+ * y esa vuelta entra sin candado.
+ *
+ * La marca vive en `sessionStorage` y NO en `localStorage`, que es lo que hace
+ * que esto no abra un hueco: `sessionStorage` muere con la pestaña. Sobrevive
+ * a la recarga que la app acaba de provocar y a nada más — cerrar la app y
+ * volverla a abrir sigue pidiendo el PIN.
  *
  * A QUIEN SE LE PIDE
  * Solo a la gente de calle (`ROLES_CON_PIN`). Secretaría, admin, gerencia,
@@ -59,6 +79,38 @@ export function requierePin(rol: string | null | undefined): boolean {
 
 /** Cuántos intentos seguidos antes de mandar a la persona al login completo. */
 export const INTENTOS_MAX = 10
+
+/**
+ * Cuánto puede estar la app quieta, en primer plano, antes de armar el candado.
+ *
+ * 45 segundos. Es corto a propósito: el riesgo que esto ataja es un teléfono
+ * desbloqueado que cambia de manos, y eso pasa en segundos. Cualquier toque
+ * —un scroll, una tecla— reinicia la cuenta, así que a quien está trabajando
+ * no lo interrumpe nunca.
+ */
+export const INACTIVIDAD_PIN_MS = 45 * 1000
+
+// ── La recarga que hace la app misma ────────────────────────────────────────
+//
+// `sessionStorage` y no `localStorage`: muere con la pestaña. Sobrevive a la
+// recarga que la app provoca y a nada más.
+const CLAVE_RECARGA = "pinRecargaPropia"
+
+/** La app está por recargarse (actualizar versión). Esa vuelta no pide PIN. */
+export function marcarRecargaPropia(): void {
+  try { sessionStorage.setItem(CLAVE_RECARGA, "1") } catch { /* modo privado */ }
+}
+
+/** ¿Esta carga viene de una recarga que hizo la app? La consume: vale una vez. */
+export function fueRecargaPropia(): boolean {
+  try {
+    if (sessionStorage.getItem(CLAVE_RECARGA) !== "1") return false
+    sessionStorage.removeItem(CLAVE_RECARGA)
+    return true
+  } catch {
+    return false
+  }
+}
 
 // ── Cuando la app misma abre algo del sistema ───────────────────────────────
 //

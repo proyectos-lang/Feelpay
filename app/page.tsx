@@ -51,7 +51,10 @@ import {
 import { LoginView, type AuthenticatedUser } from "@/components/views/login-view"
 import { LoginSplash } from "@/components/login-splash"
 import { PinLockView } from "@/components/views/pin-lock-view"
-import { abriendoAlgoDelSistema, salidaExenta, volvioTarde, requierePin } from "@/lib/pin-lock"
+import {
+  abriendoAlgoDelSistema, salidaExenta, volvioTarde, requierePin,
+  fueRecargaPropia, INACTIVIDAD_PIN_MS,
+} from "@/lib/pin-lock"
 import { SESSION_LOST_EVENT, getSupabaseSafe } from "@/lib/api-helper"
 import { limpiarCache } from "@/lib/offline-cache"
 import { createClient } from "@/lib/supabase/client"
@@ -224,7 +227,13 @@ export default function Page() {
             //
             // Solo para la gente de calle: lo decide `requierePin`. Secretaria,
             // admin, gerencia, liquidador y socioadmin entran directo.
-            if (requierePin(parsed.rol)) setBloqueado(true)
+            //
+            // La EXCEPCION es la recarga que hizo la app misma para traer la
+            // version nueva. Para el candado se veia igual que cerrar y volver
+            // a abrir, asi que apretar "Actualizar" costaba teclear el PIN.
+            // `fueRecargaPropia` consume la marca: vale una sola vez, y como
+            // vive en `sessionStorage` no sobrevive a cerrar la app.
+            if (requierePin(parsed.rol) && !fueRecargaPropia()) setBloqueado(true)
             loadUserPermissions(parsed.id, parsed.rol ?? "").then(setUserPermissions).catch(() => {})
             // Refresca la foto de perfil por si cambio desde otro dispositivo
             // desde la ultima vez que se guardo la sesion en este localStorage.
@@ -665,6 +674,52 @@ export default function Page() {
       document.removeEventListener("click", alHacerClic, true)
     }
   }, [currentUser])
+
+  /**
+   * SE QUEDÓ QUIETO → SE ARMA EL CANDADO.
+   *
+   * A los 45 segundos sin tocar nada, con la app A LA VISTA. Es el hueco que
+   * `visibilitychange` no cubre: el teléfono que queda encima de un mostrador
+   * o pasa a otra mano nunca se minimiza, así que sin este reloj el candado no
+   * se armaba jamás mientras la pantalla siguiera prendida.
+   *
+   * EL RELOJ SE PARA MIENTRAS LA APP ESTÁ OCULTA, y eso no es un detalle: si
+   * corriera en segundo plano, volver de tomar la foto de una cédula —la
+   * salida exenta, que puede tomar más de 45 segundos— encontraría el candado
+   * armado igual y la exención no serviría para nada. Oculta, el que manda es
+   * `visibilitychange`; a la vista, este.
+   *
+   * Las señales son las mismas cuatro de la sesión diaria, y acá SIN
+   * estrangular: allá se escribe en disco y una vez por minuto basta; acá solo
+   * se reinicia un temporizador, que es gratis, y estrangularlo a un minuto
+   * sobre una cuenta de 45 segundos la volvería inútil.
+   */
+  useEffect(() => {
+    if (!currentUser) return
+    if (!requierePin(currentUser.rol)) return
+    // Ya bloqueado no hay nada que contar: el reloj vuelve a arrancar cuando
+    // la persona teclea el PIN y `bloqueado` pasa a false.
+    if (bloqueado) return
+
+    let reloj: ReturnType<typeof setTimeout> | null = null
+    const parar = () => { if (reloj) { clearTimeout(reloj); reloj = null } }
+    const arrancar = () => {
+      parar()
+      if (document.visibilityState !== "visible") return
+      reloj = setTimeout(() => setBloqueado(true), INACTIVIDAD_PIN_MS)
+    }
+
+    const senales = ["pointerdown", "keydown", "scroll", "touchstart"] as const
+    for (const s of senales) document.addEventListener(s, arrancar, { capture: true, passive: true })
+    document.addEventListener("visibilitychange", arrancar)
+
+    arrancar()
+    return () => {
+      parar()
+      for (const s of senales) document.removeEventListener(s, arrancar, { capture: true })
+      document.removeEventListener("visibilitychange", arrancar)
+    }
+  }, [currentUser, bloqueado])
 
   const handleLogout = useCallback(() => {
     try {

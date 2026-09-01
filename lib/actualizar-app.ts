@@ -25,6 +25,8 @@
  * despliegue todavía puede salir del disco. Hay que borrarlo y recargar.
  */
 
+import { marcarRecargaPropia } from "@/lib/pin-lock"
+
 const CLAVE_VERSION = "appVersionVista"
 
 /** Lo que el servidor dice que está publicado ahora. `null` si no se pudo. */
@@ -125,6 +127,12 @@ export async function actualizarApp(): Promise<void> {
   } catch {
     /* modo privado */
   }
+
+  // El candado no puede distinguir esta recarga de "cerró la app y la volvió a
+  // abrir", y sin este aviso el cobrador teclea el PIN cada vez que actualiza.
+  // Va JUSTO antes de navegar para que la marca no quede puesta si algo falla
+  // más arriba y la recarga nunca ocurre.
+  marcarRecargaPropia()
 
   // `reload()` a secas puede salir del bfcache con la misma página. Volver a
   // pedir la URL sin fragmento fuerza una navegación de verdad.
