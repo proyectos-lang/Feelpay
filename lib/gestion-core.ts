@@ -445,6 +445,33 @@ export function etiquetaAmortizacion(tipo: string | null | undefined): string {
   }
 }
 
+// ── Cómo se llama el cliente ───────────────────────────────────────────────
+
+/**
+ * El apodo, SOLO cuando dice algo que el nombre no dice.
+ *
+ * Casi todos los clientes se conocen por el apodo —"kiosko", "la peluquería",
+ * "verduras 2"— y por eso las listas de la calle lo muestran de primero. Pero
+ * cuando hay que identificar a alguien sin lugar a dudas —corregir un pago,
+ * anular una venta— hace falta el nombre de la cédula, con el apodo debajo.
+ *
+ * Devuelve `null` cuando repetirlo no agregaría nada: cuando está vacío o
+ * cuando es el mismo nombre. Sin esta comprobación, media lista sale con la
+ * misma línea escrita dos veces, y ocupa el doble para no decir nada.
+ *
+ * La comparación ignora mayúsculas y espacios de sobra porque los dos campos
+ * se escriben a mano y en la base conviven "KIOSKO", "kiosko" y "kiosko ".
+ */
+export function apodoSiAporta(
+  nombre: string | null | undefined,
+  apodo: string | null | undefined,
+): string | null {
+  const a = (apodo ?? "").trim()
+  if (!a) return null
+  const n = (nombre ?? "").trim()
+  return a.toLowerCase() === n.toLowerCase() ? null : a
+}
+
 // ── Dinero ─────────────────────────────────────────────────────────────────
 
 export function fmtMoneda(valor: number | null | undefined): string {

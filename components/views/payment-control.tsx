@@ -42,7 +42,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/hooks/use-toast"
 import { getSupabaseSafe, callRpcAtomic } from "@/lib/api-helper"
-import { todayColombia, etiquetaMora, etiquetaAmortizacion } from "@/lib/gestion-core"
+import { todayColombia, etiquetaMora, etiquetaAmortizacion, apodoSiAporta } from "@/lib/gestion-core"
 import {
   Search,
   ChevronLeft,
@@ -634,9 +634,20 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h2 className="text-base md:text-xl font-bold truncate">
-                    {selectedLoan.cliente.apodo || selectedLoan.cliente.nombre_completo}
-                  </h2>
+                  {/* EL NOMBRE ARRIBA Y EL APODO DEBAJO.
+                      Desde acá se mueve la plata de una cuota a otra, y eso
+                      pide el nombre de la cédula. Pero al cliente lo reconocen
+                      por el apodo, así que van los dos. */}
+                  <div className="min-w-0">
+                    <h2 className="text-base md:text-xl font-bold truncate">
+                      {selectedLoan.cliente.nombre_completo}
+                    </h2>
+                    {apodoSiAporta(selectedLoan.cliente.nombre_completo, selectedLoan.cliente.apodo) && (
+                      <p className="text-xs md:text-sm text-muted-foreground truncate">
+                        {apodoSiAporta(selectedLoan.cliente.nombre_completo, selectedLoan.cliente.apodo)}
+                      </p>
+                    )}
+                  </div>
                   <Badge variant={selectedLoan.estado === "activo" ? "default" : "secondary"}>
                     {selectedLoan.estado}
                   </Badge>
@@ -1027,8 +1038,15 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1 space-y-1.5">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-semibold text-sm truncate">
-                            {l.cliente.apodo || l.cliente.nombre_completo}
+                          <span className="min-w-0">
+                            <span className="block font-semibold text-sm truncate">
+                              {l.cliente.nombre_completo}
+                            </span>
+                            {apodoSiAporta(l.cliente.nombre_completo, l.cliente.apodo) && (
+                              <span className="block text-[11px] leading-tight text-muted-foreground truncate">
+                                {apodoSiAporta(l.cliente.nombre_completo, l.cliente.apodo)}
+                              </span>
+                            )}
                           </span>
                           <span className="text-[10px] text-muted-foreground">{l.cliente.documento}</span>
                           {l.estado !== "activo" && (

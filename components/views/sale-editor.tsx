@@ -85,6 +85,7 @@ import {
   sumarDias,
   diasEntre,
   todayColombia,
+  apodoSiAporta,
   type Gestion,
 } from "@/lib/gestion-core"
 import {
@@ -1198,8 +1199,21 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0 flex-1 space-y-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-semibold text-sm truncate">
-                            {p.cliente.apodo || p.cliente.nombre_completo}
+                          {/* EL NOMBRE ARRIBA Y EL APODO DEBAJO.
+                              Acá se corrigen ventas y se anulan pagos, y para
+                              eso hace falta el nombre de la cédula. Pero el
+                              cobrador y la secretaría reconocen al cliente por
+                              el apodo, así que van los dos: sin el nombre no se
+                              identifica, sin el apodo no se reconoce. */}
+                          <span className="min-w-0">
+                            <span className="block font-semibold text-sm truncate">
+                              {p.cliente.nombre_completo}
+                            </span>
+                            {apodoSiAporta(p.cliente.nombre_completo, p.cliente.apodo) && (
+                              <span className="block text-[11px] leading-tight text-muted-foreground truncate">
+                                {apodoSiAporta(p.cliente.nombre_completo, p.cliente.apodo)}
+                              </span>
+                            )}
                           </span>
                           <span className="text-[10px] text-muted-foreground">{p.cliente.documento}</span>
                           {/* Una ANULADA y una CANCELADA significan lo
@@ -1333,9 +1347,16 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
       <Card>
         <CardContent className="p-4 space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-base md:text-xl font-bold truncate">
-              {prestamo.cliente.apodo || prestamo.cliente.nombre_completo}
-            </h2>
+            <div className="min-w-0">
+              <h2 className="text-base md:text-xl font-bold truncate">
+                {prestamo.cliente.nombre_completo}
+              </h2>
+              {apodoSiAporta(prestamo.cliente.nombre_completo, prestamo.cliente.apodo) && (
+                <p className="text-xs md:text-sm text-muted-foreground truncate">
+                  {apodoSiAporta(prestamo.cliente.nombre_completo, prestamo.cliente.apodo)}
+                </p>
+              )}
+            </div>
             <Badge variant={prestamo.estado === "activo" ? "default" : "secondary"}>{prestamo.estado}</Badge>
             <Badge variant="outline">{etiquetaFrecuencia(prestamo.frecuencia_pago)}</Badge>
             {prestamo.prestamo_empleado && <Badge variant="outline">Empleado</Badge>}
