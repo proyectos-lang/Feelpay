@@ -2365,22 +2365,18 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     // Abono de hoy: si el cliente ya fue gestionado viene en el objeto (que
     // ya trae la SUMA del dia); si no, se consulta lo gestionado hoy.
     let abonoHoy = gestionHoy?.valorAbonado ?? null
-    let cuotasAbonadas = gestionHoy?.cuotasAbonadas ?? 0
     let fechaAbono: string | null = gestionHoy ? todayColombia() : null
     if (abonoHoy == null) {
       // Del libro de eventos: los movimientos de hoy de este préstamo.
       const { data: eventosHoy } = await supabase
         .from("gestiones")
-        .select("tipo, monto, num_cuotas")
+        .select("tipo, monto")
         .eq("loan_id", client.loanId)
         .eq("fecha_gestion", todayColombia())
         .eq("estado", "aplicada")
-      const evs = (eventosHoy ?? []) as { tipo: string; monto: number | null; num_cuotas: number | null }[]
+      const evs = (eventosHoy ?? []) as { tipo: string; monto: number | null }[]
       if (evs.length > 0) {
         abonoHoy = evs.reduce((acc, e) => acc + montoEfectivo({ tipo: e.tipo as Gestion["tipo"], monto: Number(e.monto) || 0 }), 0)
-        cuotasAbonadas = evs
-          .filter((e) => e.tipo !== "no_pago" && Number(e.monto) > 0)
-          .reduce((s, e) => s + (Number(e.num_cuotas) || 1), 0)
         fechaAbono = todayColombia()
       }
     }
@@ -2398,9 +2394,20 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         })
       : null
 
+    // LA FECHA Y LA HORA, EN HORA COLOMBIA.
+    //
+    // `es-CO` es solo el FORMATO: sin `timeZone` el navegador usa la del
+    // aparato, y las rutas están en Argentina y Ecuador. El día de negocio de
+    // la app es el de Colombia (`todayColombia`), así que un recibo con la hora
+    // del teléfono puede llevar impresa OTRA fecha que la del día al que
+    // pertenece el pago — de noche, la del día siguiente.
     const now = new Date()
-    const fechaStr = now.toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric" })
-    const horaStr = now.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })
+    const fechaStr = now.toLocaleDateString("es-CO", {
+      timeZone: "America/Bogota", day: "2-digit", month: "2-digit", year: "numeric",
+    })
+    const horaStr = now.toLocaleTimeString("es-CO", {
+      timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit",
+    })
 
     const fmt = (n: number | null | undefined) =>
       n != null ? `$${Math.round(n).toLocaleString("es-CO")}` : "-"
@@ -2439,11 +2446,30 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     ]
 
     // El bloque del abono solo aparece si hubo movimiento; un recibo de
-    // consulta no lo lleva. Aca va cuantas cuotas cubrio el cobro de hoy.
+    // consulta no lo lleva.
     if (abonoHoy != null && abonoHoy > 0) {
+      /**
+       * CUÁNTAS CUOTAS ABONÓ: SALE DE LA PLATA, no de lo que se marcó.
+       *
+       * Venía de `num_cuotas` del evento, que es el número que el cobrador
+       * dejó puesto en el diálogo — casi siempre 1, porque es el valor por
+       * defecto y con el monto libre nadie lo cambia. Recibo real del
+       * 01/09/2026: "Valor pagado $100.000" y "Cuotas abonadas: 1", sobre una
+       * cuota de $16.800. Eran casi seis.
+       *
+       * Ahora es la misma cuenta que el X/Y de abajo y la misma que pidió el
+       * dueño para todo el sistema (script 084): la plata dividida por el
+       * valor de la cuota.
+       *
+       * Si no alcanza para una cuota completa se dice "Abono parcial" en vez
+       * de "0": un comprobante de plata recibida que dice cero cuotas se lee
+       * como que no se abonó nada.
+       */
+      const valorCuotaRef = Number(client.valorCuota) || 0
+      const cuotasDelAbono = valorCuotaRef > 0 ? Math.floor(abonoHoy / valorCuotaRef) : 0
       rows.splice(1, 0,
         ["Fecha del abono:", fmtFechaCorta(fechaAbono)],
-        ["Cuotas abonadas:", `${cuotasAbonadas}`],
+        ["Cuotas abonadas:", cuotasDelAbono >= 1 ? `${cuotasDelAbono}` : "Abono parcial"],
         ["Valor pagado:", fmt(abonoHoy)],
       )
     }
