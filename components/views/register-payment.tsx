@@ -49,6 +49,7 @@ import {
   colorMora,
   etiquetaMora,
   montoEfectivo,
+  apodoSiAporta,
   type Gestion,
 } from "@/lib/gestion-core"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, type RutaUmbrales } from "@/lib/ruta-umbrales"
@@ -1277,12 +1278,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           nombre: loan.clients?.apodo || loan.clients?.nombre_completo || "Sin nombre",
           // Los dos por separado para poder pintarlos en dos lineas. El apodo
           // se descarta cuando es identico al nombre real: repetirlo no agrega
-          // nada y ocupa una linea entera.
-          apodo: (() => {
-            const a = (loan.clients?.apodo ?? "").trim()
-            const n = (loan.clients?.nombre_completo ?? "").trim()
-            return a && a.toLowerCase() !== n.toLowerCase() ? a : null
-          })(),
+          // nada y ocupa una linea entera. La regla vive en `gestion-core`,
+          // que es de donde la leen tambien Control Total y Control de Pagos.
+          apodo: apodoSiAporta(loan.clients?.nombre_completo, loan.clients?.apodo),
           nombreCompleto: loan.clients?.nombre_completo
             ? sinApodo(loan.clients.nombre_completo, loan.clients.apodo)
             : (loan.clients?.apodo || "Sin nombre"),
@@ -3101,13 +3099,34 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               media palabra— y deja la fila del mismo alto para todos. Lo que
               no quepa se lee completo en el extracto, a un toque del ojito.
               OJO: sin `block`, que pelea con `line-clamp` por el `display` y
-              lo deja sin efecto. */}
-          <span className="font-semibold text-[13px] md:text-base leading-tight break-words [overflow-wrap:anywhere] line-clamp-2">
+              lo deja sin efecto.
+
+              LA LETRA BAJÓ de 13px a 11px, y no por gusto: acá entra un
+              renglón más —el apodo— y sin bajarla cada cliente costaba una
+              línea extra. Con cuarenta clientes eso es media pantalla de
+              scroll para no decir nada nuevo. */}
+          <span className="font-semibold text-[11px] md:text-sm leading-tight break-words [overflow-wrap:anywhere] line-clamp-2">
             <span className="mr-1 text-[10px] md:text-xs font-normal text-muted-foreground tabular-nums">
               {index + 1}.
             </span>
             {client.nombreCompleto}
           </span>
+
+          {/* EL APODO, DEBAJO Y EN GRIS.
+              El cobrador reconoce al cliente por "kiosko" o "la peluquería" —es
+              como lo tiene en la cabeza y como lo va a buscar en la calle—,
+              pero el nombre de la cédula es el que lo identifica sin lugar a
+              dudas cuando hay dos apellidos iguales. Van los dos.
+
+              Un renglón, no dos: si el apodo es largo se corta. Es la etiqueta
+              de reconocer, no la de identificar, y para eso la primera mitad
+              alcanza. `client.apodo` ya llega en null cuando es igual al
+              nombre, así que nadie ve la misma línea escrita dos veces. */}
+          {client.apodo && (
+            <span className="block text-[10px] md:text-xs text-muted-foreground leading-tight truncate">
+              {client.apodo}
+            </span>
+          )}
 
           {/* Mora y cuota en el MISMO renglón. Apiladas, como en el boceto,
               costaban una línea más por cliente — y con cuarenta clientes esa
