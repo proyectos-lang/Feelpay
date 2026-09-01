@@ -12,6 +12,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { DollarSign, X, Check, Eye, Clock, ArrowLeftRight, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown, ChevronUp, ChevronDown } from "lucide-react"
 import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
 import { leerAplazados, aplazar, quitarAplazado, horaDeAplazado } from "@/lib/aplazados"
+import {
+  cargarMovimientosExtracto, fechaCorta, ETIQUETA_MOVIMIENTO,
+  type MovimientoExtracto,
+} from "@/lib/extracto-cliente"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
@@ -53,6 +57,9 @@ import {
   type Gestion,
 } from "@/lib/gestion-core"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, type RutaUmbrales } from "@/lib/ruta-umbrales"
+import { renderComprobanteImagen, type SeccionComprobante } from "@/lib/imagen-comprobante"
+import { CompartirComprobanteDialog } from "@/components/compartir-comprobante-dialog"
+import { getUsuarioSesion } from "@/lib/movimientos"
 import { obtenerUbicacion, evaluarGeocerca, formatearDistancia, type ResultadoGeocerca, type UbicacionMedida } from "@/lib/geo"
 import { useEstadoGps } from "@/lib/use-gps"
 
@@ -710,10 +717,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // es un número que solo se mira ahí, y traerlo para las 40 filas de la lista
   // serían 40 consultas para un dato que casi nadie abre.
   const [extractoMovimientos, setExtractoMovimientos] = useState<number | null>(null)
-  const [paymentHistoryRows, setPaymentHistoryRows] = useState<{
-    id: string; fecha_pago: string; valor_cuota: number; estado: string
-    monto_pagado: number; fecha_pago_real: string | null; numero_cuota: number
-  }[]>([])
+  /** El diálogo de compartir del extracto (imagen, descarga o chat). */
+  const [compartirExtracto, setCompartirExtracto] = useState(false)
+  const [paymentHistoryRows, setPaymentHistoryRows] = useState<MovimientoExtracto[]>([])
   const [paymentHistoryLoading, setPaymentHistoryLoading] = useState(false)
 
   // Loan history dialog
@@ -2116,22 +2122,21 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // aparecía como tres líneas y una cancelación como muchas.
   // Cuántos movimientos lleva el crédito. Se pide SOLO al abrir el extracto:
   // traerlo para las cuarenta filas de la lista serían cuarenta consultas por
-  // un número que se mira de vez en cuando. `head: true` no baja las filas,
-  // solo el conteo.
+  // un número que se mira de vez en cuando.
+  //
+  // CUENTA LOS QUE SE VAN A VER, no las filas del libro. Era un `count` crudo
+  // sobre `gestiones` y decía 109 en un crédito cuyo historial muestra 20: el
+  // libro guarda además las reversas y los eventos que quedaron anulados, que
+  // ya no se listan. Un número que promete cinco veces lo que hay adentro es
+  // peor que no ponerlo.
   useEffect(() => {
     if (!extractoClient) { setExtractoMovimientos(null); return }
     let cancelado = false
     ;(async () => {
       try {
-        const supabase = await getSupabaseSafe()
-        const { count, error } = await supabase
-          .from("gestiones")
-          .select("id", { count: "exact", head: true })
-          .eq("loan_id", extractoClient.loanId)
-          .eq("estado", "aplicada")
+        const movs = await cargarMovimientosExtracto(extractoClient.loanId)
         if (cancelado) return
-        if (error) throw error
-        setExtractoMovimientos(count ?? 0)
+        setExtractoMovimientos(movs.length)
       } catch (err) {
         // Sin conteo el extracto se abre igual; lo que no se puede es que el
         // ojito no responda por una consulta de adorno.
@@ -2147,35 +2152,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     let cancelled = false
     setPaymentHistoryLoading(true)
     setPaymentHistoryRows([]);
-    (async () => {
-      try {
-        const supabase = await getSupabaseSafe()
-        const { data, error } = await supabase
-          .from("gestiones")
-          .select("id, tipo, estado, fecha_gestion, monto, num_cuotas, fecha_hora, observacion")
-          .eq("loan_id", paymentHistoryClient.loanId)
-          .eq("estado", "aplicada")
-          .in("tipo", ["pago", "no_pago", "cancelacion", "abono_venta"])
-          .order("fecha_gestion", { ascending: true })
-        if (cancelled) return
-        if (error) throw error
-        // Se mapea a la forma que ya renderiza el diálogo.
-        setPaymentHistoryRows(
-          (data ?? []).map((g: Record<string, unknown>) => ({
-            id: String(g.id),
-            fecha_pago: String(g.fecha_gestion),
-            valor_cuota: Number(g.monto) || 0,
-            estado: g.tipo === "no_pago" ? "no_pago" : "pagado",
-            monto_pagado: Number(g.monto) || 0,
-            fecha_pago_real: g.fecha_hora ? String(g.fecha_hora) : null,
-            numero_cuota: Number(g.num_cuotas) || 1,
-          })),
-        )
-      } catch (e) {
-        console.error("[v0] historial de gestiones error:", e)
-      } finally {
-        if (!cancelled) setPaymentHistoryLoading(false)
-      }
+    ;(async () => {
+      // Lo trae `lib/extracto-cliente.ts`, el mismo que arma la imagen que se
+      // comparte: si cada uno lo pidiera por su lado, el extracto que se manda
+      // por WhatsApp podría decir algo distinto del que se está mirando.
+      const movs = await cargarMovimientosExtracto(paymentHistoryClient.loanId)
+      if (cancelled) return
+      setPaymentHistoryRows(movs)
+      setPaymentHistoryLoading(false)
     })()
     return () => { cancelled = true }
   }, [paymentHistoryOpen, paymentHistoryClient])
@@ -2268,6 +2252,76 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // filas de texto, dos lineas y el logo, o sea lo mismo que se hacia con
   // jsPDF pero con fillText/drawImage. Sin dependencias nuevas y sigue
   // funcionando sin senal.
+  /**
+   * EL EXTRACTO COMO IMAGEN, para compartir.
+   *
+   * Usa `renderComprobanteImagen`, el mismo dibujo del cierre de caja: logo de
+   * la ruta arriba, título, subtítulo y la línea de fecha y hora. Así el
+   * extracto que le llega a un cliente por WhatsApp se ve como el comprobante
+   * de pago que ya conoce, y no como una captura de pantalla.
+   *
+   * Los movimientos se piden ACÁ y no al abrir el extracto: son una consulta
+   * más por cliente, y casi nadie comparte. Salen del mismo
+   * `cargarMovimientosExtracto` que pinta la lista, así que la imagen no puede
+   * decir algo distinto de lo que se está mirando.
+   */
+  const construirImagenExtracto = async () => {
+    const c = extractoClient
+    if (!c) throw new Error("No hay cliente")
+    const [movs, umbrales] = await Promise.all([
+      cargarMovimientosExtracto(c.loanId),
+      getRutaUmbrales(currentRutaId).catch(() => null),
+    ])
+    const money = (n: number) => `$${Math.round(n).toLocaleString("es-CO")}`
+    const ahora = new Date()
+    const dia = ahora.toLocaleDateString("es-CO", { timeZone: "America/Bogota" })
+    const hora = ahora.toLocaleTimeString("es-CO", {
+      timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: true,
+    })
+
+    const secciones: SeccionComprobante[] = [
+      {
+        titulo: "El crédito",
+        filas: [
+          { label: "Fecha de venta", valor: fechaCorta(c.fechaVenta) },
+          { label: "Valor prestado", valor: money(c.valorVenta) },
+          { label: "Interés", valor: `${c.tasaInteres ?? 0}%` },
+          { label: "Total a pagar", valor: money(c.totalAPagar) },
+          { label: "Valor de cuota", valor: money(c.valorCuota) },
+          { label: "Cuotas", valor: `${c.cuotasPagadas}/${c.cuotasTotales}` },
+          { label: "Abonado", valor: money(c.abonado) },
+          { label: "Saldo", valor: money(c.saldo) },
+          { label: "Estado", valor: c.mora > 0 ? `Mora: ${etiquetaMora(c.mora)}` : "Al día" },
+        ],
+      },
+    ]
+    if (movs.length > 0) {
+      secciones.push({
+        titulo: `Movimientos (${movs.length})`,
+        filas: movs.map((m) => ({
+          // Fecha y cuota a la izquierda, pagado y valor a la derecha: el
+          // mismo renglón que se ve en pantalla.
+          label: `${fechaCorta(m.fecha)}  ·  ${
+            m.numeroCuota !== null ? `Cuota ${m.numeroCuota}` : ETIQUETA_MOVIMIENTO[m.tipo]
+          }`,
+          valor: `${m.pagado > 0 ? money(m.pagado) : "—"}${
+            m.valorCuota !== null ? ` / ${money(m.valorCuota)}` : ""
+          }`,
+        })),
+      })
+    }
+
+    return renderComprobanteImagen({
+      titulo: "Extracto del cliente",
+      subtitulo: c.nombreCompleto,
+      meta: `${dia}  ·  ${hora}`,
+      secciones,
+      logoUrl: umbrales?.logo_url || `${window.location.origin}/opad-logo.png`,
+      nombreArchivo: `extracto-${c.documento || c.loanId.slice(0, 8)}-${dia.replace(/\//g, "-")}.png`,
+      pie: "Generado por Feelpay",
+    })
+  }
+
   const buildReciboImagen = async (
     client: DisplayClient,
     gestionHoy?: ManagedClient,
@@ -4843,11 +4897,43 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                   </span>
                   <Eye className="h-4 w-4 shrink-0 text-muted-foreground" />
                 </button>
+
+                {/* COMPARTIR EL EXTRACTO.
+                    Sale como imagen con el mismo encabezado del comprobante de
+                    pago —logo de la ruta, título y la línea de fecha y hora—
+                    para que al cliente le llegue algo que reconoce y no una
+                    captura de pantalla. Lleva el resumen del crédito y los
+                    movimientos, los mismos que se ven acá. */}
+                <Button
+                  variant="outline"
+                  className="w-full gap-2"
+                  onClick={() => setCompartirExtracto(true)}
+                >
+                  <Share2 className="h-4 w-4" />
+                  Compartir extracto
+                </Button>
               </div>
             )
           })()}
         </DialogContent>
       </Dialog>
+
+      {/* El compartir del extracto. Es el MISMO diálogo del cierre de caja:
+          compartir, descargar o mandar al chat, con la guarda del AbortError
+          cuando alguien cancela el menú nativo. */}
+      {extractoClient && (
+        <CompartirComprobanteDialog
+          open={compartirExtracto}
+          onOpenChange={setCompartirExtracto}
+          construirImagen={construirImagenExtracto}
+          mensajeChat={`Extracto — ${extractoClient.nombreCompleto}`}
+          currentUser={{
+            id: getUsuarioSesion().id ?? 0,
+            nombre: getUsuarioSesion().nombre,
+          }}
+          titulo="Compartir el extracto"
+        />
+      )}
 
       {/* Payment History Dialog */}
       <Dialog open={paymentHistoryOpen} onOpenChange={(open) => { setPaymentHistoryOpen(open); if (!open) { setPaymentHistoryClient(null); setPaymentHistoryRows([]) } }}>
@@ -4863,68 +4949,59 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           ) : paymentHistoryRows.length === 0 ? (
             <p className="text-xs text-muted-foreground py-4 text-center">Sin registros.</p>
           ) : (
-            <div className="overflow-auto max-h-[60vh] space-y-3">
-              {(() => {
-                // El historial se agrupa POR DIA de negocio, lo mas reciente
-                // primero. Cada fila es un EVENTO del libro, asi que un abono
-                // de tres cuotas es una sola linea y no tres.
-                const gestionadas = paymentHistoryRows
+            <div className="overflow-auto max-h-[60vh]">
+              {/* UNA FILA POR MOVIMIENTO, con los cuatro datos en el mismo
+                  renglón: fecha, cuota, pagado y valor.
 
-                const porDia = new Map<string, typeof gestionadas>()
-                for (const r of gestionadas) {
-                  const dia = (r.fecha_pago_real ?? "").split("T")[0] || r.fecha_pago
-                  if (!porDia.has(dia)) porDia.set(dia, [])
-                  porDia.get(dia)!.push(r)
-                }
-                const dias = [...porDia.entries()].sort((a, b) => b[0].localeCompare(a[0]))
+                  Estaba agrupado por día, con un encabezado con la fecha y
+                  debajo las cuotas de ese día. Un crédito de veinticinco
+                  cuotas eran veinticinco cajitas, y para comparar dos días
+                  había que saltar entre encabezados. Con la fecha DENTRO de
+                  la fila se lee de corrido y cabe el triple en la pantalla.
 
-                const fechaLarga = (iso: string) => {
-                  const [yy, mm, dd] = iso.split("-")
-                  return dd && mm && yy ? `${dd}/${mm}/${yy}` : iso
-                }
-                const estadoLabel: Record<string, string> = {
-                  pagado: "Pagado", no_pago: "No pago", pendiente: "Pendiente",
-                  parcial: "Parcial", cancelada: "Cancelada",
-                }
-
-                return (
-                  <>
-                    {dias.map(([dia, filas]) => {
-                      const totalDia = filas.reduce((acc, r) => acc + (Number(r.monto_pagado) || 0), 0)
-                      return (
-                        <div key={dia} className="rounded-lg border overflow-hidden">
-                          <div className="flex items-center justify-between bg-muted px-3 py-1.5">
-                            <span className="text-[11px] md:text-sm font-semibold">{fechaLarga(dia)}</span>
-                            <span className="text-[11px] md:text-sm font-bold tabular-nums">
-                              {totalDia > 0 ? `$${Math.round(totalDia).toLocaleString("es-CO")}` : "Sin abono"}
-                            </span>
-                          </div>
-                          <div className="divide-y">
-                            {filas.map((r) => {
-                              const isNoPago = r.estado === "no_pago"
-                              return (
-                                <div
-                                  key={r.id}
-                                  className={`flex items-center justify-between gap-2 px-3 py-1.5 ${isNoPago ? "bg-red-50 dark:bg-red-950/30" : ""}`}
-                                >
-                                  <span className={`text-[10px] md:text-xs ${isNoPago ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}>
-                                    Cuota {r.numero_cuota} · {estadoLabel[r.estado] ?? r.estado}
-                                  </span>
-                                  <span className={`text-[10px] md:text-xs font-medium tabular-nums ${isNoPago ? "text-red-600 dark:text-red-400" : ""}`}>
-                                    {Number(r.monto_pagado) > 0
-                                      ? `$${Math.round(Number(r.monto_pagado)).toLocaleString("es-CO")}`
-                                      : "—"}
-                                  </span>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </>
-                )
-              })()}
+                  Los que no apuntan a una cuota —el abono de la venta— llevan
+                  su nombre en la columna de la cuota, que es lo único que
+                  tienen para decir. */}
+              <table className="w-full table-fixed">
+                <thead className="sticky top-0 bg-muted">
+                  <tr className="text-[10px] md:text-xs text-muted-foreground">
+                    <th className="w-[74px] px-2 py-1.5 text-left font-semibold">Fecha</th>
+                    <th className="px-1 py-1.5 text-left font-semibold">Cuota</th>
+                    <th className="w-[70px] px-1 py-1.5 text-right font-semibold">Pagado</th>
+                    <th className="w-[70px] px-2 py-1.5 text-right font-semibold">Valor</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {paymentHistoryRows.map((m) => {
+                    const esNoPago = m.tipo === "no_pago"
+                    return (
+                      <tr
+                        key={m.id}
+                        className={esNoPago ? "bg-red-50 dark:bg-red-950/30" : ""}
+                      >
+                        <td className="px-2 py-1.5 text-[10px] md:text-xs tabular-nums whitespace-nowrap">
+                          {fechaCorta(m.fecha)}
+                        </td>
+                        <td className={`px-1 py-1.5 text-[10px] md:text-xs truncate ${
+                          esNoPago ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
+                        }`}>
+                          {m.numeroCuota !== null
+                            ? `${m.numeroCuota}${esNoPago ? " · No pago" : ""}`
+                            : ETIQUETA_MOVIMIENTO[m.tipo]}
+                        </td>
+                        <td className={`px-1 py-1.5 text-right text-[10px] md:text-xs font-semibold tabular-nums ${
+                          esNoPago ? "text-red-600 dark:text-red-400" : ""
+                        }`}>
+                          {m.pagado > 0 ? `$${Math.round(m.pagado).toLocaleString("es-CO")}` : "—"}
+                        </td>
+                        <td className="px-2 py-1.5 text-right text-[10px] md:text-xs tabular-nums text-muted-foreground">
+                          {m.valorCuota !== null ? `$${Math.round(m.valorCuota).toLocaleString("es-CO")}` : "—"}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </DialogContent>
