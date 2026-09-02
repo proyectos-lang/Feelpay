@@ -15,9 +15,9 @@
  *     es lo que necesita para resolverlo desde donde esté.
  */
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Snowflake, Loader2, Unlock, MessageSquare } from "lucide-react"
+import { Snowflake, Loader2, Unlock, MessageSquare, Lock } from "lucide-react"
 import { fmtFecha } from "@/lib/colombia-date"
 import { descongelarJornada, type JornadaPendiente } from "@/lib/jornada-pendiente"
 import { useToast } from "@/hooks/use-toast"
@@ -41,7 +41,8 @@ export function RutaCongelada({ jornada, onIrAlChat }: PantallaProps) {
           sin cerrar. Hasta que se resuelva no se puede empezar un día nuevo.
         </p>
         <p className="max-w-sm text-sm text-muted-foreground leading-relaxed">
-          Pídele a la secretaría que la desbloquee. El chat sigue disponible.
+          Pídele a la secretaría que haga el cierre de ese día. Apenas quede cerrado,
+          la ruta se libera sola. El chat sigue disponible.
         </p>
       </div>
       {onIrAlChat && (
@@ -60,17 +61,51 @@ interface AvisoProps {
   usuario: { id: number | string; nombre: string }
   /** Se llama cuando la jornada quedó cerrada, para volver a leer el estado. */
   onDescongelada: () => void
+  /** Lleva al cierre de caja de ESA jornada. Es el camino normal. */
+  onIrAlCierre?: () => void
 }
 
-export function AvisoJornadaCongelada({ jornada, rutaNombre, usuario, onDescongelada }: AvisoProps) {
+/**
+ * DOS SALIDAS, Y NO VALEN LO MISMO.
+ *
+ * La normal es HACER EL CIERRE de ese día: se abre el cierre de caja con la
+ * fecha de la jornada vieja, se cuadra, y al cerrarla la ruta queda libre.
+ * Eso es lo que faltaba, y hacerlo deja el día con sus números.
+ *
+ * La otra —cerrar sin cuadre— existe porque hay casos donde el cierre ya no
+ * se puede hacer: una ruta con quince días viejos encima, o un día del que ya
+ * nadie se acuerda. Sigue disponible, pero de segunda y con una confirmación,
+ * porque deja la jornada cerrada SIN cuadrar: el día queda sin cierre para
+ * siempre y solo consta quién lo saltó.
+ *
+ * Antes era la única salida, y era la que estaba a un toque.
+ */
+export function AvisoJornadaCongelada({ jornada, rutaNombre, usuario, onDescongelada, onIrAlCierre }: AvisoProps) {
   const { toast } = useToast()
   const [enCurso, setEnCurso] = useState(false)
+  // El primer toque avisa, el segundo ejecuta. Un modal para esto seria mucho;
+  // un solo toque, muy poco: se pierde el cierre de un dia sin querer.
+  const [confirmando, setConfirmando] = useState(false)
 
-  const desbloquear = async () => {
+  // Se desarma solo. Un boton que se queda armado media hora es peor que uno
+  // que no avisa: para cuando alguien lo vuelve a tocar, ya se olvido de que
+  // el toque anterior era el aviso.
+  useEffect(() => {
+    if (!confirmando) return
+    const t = setTimeout(() => setConfirmando(false), 6000)
+    return () => clearTimeout(t)
+  }, [confirmando])
+
+  const cerrarSinCuadre = async () => {
     if (enCurso) return
+    if (!confirmando) {
+      setConfirmando(true)
+      return
+    }
     setEnCurso(true)
     const r = await descongelarJornada(jornada.id, usuario)
     setEnCurso(false)
+    setConfirmando(false)
     if (!r.ok) {
       toast({ title: "No se pudo desbloquear", description: r.error, variant: "destructive" })
       return
@@ -91,10 +126,25 @@ export function AvisoJornadaCongelada({ jornada, rutaNombre, usuario, onDesconge
         <span className="font-semibold">{rutaNombre || "Esta ruta"} está congelada.</span>{" "}
         La caja del {fmtFecha(jornada.fecha)} quedó sin cerrar y el cobrador no puede empezar hoy.
       </p>
-      <Button size="sm" className="gap-1.5 shrink-0" onClick={desbloquear} disabled={enCurso}>
-        {enCurso ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Unlock className="h-3.5 w-3.5" />}
-        {enCurso ? "Desbloqueando..." : "Desbloquear"}
-      </Button>
+      <div className="flex shrink-0 items-center gap-2">
+        {onIrAlCierre && (
+          <Button size="sm" className="gap-1.5" onClick={onIrAlCierre} disabled={enCurso}>
+            <Lock className="h-3.5 w-3.5" />
+            Hacer el cierre
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant={confirmando ? "destructive" : "ghost"}
+          className={confirmando ? "gap-1.5" : "gap-1.5 text-info hover:bg-info/15 hover:text-info"}
+          onClick={cerrarSinCuadre}
+          disabled={enCurso}
+          title="Cierra la jornada sin cuadrarla. Ese día queda sin cierre."
+        >
+          {enCurso ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Unlock className="h-3.5 w-3.5" />}
+          {enCurso ? "Cerrando..." : confirmando ? "¿Seguro? Toca otra vez" : "Sin cuadre"}
+        </Button>
+      </div>
     </div>
   )
 }

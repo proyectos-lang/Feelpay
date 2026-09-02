@@ -1176,6 +1176,14 @@ export default function Page() {
             rutaNombre={rutaPais}
             onRouteStateChange={handleRutaActivaEstadoChange}
             currentUser={currentUser ?? undefined}
+            /* Solo viene con valor cuando se entra desde el aviso de ruta
+               congelada. Entrando por el camino normal es undefined y el
+               cierre es el de hoy, como siempre. */
+            fechaJornada={viewData?.fechaJornada}
+            /* Cerro la jornada VIEJA: se vuelve a preguntar si queda alguna
+               otra. Si no queda, el congelamiento se levanta solo; si quedaba
+               una mas vieja todavia, aparece esa. */
+            onJornadaAtrasadaCerrada={() => setReleerJornada((n) => n + 1)}
           />
         )
       case "view-clients":
@@ -1371,6 +1379,13 @@ export default function Page() {
             rutaNombre={selectedRuta?.nombre ?? ""}
             usuario={{ id: currentUser.id, nombre: currentUser.nombre }}
             onDescongelada={() => setReleerJornada((n) => n + 1)}
+            /* El camino normal: se abre el cierre de caja DE ESE DIA. La
+               fecha viaja por `viewData`, y `cierre-caja` esta en
+               VISTAS_SIN_RUTA, asi que se puede entrar con la ruta congelada
+               —que es justamente cuando hace falta. */
+            onIrAlCierre={() =>
+              handleViewChange("cierre-caja", { fechaJornada: jornadaPendiente.fecha })
+            }
           />
         )}
         {rutaCongelada && jornadaPendiente ? (

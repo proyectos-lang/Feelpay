@@ -13,6 +13,7 @@ import {
 import { getResumenDia } from "@/lib/resumen-dia"
 import { clientesSinGestionarHoy, type FrecuenciaKey } from "@/lib/dashboard-data"
 import { todayColombia, bandaCartera } from "@/lib/gestion-core"
+import { fmtFecha } from "@/lib/colombia-date"
 import { contarPendientes, suscribirCola } from "@/lib/offline-queue"
 import { getRutaUmbrales } from "@/lib/ruta-umbrales"
 import { renderComprobanteImagen, type SeccionComprobante } from "@/lib/imagen-comprobante"
@@ -31,13 +32,49 @@ interface CierreCajaProps {
   onRouteStateChange?: (estado: "abierta" | "cerrada" | null) => void
   /** Hace falta para poder mandar el cierre al chat de la app. */
   currentUser?: { id: number | string; nombre: string }
+  /**
+   * LA JORNADA QUE SE ESTA CERRANDO, "YYYY-MM-DD". Sin ella, hoy.
+   *
+   * Es como se hace el CIERRE ATRASADO: la ruta que amanecio congelada porque
+   * ayer nadie cerro la caja manda a esta misma pantalla con la fecha de ayer,
+   * y al cerrarla la ruta queda libre para empezar el dia de hoy.
+   *
+   * Una fecha de hoy o futura se ignora y se cae a hoy: esta pantalla escribe
+   * en `rutas_diarias`, y no hay jornada que cerrar en un dia que no ocurrio.
+   */
+  fechaJornada?: string
+  /**
+   * Se llama cuando queda cerrada una jornada de un DIA PASADO.
+   *
+   * No se puede reusar `onRouteStateChange`: ese avisa del estado de la ruta
+   * HOY, y cerrar la caja de ayer no cierra la de hoy — al contrario, es lo
+   * que habilita empezarla.
+   */
+  onJornadaAtrasadaCerrada?: () => void
 }
 
-export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateChange, currentUser }: CierreCajaProps) {
+export function CierreCaja({
+  onBack, rutaId = 1, rutaNombre = "", onRouteStateChange, currentUser,
+  fechaJornada, onJornadaAtrasadaCerrada,
+}: CierreCajaProps) {
   const [compartirAbierto, setCompartirAbierto] = useState(false)
   const _now = new Date()
-  const fecha = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "2-digit", month: "2-digit", year: "numeric" }).format(_now)
+
+  // ── QUE DIA SE ESTA CERRANDO ───────────────────────────────────────────
+  //
+  // Casi siempre hoy. La excepcion es el cierre atrasado: la jornada vieja
+  // que dejo la ruta congelada. Todo lo que sigue —los numeros, el papel y el
+  // UPDATE de `rutas_diarias`— apunta a `fechaCierre`, no a hoy.
+  const hoyColombia = todayColombia()
+  const fechaCierre = fechaJornada && fechaJornada < hoyColombia ? fechaJornada : hoyColombia
+  const esAtrasado = fechaCierre !== hoyColombia
+
+  // La fecha que se muestra es la de la JORNADA; la hora es la de AHORA,
+  // porque es cuando se esta firmando el cierre. En un cierre atrasado las
+  // dos se separan, y por eso se dicen las dos.
+  const fecha = fmtFecha(fechaCierre)
   const hora = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", hour: "numeric", minute: "2-digit", hour12: true }).format(_now)
+  const hoyTexto = fmtFecha(hoyColombia)
 
   // Estado real de la validación
   const [pagosPendientes, setPagosPendientes] = useState<number>(0)
@@ -81,6 +118,14 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
    * lista cliente por cliente, que es exactamente lo que se reportó.
    */
   useEffect(() => {
+    // EN UN CIERRE ATRASADO ESTA PREGUNTA NO APLICA.
+    //
+    // `clientesSinGestionarHoy` responde por HOY: quien tiene saldo hoy y a
+    // quien le falta el evento de hoy. Contra una jornada de ayer daria la
+    // respuesta de otro dia, y ademas serviria para bloquear algo que ya no
+    // se puede arreglar: nadie puede volver a ayer a visitar al que no se
+    // visito. El dia ya paso; lo que falta es cuadrar la caja y seguir.
+    if (esAtrasado) { setLoadingPagos(false); return }
     let vigente = true
     const fetchPendientes = async () => {
       try {
@@ -104,7 +149,7 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
 
     fetchPendientes()
     return () => { vigente = false }
-  }, [rutaId])
+  }, [rutaId, esAtrasado])
 
   // Operaciones capturadas sin conexion que aun no llegan al servidor. El
   // cierre suma TODO el dia, asi que con pendientes en cola los totales
@@ -116,10 +161,14 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
     return suscribirCola(leer)
   }, [])
 
-  const pagosCumple = pagosPendientes === 0
+  // En un cierre atrasado el requisito de "todos gestionados" no corre (ver
+  // arriba). La COLA si: una operacion capturada sin conexion puede ser
+  // justamente de ese dia, y cerrar antes de que llegue dejaria los totales
+  // cortos para siempre.
+  const pagosCumple = esAtrasado || pagosPendientes === 0
   const operacionesCumple = operacionesPendientes.length === 0
   const colaCumple = sinSincronizar === 0
-  const puedesCerrar = pagosCumple && operacionesCumple && colaCumple && !loadingPagos
+  const puedesCerrar = pagosCumple && operacionesCumple && colaCumple && (esAtrasado || !loadingPagos)
 
   // ── Datos reales del cierre ────────────────────────────────────────────
   // Fuentes: resumen_diario_v2 (misma vista que Resumen del Día — los números
@@ -152,7 +201,8 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
     const loadCierreData = async () => {
       try {
         const supabase = createClient()
-        const fechaHoy = todayColombia()
+        // El dia del cierre, que en un cierre atrasado NO es hoy.
+        const fechaObjetivo = fechaCierre
 
         // `getResumenDia` resuelve el arrastre de la caja: un dia sin ninguna
         // fila —tipico de un domingo— dejaba este cierre en $0 aunque la ruta
@@ -162,7 +212,7 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
         // elimino: era la fuente de "Cant. Pagos" y del desglose por
         // frecuencia, y los dos pasaron al libro. Un viaje de red menos.
         const [resumen, loansRes] = await Promise.all([
-          getResumenDia(supabase, rutaId, fechaHoy),
+          getResumenDia(supabase, rutaId, fechaObjetivo),
           supabase.from("loans").select("id").eq("ruta", rutaId).eq("estado", "activo"),
         ])
 
@@ -199,7 +249,14 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
         const loanIds = ((loansRes.data ?? []) as { id: string }[]).map((l) => l.id)
         let cuotas = { de0a3: 0, de3oMas: 0 }
         let cartera = { alDia: 0, mora: 0, vencidos: 0 }
-        if (loanIds.length > 0) {
+        // LAS DOS SECCIONES QUE SOLO SABEN DE HOY.
+        //
+        // `v_loan_financiero` da la mora de HOY y `payment_plan.estado` es el
+        // cache de HOY. En un cierre atrasado las dos responderian por el dia
+        // equivocado, asi que ni se preguntan y las secciones no se imprimen
+        // (ver `rows`). Un papel con la fecha de ayer y la cartera de hoy es
+        // peor que un papel que no la trae.
+        if (!esAtrasado && loanIds.length > 0) {
           const [vencidasRes, moraRes] = await Promise.all([
             // Cuotas vencidas: `fecha_pago` es el VENCIMIENTO inmutable del
             // cronograma, así que pendiente + vencida antes de hoy sigue
@@ -208,7 +265,7 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
               .from("payment_plan")
               .select("loan_id")
               .eq("estado", "pendiente")
-              .lt("fecha_pago", fechaHoy)
+              .lt("fecha_pago", fechaObjetivo)
               .in("loan_id", loanIds),
             supabase.from("v_loan_financiero").select("loan_id, cuotas_mora").in("loan_id", loanIds),
           ])
@@ -260,6 +317,11 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
           // terminaron el día con plata puesta" (script 070), el mismo número
           // que muestran el Resumen del Día y el Monitoreo. Y el total es la
           // cartera del día, la misma que decide si se puede cerrar.
+          //
+          // En un cierre ATRASADO `resumenDelDiaRuta` y `totalCartera` no se
+          // piden, asi que caen solos al respaldo — que es justo lo correcto
+          // ahi: `cantidad_pagos` y `cantidad_no_pagos` salen de la fila de
+          // ESE dia, no de hoy.
           pagos: {
             realizados: resumenDelDiaRuta?.pagaron ?? Number(r.cantidad_pagos ?? 0),
             total: totalCartera || Number(r.cantidad_pagos ?? 0) + Number(r.cantidad_no_pagos ?? 0),
@@ -278,7 +340,7 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
     // "Cant. Pagos" sale de ahi. Lo pone el OTRO efecto —el que decide si se
     // puede cerrar— y llega un instante despues; sin esto, el cierre se
     // quedaria con el total de respaldo del primer render.
-  }, [rutaId, totalCartera, resumenDelDiaRuta])
+  }, [rutaId, totalCartera, resumenDelDiaRuta, fechaCierre, esAtrasado])
 
   const [cajaCerrada, setCajaCerrada] = useState(false)
   const [showModal, setShowModal] = useState(false)
@@ -301,18 +363,43 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
     setCierreError(null)
     try {
       const supabase = createClient()
-      const fechaHoy = todayColombia()
+      const ahora = new Date().toISOString()
 
       // Finalizar la jornada en rutas_diarias: estado=cerrada + hora_fin=now()
-      const { error } = await supabase
-        .from("rutas_diarias")
-        .update({
-          estado: "cerrada",
-          hora_fin: new Date().toISOString(),
-        })
-        .eq("ruta_id", rutaId)
-        .eq("fecha", fechaHoy)
-        .eq("estado", "abierta")
+      //
+      // El UPDATE apunta a `fechaCierre`, que en un cierre atrasado es la
+      // jornada VIEJA — la que tiene congelada la ruta. `estado='abierta'` en
+      // el WHERE es lo que impide cerrar dos veces la misma.
+      const cambios: Record<string, unknown> = { estado: "cerrada", hora_fin: ahora }
+      if (esAtrasado) {
+        // ESTE CIERRE SI TIENE CUADRE. Es la diferencia con el "Desbloquear"
+        // de la secretaría, que cierra la jornada sin cuadrarla y deja
+        // `cerrada_sin_cuadre = true`. Acá se hizo el cierre de verdad, con
+        // sus números, así que se marca en false y queda dicho quién y cuándo.
+        cambios.cerrada_sin_cuadre = false
+        cambios.observacion =
+          `Cierre atrasado de la jornada del ${fecha}, hecho el ${hoyTexto} a las ${hora}` +
+          (currentUser ? ` por ${currentUser.nombre} (usuario ${currentUser.id}).` : ".")
+      }
+
+      const cerrar = (campos: Record<string, unknown>) =>
+        supabase
+          .from("rutas_diarias")
+          .update(campos)
+          .eq("ruta_id", rutaId)
+          .eq("fecha", fechaCierre)
+          .eq("estado", "abierta")
+          .select("id")
+
+      let { data, error } = await cerrar(cambios)
+
+      // 42703 = la columna no existe: el script 086 todavía no corrió en esta
+      // base. El cierre no puede quedarse trabado por una columna de
+      // trazabilidad, así que se reintenta con lo mínimo indispensable.
+      if (error && (error as { code?: string }).code === "42703") {
+        console.warn("[v0] rutas_diarias sin columnas del script 086; cerrando sin ellas")
+        ;({ data, error } = await cerrar({ estado: "cerrada", hora_fin: ahora }))
+      }
 
       if (error) {
         console.error("[v0] Error finalizando jornada:", error.message)
@@ -320,12 +407,26 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
         return
       }
 
+      // Cero filas y sin error = ya estaba cerrada (otra pantalla, otro
+      // usuario). No es un fallo: el objetivo ya se cumplió. Se sigue igual,
+      // porque tratarlo como error dejaría la ruta congelada sin motivo.
+      if ((data ?? []).length === 0) {
+        console.warn("[v0] La jornada", fechaCierre, "de la ruta", rutaId, "ya estaba cerrada")
+      }
+
       setCajaCerrada(true)
       setShowConfirm(false)
-      // La jornada quedó cerrada: para el vendedor el día se acabó y no puede
-      // hacer más movimientos. Se avisa hacia arriba para que el bloqueo entre
-      // en vigor de inmediato, sin esperar a que recargue la app.
-      onRouteStateChange?.("cerrada")
+      if (esAtrasado) {
+        // OJO: acá NO se toca el estado de la ruta de hoy. Cerrar la caja de
+        // ayer no cierra la de hoy — es justamente lo que habilita iniciarla.
+        // Mandar "cerrada" hacia arriba bloquearía al cobrador el día entero.
+        onJornadaAtrasadaCerrada?.()
+      } else {
+        // La jornada quedó cerrada: para el vendedor el día se acabó y no puede
+        // hacer más movimientos. Se avisa hacia arriba para que el bloqueo entre
+        // en vigor de inmediato, sin esperar a que recargue la app.
+        onRouteStateChange?.("cerrada")
+      }
     } catch (err) {
       console.error("[v0] Unexpected error finalizando jornada:", err)
       setCierreError("Ocurrió un error al cerrar la caja.")
@@ -339,6 +440,67 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
   const paymentPct = data.pagos.total > 0 ? Math.round((data.pagos.realizados / data.pagos.total) * 100) : 0
   const rutaLabel = rutaNombre ? `Ruta ${rutaId} — ${rutaNombre}` : `Ruta ${rutaId}`
 
+  type RowItem =
+    | { type: "section"; label: string }
+    | { type: "row"; icon: React.ElementType; iconColor: string; label: string; value: string }
+    | { type: "subrow"; label: string; value: string }
+
+  const rows: RowItem[] = [
+    { type: "section", label: "Caja" },
+    { type: "row", icon: Wallet,          iconColor: "text-icon-wallet",     label: "Caja Anterior",         value: `$${data.cajaAnterior.toLocaleString()}` },
+    { type: "row", icon: Banknote,        iconColor: "text-icon-cash",       label: "Efectivo Final",         value: `$${data.efectivoFinal.toLocaleString()}` },
+
+    { type: "section", label: "Recaudo" },
+    { type: "row", icon: Target,          iconColor: "text-icon-target",     label: "Total Recaudo",          value: `$${data.recaudo.total.toLocaleString()} / $${data.recaudo.meta.toLocaleString()}` },
+
+    { type: "section", label: "Operaciones" },
+    { type: "row", icon: CheckCircle,     iconColor: "text-icon-check",      label: "Canceladas",             value: `$${data.canceladas.valor.toLocaleString()} (${data.canceladas.cantidad})` },
+    { type: "row", icon: ShoppingCart,    iconColor: "text-icon-sales",      label: "Total Ventas",           value: `$${data.ventas.total.toLocaleString()} (${data.ventas.cantidad})` },
+    { type: "row", icon: Receipt,         iconColor: "text-icon-expense",    label: "Gastos",                 value: `$${data.gastos.valor.toLocaleString()} (${data.gastos.cantidad})` },
+    { type: "row", icon: ArrowDownCircle, iconColor: "text-icon-withdrawal", label: "Retiros",                value: `$${data.retiros.valor.toLocaleString()} (${data.retiros.cantidad})` },
+    { type: "row", icon: TrendingUp,      iconColor: "text-icon-income",     label: "Ingresos",               value: `$${data.ingresos.valor.toLocaleString()} (${data.ingresos.cantidad})` },
+
+    { type: "section", label: "Pagos" },
+    { type: "row", icon: CreditCard,      iconColor: "text-icon-payment",    label: "Cant. Pagos",            value: `${data.pagos.realizados} / ${data.pagos.total} (${paymentPct}%)` },
+
+    // LO QUE UN CIERRE ATRASADO NO PUEDE DECIR.
+    //
+    // El desglose por frecuencia sale del calculo de HOY (`clientesSinGestionarHoy`),
+    // y la cartera y las cuotas vencidas salen del estado de HOY. Contra una
+    // jornada de ayer los tres responderian por el dia equivocado, y el papel
+    // saldria con la fecha de ayer y los numeros de hoy. Se omiten, y la
+    // pantalla dice por que.
+    //
+    // Lo que SI queda —caja, recaudo, operaciones y cant. pagos— sale de
+    // `resumen_diario_v2` de ESE dia, asi que es exacto.
+    ...(esAtrasado ? [] : ([
+      { type: "row", icon: CalendarDays,    iconColor: "text-success",         label: "Frec. Pago Diario",      value: `${data.frecuencia.diario.pagos}/${data.frecuencia.diario.total}` },
+      { type: "row", icon: CalendarDays,    iconColor: "text-icon-calendar",   label: "Frec. Pago Semanal",     value: `${data.frecuencia.semanal.pagos}/${data.frecuencia.semanal.total}` },
+      { type: "row", icon: CalendarClock,   iconColor: "text-icon-clock",      label: "Frec. Pago Quincenal",   value: `${data.frecuencia.quincenal.pagos}/${data.frecuencia.quincenal.total}` },
+      { type: "row", icon: Coins,           iconColor: "text-icon-wallet",     label: "Frec. Pago Mensual",     value: `${data.frecuencia.mensual.pagos}/${data.frecuencia.mensual.total}` },
+
+      { type: "section", label: "Cuotas Vencidas por Cliente" },
+      { type: "row", icon: PiggyBank,       iconColor: "text-icon-sales",      label: "De 0 a 3 cuotas vencidas", value: `${data.cuotas.de0a3}` },
+      { type: "row", icon: Coins,           iconColor: "text-icon-wallet",     label: "Más de 3 cuotas vencidas", value: `${data.cuotas.de3oMas}` },
+
+      { type: "section", label: "Estado de Cartera" },
+      { type: "row", icon: Users,           iconColor: "text-status-al-dia",   label: "Clientes Al Día",        value: `${data.cartera.alDia}` },
+      { type: "row", icon: AlertCircle,     iconColor: "text-status-mora",     label: "Clientes en Mora",       value: `${data.cartera.mora}` },
+      { type: "row", icon: XCircle,         iconColor: "text-status-vencido",  label: "Clientes Vencidos",      value: `${data.cartera.vencidos}` },
+    ] as RowItem[])),
+  ]
+
+  /**
+   * La linea chica bajo el titulo, la misma en el PDF y en la imagen.
+   *
+   * En un cierre atrasado la fecha de la JORNADA y la del CIERRE son dos, y
+   * el papel tiene que decir las dos: si solo dijera una, o parece un cierre
+   * de hoy con los numeros de ayer, o un cierre de ayer firmado ayer.
+   */
+  const metaCierre = esAtrasado
+    ? `Jornada del ${fecha}  ·  cerrada el ${hoyTexto} a las ${hora}`
+    : `${fecha}  ·  ${hora}`
+
   const handlePDF = () => {
     const win = window.open("", "_blank")
     if (!win) {
@@ -347,6 +509,21 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
     }
 
     const logoUrl = `${window.location.origin}/opad-logo.png`
+
+    // EL PAPEL SALE DE `rows`, LAS MISMAS FILAS DE LA PANTALLA.
+    //
+    // Antes este HTML repetia las 25 filas escritas a mano: agregar un dato al
+    // cierre obligaba a acordarse de tocarlo en dos lados, y cualquier olvido
+    // dejaba el papel diciendo algo distinto de la pantalla. Con el cierre
+    // atrasado eso habria dolido de una: la pantalla omite la cartera de hoy
+    // y el papel la habria impreso igual, bajo la fecha de ayer.
+    const filasPdf = rows
+      .map((r) => {
+        if (r.type === "section") return `    <tr class="section"><td colspan="2">${r.label}</td></tr>`
+        const clase = r.type === "subrow" ? "subrow" : "row"
+        return `    <tr class="${clase}"><td class="label">${r.label}</td><td class="value">${r.value}</td></tr>`
+      })
+      .join("\n")
 
     win.document.write(`<!DOCTYPE html>
 <html lang="es">
@@ -391,33 +568,10 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
   <div class="header">
     <h1>Cierre de Caja</h1>
     <div class="sub">${rutaLabel}</div>
-    <div class="meta">${fecha} &nbsp; ${hora} &nbsp;&nbsp; Estado: ${data.estado}</div>
+    <div class="meta">${metaCierre} &nbsp;&nbsp; Estado: ${data.estado}</div>
   </div>
   <table><tbody>
-    <tr class="section"><td colspan="2">Caja</td></tr>
-    <tr class="row"><td class="label">Caja Anterior</td><td class="value">$${data.cajaAnterior.toLocaleString()}</td></tr>
-    <tr class="row"><td class="label">Efectivo Final</td><td class="value">$${data.efectivoFinal.toLocaleString()}</td></tr>
-    <tr class="section"><td colspan="2">Recaudo</td></tr>
-    <tr class="row"><td class="label">Total Recaudo</td><td class="value">$${data.recaudo.total.toLocaleString()} / $${data.recaudo.meta.toLocaleString()}</td></tr>
-    <tr class="section"><td colspan="2">Operaciones</td></tr>
-    <tr class="row"><td class="label">Canceladas</td><td class="value">$${data.canceladas.valor.toLocaleString()} (${data.canceladas.cantidad})</td></tr>
-    <tr class="row"><td class="label">Total Ventas</td><td class="value">$${data.ventas.total.toLocaleString()} (${data.ventas.cantidad})</td></tr>
-    <tr class="row"><td class="label">Gastos</td><td class="value">$${data.gastos.valor.toLocaleString()} (${data.gastos.cantidad})</td></tr>
-    <tr class="row"><td class="label">Retiros</td><td class="value">$${data.retiros.valor.toLocaleString()} (${data.retiros.cantidad})</td></tr>
-    <tr class="row"><td class="label">Ingresos</td><td class="value">$${data.ingresos.valor.toLocaleString()} (${data.ingresos.cantidad})</td></tr>
-    <tr class="section"><td colspan="2">Pagos</td></tr>
-    <tr class="row"><td class="label">Cant. Pagos</td><td class="value">${data.pagos.realizados} / ${data.pagos.total} (${paymentPct}%)</td></tr>
-    <tr class="row"><td class="label">Frec. Pago Diario</td><td class="value">${data.frecuencia.diario.pagos}/${data.frecuencia.diario.total}</td></tr>
-    <tr class="row"><td class="label">Frec. Pago Semanal</td><td class="value">${data.frecuencia.semanal.pagos}/${data.frecuencia.semanal.total}</td></tr>
-    <tr class="row"><td class="label">Frec. Pago Quincenal</td><td class="value">${data.frecuencia.quincenal.pagos}/${data.frecuencia.quincenal.total}</td></tr>
-    <tr class="row"><td class="label">Frec. Pago Mensual</td><td class="value">${data.frecuencia.mensual.pagos}/${data.frecuencia.mensual.total}</td></tr>
-    <tr class="section"><td colspan="2">Cuotas Vencidas por Cliente</td></tr>
-    <tr class="row"><td class="label">De 0 a 3 cuotas vencidas</td><td class="value">${data.cuotas.de0a3}</td></tr>
-    <tr class="row"><td class="label">Más de 3 cuotas vencidas</td><td class="value">${data.cuotas.de3oMas}</td></tr>
-    <tr class="section"><td colspan="2">Estado de Cartera</td></tr>
-    <tr class="row"><td class="label">Clientes Al Día</td><td class="value">${data.cartera.alDia}</td></tr>
-    <tr class="row"><td class="label">Clientes en Mora</td><td class="value">${data.cartera.mora}</td></tr>
-    <tr class="row"><td class="label">Clientes Vencidos</td><td class="value">${data.cartera.vencidos}</td></tr>
+${filasPdf}
   </tbody></table>
   <button class="print-btn" onclick="window.print()">Guardar / Imprimir PDF</button>
 </div>
@@ -426,50 +580,8 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
     win.document.close()
   }
 
-  type RowItem =
-    | { type: "section"; label: string }
-    | { type: "row"; icon: React.ElementType; iconColor: string; label: string; value: string }
-    | { type: "subrow"; label: string; value: string }
 
-  const rows: RowItem[] = [
-    { type: "section", label: "Caja" },
-    { type: "row", icon: Wallet,          iconColor: "text-icon-wallet",     label: "Caja Anterior",         value: `$${data.cajaAnterior.toLocaleString()}` },
-    { type: "row", icon: Banknote,        iconColor: "text-icon-cash",       label: "Efectivo Final",         value: `$${data.efectivoFinal.toLocaleString()}` },
-
-    { type: "section", label: "Recaudo" },
-    { type: "row", icon: Target,          iconColor: "text-icon-target",     label: "Total Recaudo",          value: `$${data.recaudo.total.toLocaleString()} / $${data.recaudo.meta.toLocaleString()}` },
-
-    { type: "section", label: "Operaciones" },
-    { type: "row", icon: CheckCircle,     iconColor: "text-icon-check",      label: "Canceladas",             value: `$${data.canceladas.valor.toLocaleString()} (${data.canceladas.cantidad})` },
-    { type: "row", icon: ShoppingCart,    iconColor: "text-icon-sales",      label: "Total Ventas",           value: `$${data.ventas.total.toLocaleString()} (${data.ventas.cantidad})` },
-    { type: "row", icon: Receipt,         iconColor: "text-icon-expense",    label: "Gastos",                 value: `$${data.gastos.valor.toLocaleString()} (${data.gastos.cantidad})` },
-    { type: "row", icon: ArrowDownCircle, iconColor: "text-icon-withdrawal", label: "Retiros",                value: `$${data.retiros.valor.toLocaleString()} (${data.retiros.cantidad})` },
-    { type: "row", icon: TrendingUp,      iconColor: "text-icon-income",     label: "Ingresos",               value: `$${data.ingresos.valor.toLocaleString()} (${data.ingresos.cantidad})` },
-
-    { type: "section", label: "Pagos" },
-    { type: "row", icon: CreditCard,      iconColor: "text-icon-payment",    label: "Cant. Pagos",            value: `${data.pagos.realizados} / ${data.pagos.total} (${paymentPct}%)` },
-    { type: "row", icon: CalendarDays,    iconColor: "text-success",         label: "Frec. Pago Diario",      value: `${data.frecuencia.diario.pagos}/${data.frecuencia.diario.total}` },
-    { type: "row", icon: CalendarDays,    iconColor: "text-icon-calendar",   label: "Frec. Pago Semanal",     value: `${data.frecuencia.semanal.pagos}/${data.frecuencia.semanal.total}` },
-    { type: "row", icon: CalendarClock,   iconColor: "text-icon-clock",      label: "Frec. Pago Quincenal",   value: `${data.frecuencia.quincenal.pagos}/${data.frecuencia.quincenal.total}` },
-    { type: "row", icon: Coins,           iconColor: "text-icon-wallet",     label: "Frec. Pago Mensual",     value: `${data.frecuencia.mensual.pagos}/${data.frecuencia.mensual.total}` },
-
-    { type: "section", label: "Cuotas Vencidas por Cliente" },
-    { type: "row", icon: PiggyBank,       iconColor: "text-icon-sales",      label: "De 0 a 3 cuotas vencidas", value: `${data.cuotas.de0a3}` },
-    { type: "row", icon: Coins,           iconColor: "text-icon-wallet",     label: "Más de 3 cuotas vencidas", value: `${data.cuotas.de3oMas}` },
-
-    { type: "section", label: "Estado de Cartera" },
-    { type: "row", icon: Users,           iconColor: "text-status-al-dia",   label: "Clientes Al Día",        value: `${data.cartera.alDia}` },
-    { type: "row", icon: AlertCircle,     iconColor: "text-status-mora",     label: "Clientes en Mora",       value: `${data.cartera.mora}` },
-    { type: "row", icon: XCircle,         iconColor: "text-status-vencido",  label: "Clientes Vencidos",      value: `${data.cartera.vencidos}` },
-  ]
-
-  /**
-   * Las MISMAS filas de la pantalla, agrupadas por sección, para la imagen.
-   *
-   * Antes el PDF repetía las 25 filas escritas a mano en su propio HTML:
-   * agregar un dato al cierre obligaba a acordarse de tocarlo en dos lados, y
-   * cualquier olvido dejaba el papel diciendo algo distinto de la pantalla.
-   */
+  /** Las MISMAS filas de la pantalla, agrupadas por sección, para la imagen. */
   const seccionesComprobante = (): SeccionComprobante[] => {
     const out: SeccionComprobante[] = []
     for (const r of rows) {
@@ -486,11 +598,11 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
     return renderComprobanteImagen({
       titulo: "Cierre de Caja",
       subtitulo: rutaLabel,
-      meta: `${fecha}  ·  ${hora}  ·  ${cajaCerrada ? "Cerrada" : "Abierta"}`,
+      meta: `${metaCierre}  ·  ${cajaCerrada ? "Cerrada" : "Abierta"}`,
       secciones: seccionesComprobante(),
       logoUrl: umbrales?.logo_url || `${window.location.origin}/opad-logo.png`,
       nombreArchivo: `cierre-ruta-${rutaId}-${fecha.replace(/\//g, "-")}.png`,
-      pie: "Generado por Feelpay",
+      pie: esAtrasado ? "Cierre atrasado · Generado por Feelpay" : "Generado por Feelpay",
     })
   }
 
@@ -540,7 +652,9 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
         <div className="flex items-center gap-4 text-sm text-brand-foreground/90 pl-10">
           <div className="flex items-center gap-1.5">
             <Calendar className="h-3.5 w-3.5" />
-            <span>{fecha}</span>
+            {/* En un cierre atrasado se dice de QUE dia es la caja, porque no
+                es la de hoy y todo el reporte depende de eso. */}
+            <span>{esAtrasado ? `Jornada del ${fecha}` : fecha}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <Clock className="h-3.5 w-3.5" />
@@ -548,6 +662,31 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
           </div>
         </div>
       </div>
+
+      {/* EL AVISO DEL CIERRE ATRASADO.
+          Va fuera del degradado y en ambar: quien llega aca lo hace desde una
+          ruta congelada, y tiene que saber en un vistazo que esta cerrando
+          OTRO dia y que al terminar la ruta queda libre. */}
+      {esAtrasado && (
+        <div className="mx-3 mt-2 shrink-0 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2.5">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <div className="space-y-1">
+              <p className="text-[13px] font-semibold text-foreground">
+                Cierre atrasado — caja del {fecha}
+              </p>
+              <p className="text-[12px] leading-relaxed text-muted-foreground">
+                Esa jornada quedo sin cerrar y por eso la ruta esta congelada. Al cerrarla
+                se habilita para iniciar la de hoy ({hoyTexto}).
+              </p>
+              <p className="text-[12px] leading-relaxed text-muted-foreground">
+                No se incluyen el desglose por frecuencia ni el estado de cartera: se
+                calculan sobre el estado de hoy y este cierre es de otro dia.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Table */}
       <div className="flex-1 min-h-0 overflow-auto px-3 py-2">
@@ -615,7 +754,24 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
         {/* Cerrar la caja va de último y separado por una línea: es lo que
             termina la jornada, no una acción más de la fila de arriba. */}
         <div className="mt-4 border-t border-border pt-4 pb-2">
-          {cajaCerrada ? (
+          {cajaCerrada && esAtrasado ? (
+            // Se cerro la jornada vieja: la ruta acaba de quedar libre y hay
+            // que decirlo, porque es lo que la persona vino a conseguir.
+            <div className="rounded-xl border border-success/40 bg-success/10 px-3 py-3 text-center">
+              <div className="flex items-center justify-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-success" />
+                <span className="text-sm font-semibold text-foreground">
+                  Jornada del {fecha} cerrada
+                </span>
+              </div>
+              <p className="mt-1 text-[12px] text-muted-foreground">
+                La ruta quedo descongelada. Ya se puede iniciar la del {hoyTexto}.
+              </p>
+              <Button variant="outline" className="mt-3 w-full rounded-xl text-sm" onClick={onBack}>
+                Volver
+              </Button>
+            </div>
+          ) : cajaCerrada ? (
             <div className="flex min-h-[52px] items-center justify-center gap-2 bg-muted rounded-xl py-3">
               <Lock className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-medium text-muted-foreground">Caja cerrada</span>
@@ -626,7 +782,7 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
               onClick={handleCerrarCaja}
             >
               <Lock className="h-4 w-4" />
-              Cerrar Caja y Finalizar Jornada
+              {esAtrasado ? `Cerrar la caja del ${fecha}` : "Cerrar Caja y Finalizar Jornada"}
             </Button>
           )}
         </div>
@@ -734,13 +890,29 @@ export function CierreCaja({ onBack, rutaId = 1, rutaNombre = "", onRouteStateCh
               <span className="text-sm font-bold text-white">Confirmar cierre de caja</span>
             </div>
             <div className="px-4 py-4 space-y-2">
-              <p className="text-sm text-gray-700">
-                Al cerrar la caja también se <span className="font-semibold">finalizará la jornada</span> del día.
-                ¿Deseas continuar?
-              </p>
-              <p className="text-xs text-gray-400">
-                Esta acción registrará el cierre a las {hora} del {fecha}.
-              </p>
+              {esAtrasado ? (
+                <>
+                  <p className="text-sm text-gray-700">
+                    Vas a cerrar la caja del <span className="font-semibold">{fecha}</span>, que
+                    quedó sin cerrar. Al quedar cerrada, la ruta se descongela y se puede
+                    iniciar la jornada de hoy.
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    Queda registrado hoy {hoyTexto} a las {hora}
+                    {currentUser ? `, a nombre de ${currentUser.nombre}` : ""}.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-gray-700">
+                    Al cerrar la caja también se <span className="font-semibold">finalizará la jornada</span> del día.
+                    ¿Deseas continuar?
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    Esta acción registrará el cierre a las {hora} del {fecha}.
+                  </p>
+                </>
+              )}
               {cierreError && (
                 <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-2.5">
                   <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />

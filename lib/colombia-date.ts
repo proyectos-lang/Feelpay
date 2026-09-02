@@ -29,19 +29,28 @@ export function tsToColombiaDate(ts: string): string {
 
 /**
  * Formatea una fecha o timestamp de la BD para mostrar como "DD/MM/AAAA".
- * - Strings DATE ("YYYY-MM-DD"): se parsean como hora local para evitar el
- *   desplazamiento UTC medianoche.
+ * - Strings DATE ("YYYY-MM-DD"): se reordenan tal cual, sin zona horaria.
  * - Strings TIMESTAMPTZ ("...Z" o "...+00:00"): se convierten a hora Colombia.
  */
 export function fmtFecha(value: string | null | undefined): string {
   if (!value) return "—"
-  const d = value.includes("T") ? new Date(value) : new Date(value + "T00:00:00")
+  // Una fecha DATE no tiene zona horaria: es el día, y ya. Se reordena sin
+  // pasar por `Date`.
+  //
+  // ANTES se parseaba como medianoche LOCAL y se formateaba en Bogotá, y eso
+  // corría el día un puesto para atrás en cualquier teléfono al este de Colombia:
+  // en Argentina (UTC-3), "2026-08-31" se leía 30/08/2026. Colombia y Ecuador
+  // no lo notaban por estar los dos en UTC-5.
+  if (!value.includes("T")) {
+    const [a, m, d] = value.slice(0, 10).split("-")
+    return a && m && d ? `${d}/${m}/${a}` : "—"
+  }
   return new Intl.DateTimeFormat("es-CO", {
     timeZone: TZ,
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
-  }).format(d)
+  }).format(new Date(value))
 }
 
 /**
