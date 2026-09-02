@@ -4,7 +4,10 @@ import React from "react"
 import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, Users, PieChart, LockKeyhole, LockKeyholeOpen, Eye, X, Play, Loader2 } from "lucide-react"
+import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, Users, PieChart, LockKeyhole, LockKeyholeOpen, Eye, X, Play, Loader2, Share2 } from "lucide-react"
+import { renderComprobanteImagen, type SeccionComprobante } from "@/lib/imagen-comprobante"
+import { CompartirComprobanteDialog } from "@/components/compartir-comprobante-dialog"
+import { getUsuarioSesion } from "@/lib/movimientos"
 import { Button } from "@/components/ui/button"
  import { createClient } from "@/lib/supabase/client"
 import { getResumenDia } from "@/lib/resumen-dia"
@@ -308,9 +311,9 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
   // Frecuencias desde las cuotas del dia + loans.frecuencia_pago; "Intereses"
   // = prestamos americanos con cuota hoy. Cartera desde `v_loan_financiero`
   // (columna `cuotas_mora`: CUOTAS vencidas sin cubrir, no dias) con las
-  // bandas de `bandaCartera()`. Cuotas Clientes = cuotas PAGADAS
-  // (`cuotas_cubiertas`, 0-3 / >3). Ventas: renovacion = cliente que ya tenia otro
-  // prestamo.
+  // bandas de `bandaCartera()`. Cuotas Clientes = cuantas cuotas pago cada
+  // cliente HOY (la plata neta del dia sobre el valor de su cuota, 1-3 / >3).
+  // Ventas: renovacion = cliente que ya tenia otro prestamo.
   const [backCard, setBackCard] = useState({
     frequency: {
       diario: { pagos: 0, total: 0 },
@@ -442,13 +445,17 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         const supabase = createClient()
         const fechaHoy = todayColombia()
 
-        const [rowsHoyRes, activosRes, ventasHoyRes] = await Promise.all([
+        const [rowsHoyRes, activosRes, ventasHoyRes, gestionesHoyRes] = await Promise.all([
           supabase
             .from("payment_plan")
             .select("loan_id, estado, monto_pagado, loans(frecuencia_pago, tipo_amortizacion)")
             .eq("ruta", rutaId)
             .eq("fecha_pago", fechaHoy),
-          supabase.from("loans").select("id").eq("ruta", rutaId).eq("estado", "activo"),
+          // `valor_cuota` viene para poder decir CUÁNTAS CUOTAS pagó cada
+          // cliente hoy, y el estado se filtra acá abajo en vez de en la
+          // consulta: quien terminó de pagar hoy quedó 'cancelado' y su pago
+          // tiene que contar igual.
+          supabase.from("loans").select("id, valor_cuota, estado").eq("ruta", rutaId),
           supabase
             .from("loans")
             .select("id, client_id")
@@ -460,6 +467,17 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
             .neq("estado", "anulado")
             .gte("fecha_creacion", `${fechaHoy}T00:00:00-05:00`)
             .lte("fecha_creacion", `${fechaHoy}T23:59:59-05:00`),
+          // LA PLATA DE HOY, DEL LIBRO. Es el mismo criterio del script 060:
+          // suman pago, cancelación y abono de venta; resta la reversa. Y las
+          // homologaciones quedan fuera, que no son plata de esta ruta hoy.
+          supabase
+            .from("gestiones")
+            .select("loan_id, tipo, monto")
+            .eq("ruta", rutaId)
+            .eq("fecha_gestion", fechaHoy)
+            .eq("estado", "aplicada")
+            .neq("origen", "homologacion")
+            .in("tipo", ["pago", "cancelacion", "abono_venta", "reversa"]),
         ])
 
         const rowsHoy = (rowsHoyRes.data ?? []) as {
@@ -503,11 +521,52 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
           }
         }
 
-        // Cartera + cuotas PAGADAS por cliente (prestamos activos de la ruta)
-        const loanIds = ((activosRes.data ?? []) as { id: string }[]).map((l) => l.id)
+        // ── CUOTAS CLIENTES: LO QUE SE COBRÓ HOY, no lo acumulado ────────
+        //
+        // Contaba `cuotas_cubiertas`: cuántas cuotas lleva pagas el cliente en
+        // TODA la vida del crédito. Eso no es un dato del día — es el mismo
+        // número mañana y pasado, y en un informe de recaudo diario se leía
+        // como si midiera la jornada.
+        //
+        // Ahora es lo que pidió el dueño: de la plata que entró HOY, quiénes
+        // pagaron entre 1 y 3 cuotas y quiénes más de 3. La cuenta es la plata
+        // neta del día dividida por el valor de la cuota de ese crédito, la
+        // misma división de `cuotasConDecimal` y de la regla de oro del 084.
+        const todosLosCreditos = (activosRes.data ?? []) as {
+          id: string; valor_cuota: number | null; estado: string | null
+        }[]
+        const cuotaPorLoan = new Map(
+          todosLosCreditos.map((l) => [l.id, Number(l.valor_cuota) || 0]),
+        )
+        const netoHoyPorLoan = new Map<string, number>()
+        for (const g of (gestionesHoyRes.data ?? []) as
+             { loan_id: string; tipo: string; monto: number | null }[]) {
+          const signo = g.tipo === "reversa" ? -1 : 1
+          netoHoyPorLoan.set(
+            g.loan_id,
+            (netoHoyPorLoan.get(g.loan_id) ?? 0) + signo * (Number(g.monto) || 0),
+          )
+        }
+
         const installmentsByClient = { small: 0, large: 0, fuera: 0 }
-        const portfolioStatus = { alDia: 0, mora: 0, vencidos: 0 }
         const idsCuotas = { small: [] as string[], large: [] as string[] }
+        for (const [loanId, neto] of netoHoyPorLoan) {
+          // Sin plata no hay cuotas que contar. Un neto en cero es un pago que
+          // se anuló el mismo día: no fue un cobro.
+          if (neto <= 0) continue
+          const cuota = cuotaPorLoan.get(loanId) ?? 0
+          const cuantas = cuota > 0 ? neto / cuota : 0
+          if (cuantas >= 1 && cuantas <= 3) { installmentsByClient.small += 1; idsCuotas.small.push(loanId) }
+          else if (cuantas > 3) { installmentsByClient.large += 1; idsCuotas.large.push(loanId) }
+          // Menos de una cuota: abonó, pero no completó ninguna. No cae en
+          // ninguna de las dos bandas que se pidieron y se cuenta aparte para
+          // poder decirlo en el pie en vez de que el total mienta.
+          else installmentsByClient.fuera += 1
+        }
+
+        // Cartera (prestamos activos de la ruta)
+        const loanIds = todosLosCreditos.filter((l) => l.estado === "activo").map((l) => l.id)
+        const portfolioStatus = { alDia: 0, mora: 0, vencidos: 0 }
         const idsCartera = { alDia: [] as string[], mora: [] as string[], vencidos: [] as string[] }
         if (loanIds.length > 0) {
           // Las cuotas PAGADAS y la mora salen de la MISMA vista, asi que
@@ -515,30 +574,15 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
           // `payment_plan` para contar vencidas; ya no hace falta.
           const finRes = await supabase
             .from("v_loan_financiero")
-            .select("loan_id, cuotas_mora, cuotas_cubiertas")
+            .select("loan_id, cuotas_mora")
             .in("loan_id", loanIds)
-          const pagadasPorLoan = new Map<string, number>()
           const moraPorLoan = new Map<string, number>()
           for (const f of (finRes.data ?? []) as {
-            loan_id: string; cuotas_mora: number | null; cuotas_cubiertas: number | null
+            loan_id: string; cuotas_mora: number | null
           }[]) {
-            pagadasPorLoan.set(f.loan_id, Number(f.cuotas_cubiertas ?? 0))
             moraPorLoan.set(f.loan_id, Number(f.cuotas_mora ?? 0))
           }
           for (const id of loanIds) {
-            // Las dos bandas que pidió el dueño: "de 0,1 a 3" y "más de 7".
-            // Con cuotas SALDADAS nunca hay decimales —una visita cierra una
-            // cuota, regla del script 075— así que "0,1 a 3" y "1 a 3" son
-            // exactamente los mismos clientes.
-            //
-            // Los demás quedan FUERA de los dos grupos a propósito: se le
-            // mostró que 42 de los 138 clientes no aparecerían en ninguna
-            // fila y aun así eligió estas dos bandas. Se cuentan en `fuera`
-            // para poder decirlo en el pie en vez de que el total mienta.
-            const pag = pagadasPorLoan.get(id) ?? 0
-            if (pag >= 1 && pag <= 3) { installmentsByClient.small += 1; idsCuotas.small.push(id) }
-            else if (pag > 7) { installmentsByClient.large += 1; idsCuotas.large.push(id) }
-            else { installmentsByClient.fuera += 1 }
             // Las bandas las decide `bandaCartera()`, no una escalera local.
             const banda = bandaCartera(moraPorLoan.get(id) ?? 0)
             if (banda === "al_dia") { portfolioStatus.alDia += 1; idsCartera.alDia.push(id) }
@@ -605,6 +649,93 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
 
   const collectionPercentage = metaAmount > 0 ? (collectedAmount / metaAmount) * 100 : 0
   const remaining = metaAmount - collectedAmount
+  /**
+   * EL INFORME, COMO IMAGEN.
+   *
+   * Sale de `reportData` y `backCard`, o sea de los MISMOS números que se
+   * están viendo: no se vuelve a consultar nada. Si se recalculara acá, el
+   * informe que llega por WhatsApp podría decir algo distinto del que se miró
+   * antes de mandarlo.
+   *
+   * Es el mismo dibujo del cierre de caja y del extracto —logo de la ruta,
+   * título y la línea de fecha y hora—, así que llega algo que se reconoce.
+   */
+  const [compartirInforme, setCompartirInforme] = useState(false)
+  const construirImagenInforme = async () => {
+    const umbrales = await getRutaUmbrales(rutaId).catch(() => null)
+    const money = (n: number) => `$${Math.round(n).toLocaleString("es-CO")}`
+    const ahora = new Date()
+    const dia = ahora.toLocaleDateString("es-CO", { timeZone: "America/Bogota" })
+    const hora = ahora.toLocaleTimeString("es-CO", {
+      timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: true,
+    })
+    const c = backCard.installmentsByClient
+    const cart = backCard.portfolioStatus
+    const f = backCard.frequency
+
+    const secciones: SeccionComprobante[] = [
+      {
+        titulo: "Caja",
+        filas: [
+          { label: "Caja anterior", valor: money(cajaAnterior) },
+          { label: "Efectivo", valor: money(efectivo) },
+        ],
+      },
+      {
+        titulo: "Recaudo del día",
+        filas: [
+          // OJO: `totalPayments` NO es plata, son CLIENTES —`cantidad_pagos`
+          // de la vista—. La plata es `collectedAmount`, la misma que muestra
+          // la barra de la cara de adelante.
+          { label: "Cobrado", valor: `${money(collectedAmount)} / ${money(metaAmount)}` },
+          { label: "Clientes que pagaron", valor: `${c.small + c.large + c.fuera}` },
+          { label: "Pagaron de 1 a 3 cuotas", valor: `${c.small}` },
+          { label: "Pagaron más de 3 cuotas", valor: `${c.large}` },
+          ...(c.fuera > 0
+            ? [{ label: "Abonaron menos de una cuota", valor: `${c.fuera}` }]
+            : []),
+        ],
+      },
+      {
+        titulo: "Frecuencia de pago",
+        filas: [
+          { label: "Diario", valor: `${f.diario.pagos}/${f.diario.total}` },
+          { label: "Semanal", valor: `${f.semanal.pagos}/${f.semanal.total}` },
+          { label: "Quincenal", valor: `${f.quincenal.pagos}/${f.quincenal.total}` },
+          { label: "Mensual", valor: `${f.mensual.pagos}/${f.mensual.total}` },
+          { label: "Intereses", valor: `${f.intereses.pagos}/${f.intereses.total}` },
+        ],
+      },
+      {
+        titulo: "Estado de la cartera",
+        filas: [
+          { label: "Al día", valor: `${cart.alDia}` },
+          { label: "En mora", valor: `${cart.mora}` },
+          { label: "Vencidos", valor: `${cart.vencidos}` },
+          { label: "Total clientes", valor: `${cart.alDia + cart.mora + cart.vencidos}` },
+        ],
+      },
+      {
+        titulo: "Ventas del día",
+        filas: [
+          { label: "Nuevas", valor: `${backCard.salesReport.nuevas}` },
+          { label: "Renovaciones", valor: `${backCard.salesReport.renovaciones}` },
+          { label: "Total", valor: `${backCard.salesReport.total}` },
+        ],
+      },
+    ]
+
+    return renderComprobanteImagen({
+      titulo: "Informe Recaudo",
+      subtitulo: `Ruta ${rutaId}`,
+      meta: `${dia}  ·  ${hora}`,
+      secciones,
+      logoUrl: umbrales?.logo_url || `${window.location.origin}/opad-logo.png`,
+      nombreArchivo: `informe-recaudo-ruta-${rutaId}-${dia.replace(/\//g, "-")}.png`,
+      pie: "Generado por Feelpay",
+    })
+  }
+
   const paymentPercentage = reportData.totalPending > 0 ? (reportData.totalPayments / reportData.totalPending) * 100 : 0
 
   // Calculate pie chart segments
@@ -1078,14 +1209,29 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
           <div className="bg-brand-gradient text-brand-foreground px-4 pt-4 pb-3 rounded-b-2xl shadow-lg">
             <div className="flex items-center justify-between">
               <h1 className="text-2xl font-bold tracking-tight">Informe Recaudo</h1>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-brand-foreground hover:bg-foreground/20 h-8 w-8"
-                onClick={() => setIsFlipped(false)}
-              >
-                <RotateCcw className="h-5 w-5" />
-              </Button>
+              <div className="flex items-center gap-2">
+                {/* COMPARTIR EL INFORME. Pastilla blanca sólida y con texto,
+                    no un icono fantasma: sobre el degradado del encabezado un
+                    ghost se confunde con el fondo. Es el mismo criterio del
+                    cierre de caja. */}
+                <Button
+                  size="sm"
+                  className="h-8 gap-1.5 rounded-full bg-white px-3 text-brand hover:bg-white/90 shadow-sm font-semibold"
+                  title="Compartir el informe como imagen"
+                  onClick={() => setCompartirInforme(true)}
+                >
+                  <Share2 className="h-4 w-4" />
+                  <span className="text-xs">Compartir</span>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-brand-foreground hover:bg-foreground/20 h-8 w-8"
+                  onClick={() => setIsFlipped(false)}
+                >
+                  <RotateCcw className="h-5 w-5" />
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -1344,17 +1490,17 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     <div className="min-w-0">
                       <p className="text-sm font-bold leading-tight text-foreground">Cuotas Clientes</p>
                       <p className="text-[11px] leading-snug text-muted-foreground">
-                        Distribución de clientes según cuotas pagas
+                        Cuántas cuotas pagó cada cliente HOY
                       </p>
                     </div>
                   </div>
 
                   <div className="divide-y divide-border rounded-xl border border-border">
                     {([
-                      { key: "small", badge: "1-3", label: "De 1 a 3 cuotas pagas",
+                      { key: "small", badge: "1-3", label: "Pagaron de 1 a 3 cuotas",
                         anillo: "bg-info-light text-info", barra: "bg-info",
                         n: reportData.installmentsByClient.small, ids: backIds.cuotas.small },
-                      { key: "large", badge: "+7", label: "Más de 7 cuotas pagas",
+                      { key: "large", badge: "+3", label: "Pagaron más de 3 cuotas",
                         anillo: "bg-success-light text-success", barra: "bg-success",
                         n: reportData.installmentsByClient.large, ids: backIds.cuotas.large },
                     ] as const).map(({ key, badge, label, anillo, barra, n, ids }) => {
@@ -1405,22 +1551,21 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     })}
                   </div>
 
-                  {/* El total es el de la RUTA, no la suma de las dos filas.
-                      Con estas bandas hay clientes que no caen en ninguna, y
-                      poner ahí la suma haría que la tarjeta se leyera como si
-                      la ruta tuviera menos clientes de los que tiene. */}
+                  {/* El total es EL DE HOY: cuánta gente puso plata. Las dos
+                      filas no lo agotan —quien abonó menos de una cuota no cae
+                      en ninguna— y por eso se dice aparte en vez de dejar que
+                      la suma se lea como el total. */}
                   <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-lg bg-success-light/50 px-2.5 py-1.5">
                     <Users className="h-3 w-3 text-icon-users" />
-                    <span className="text-[11px] text-muted-foreground">Total clientes:</span>
+                    <span className="text-[11px] text-muted-foreground">Pagaron hoy:</span>
                     <span className="text-[11px] font-bold text-success">
                       {reportData.installmentsByClient.small +
                         reportData.installmentsByClient.large +
                         reportData.installmentsByClient.fuera}
                     </span>
-                    {/* Sin esta línea, 32 + 64 se lee como toda la cartera. */}
                     {reportData.installmentsByClient.fuera > 0 && (
                       <span className="text-[11px] text-muted-foreground">
-                        · {reportData.installmentsByClient.fuera} fuera de estos grupos
+                        · {reportData.installmentsByClient.fuera} abonaron menos de una cuota
                       </span>
                     )}
                   </div>
@@ -1533,6 +1678,21 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
         open={pagosDialog !== null}
         onOpenChange={(v) => { if (!v) setPagosDialog(null) }}
         fuente={pagosDialog}
+      />
+
+      {/* Compartir el informe: el MISMO diálogo del cierre de caja y del
+          extracto —compartir, descargar o mandar al chat— con la guarda del
+          AbortError cuando alguien cancela el menú nativo.
+
+          Va acá abajo por lo mismo que los otros dos: dentro de una cara de la
+          tarjeta lo rotaría el `preserve-3d` y saldría espejado. */}
+      <CompartirComprobanteDialog
+        open={compartirInforme}
+        onOpenChange={setCompartirInforme}
+        construirImagen={construirImagenInforme}
+        mensajeChat={`Informe Recaudo — Ruta ${rutaId}`}
+        currentUser={{ id: getUsuarioSesion().id ?? 0, nombre: getUsuarioSesion().nombre }}
+        titulo="Compartir el informe"
       />
 
       {/* Dialog para detalle de Ingresos/Gastos/Retiros */}

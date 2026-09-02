@@ -1862,11 +1862,23 @@ export function NewLoan({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="mt-2 justify-center">
+            {/* AL ACEPTAR SE VA A LA RUTA POR COBRAR.
+                Antes el diálogo se cerraba y dejaba el formulario de Nueva
+                Venta vacío en pantalla: para ver el cliente que se acababa de
+                vender —y cobrarle el adelanto, que es lo que sigue— había que
+                buscar el módulo de pagos en el menú.
+
+                `onCancel` es lo que el contenedor usa para volver a pagos
+                (app/page.tsx). Si no viniera, el diálogo se cierra y ya: no se
+                deja al cobrador atrapado en una pantalla sin salida. */}
             <Button
               className="w-full"
-              onClick={() => setSuccessDialog({ open: false, msg: "" })}
+              onClick={() => {
+                setSuccessDialog({ open: false, msg: "" })
+                onCancel?.()
+              }}
             >
-              Aceptar
+              {onCancel ? "Ir a la ruta" : "Aceptar"}
             </Button>
           </DialogFooter>
         </DialogContent>
