@@ -7,7 +7,7 @@ import {
   ArrowLeft, Calendar, Clock, Wallet, Banknote, Target, ShoppingCart,
   CheckCircle, Receipt, ArrowDownCircle, TrendingUp, CreditCard,
   CalendarDays, CalendarClock, PiggyBank, Coins, Users, AlertCircle, XCircle,
-  FileDown, Lock, AlertTriangle, CheckCircle2, Loader2, Share2,
+  FileDown, Lock, LockKeyhole, LockKeyholeOpen, AlertTriangle, CheckCircle2, Loader2, Share2,
 } from "lucide-react"
  import { createClient } from "@/lib/supabase/client"
 import { getResumenDia } from "@/lib/resumen-dia"
@@ -343,6 +343,54 @@ export function CierreCaja({
   }, [rutaId, totalCartera, resumenDelDiaRuta, fechaCierre, esAtrasado])
 
   const [cajaCerrada, setCajaCerrada] = useState(false)
+
+  /**
+   * ¿LA JORNADA YA ESTABA CERRADA AL ENTRAR?
+   *
+   * `cajaCerrada` solo sabe de esta sesión: arranca en false y se pone en true
+   * cuando se cierra la caja ACÁ. Así que al volver a entrar a esta pantalla
+   * después de haber cerrado, el encabezado decía "Abierta" sobre una jornada
+   * cerrada hace rato — y el PDF y la imagen salían con ese mismo estado.
+   *
+   * Se pregunta por la jornada de `fechaCierre`, que en un cierre atrasado es
+   * la vieja. Ante cualquier error se deja en `null` y manda `cajaCerrada`: no
+   * se puede decir "Cerrada" por una consulta que falló.
+   */
+  const [jornadaCerrada, setJornadaCerrada] = useState<boolean | null>(null)
+  useEffect(() => {
+    let vigente = true
+    const leer = async () => {
+      try {
+        const { data, error } = await createClient()
+          .from("rutas_diarias")
+          .select("estado")
+          .eq("ruta_id", rutaId)
+          .eq("fecha", fechaCierre)
+          .maybeSingle()
+        if (!vigente) return
+        if (error) {
+          console.error("[v0] estado de la jornada:", error.message)
+          setJornadaCerrada(null)
+          return
+        }
+        const estado = (data as { estado?: string | null } | null)?.estado ?? null
+        setJornadaCerrada(estado === null ? null : estado === "cerrada")
+      } catch (err) {
+        console.error("[v0] estado de la jornada falló:", err)
+        if (vigente) setJornadaCerrada(null)
+      }
+    }
+    void leer()
+    return () => { vigente = false }
+  }, [rutaId, fechaCierre])
+
+  /**
+   * LA CAJA ESTÁ CERRADA: por lo que dice la base o porque se acaba de cerrar
+   * acá. Es lo que mira todo lo que se MUESTRA — la insignia, el papel, la
+   * imagen y el botón del fondo. `cajaCerrada` a secas queda solo para el
+   * mensaje de "lo acabás de hacer".
+   */
+  const estaCerrada = cajaCerrada || jornadaCerrada === true
   const [showModal, setShowModal] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [processingCierre, setProcessingCierre] = useState(false)
@@ -435,7 +483,7 @@ export function CierreCaja({
     }
   }
 
-  const data = { estado: cajaCerrada ? "Cerrada" : "Abierta", ...cierreData }
+  const data = { estado: estaCerrada ? "Cerrada" : "Abierta", ...cierreData }
 
   const paymentPct = data.pagos.total > 0 ? Math.round((data.pagos.realizados / data.pagos.total) * 100) : 0
   const rutaLabel = rutaNombre ? `Ruta ${rutaId} — ${rutaNombre}` : `Ruta ${rutaId}`
@@ -598,7 +646,7 @@ ${filasPdf}
     return renderComprobanteImagen({
       titulo: "Cierre de Caja",
       subtitulo: rutaLabel,
-      meta: `${metaCierre}  ·  ${cajaCerrada ? "Cerrada" : "Abierta"}`,
+      meta: `${metaCierre}  ·  ${estaCerrada ? "Cerrada" : "Abierta"}`,
       secciones: seccionesComprobante(),
       logoUrl: umbrales?.logo_url || `${window.location.origin}/opad-logo.png`,
       nombreArchivo: `cierre-ruta-${rutaId}-${fecha.replace(/\//g, "-")}.png`,
@@ -623,8 +671,20 @@ ${filasPdf}
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Badge className={`border-0 text-xs bg-white ${cajaCerrada ? "text-destructive" : "text-success"}`}>
-              {cajaCerrada ? "Cerrada" : "Abierta"}
+            {/* EL CANDADO DICE EL ESTADO, no solo la palabra.
+                Abierto y verde mientras la jornada está en curso; cerrado y
+                rojo cuando ya se cuadró. Sobre el degradado del encabezado el
+                color solo no alcanzaba: verde y rojo en una pastilla blanca
+                chiquita se parecen bastante de reojo y bajo el sol. */}
+            <Badge
+              className={`gap-1 border-0 bg-white text-xs ${estaCerrada ? "text-destructive" : "text-success"}`}
+            >
+              {estaCerrada ? (
+                <LockKeyhole className="h-3.5 w-3.5" />
+              ) : (
+                <LockKeyholeOpen className="h-3.5 w-3.5" />
+              )}
+              {estaCerrada ? "Cerrada" : "Abierta"}
             </Badge>
             {/* Pastilla blanca sólida y con texto, no un icono fantasma: sobre
                 el degradado del encabezado un ghost se confundía con el fondo
@@ -740,9 +800,9 @@ ${filasPdf}
             Compartir
           </Button>
           <Button
-            variant={cajaCerrada ? "default" : "outline"}
+            variant={estaCerrada ? "default" : "outline"}
             className={`w-full rounded-xl py-5 text-sm font-semibold flex items-center gap-2 ${
-              cajaCerrada ? "bg-success hover:bg-success/90 text-success-foreground" : ""
+              estaCerrada ? "bg-success hover:bg-success/90 text-success-foreground" : ""
             }`}
             onClick={handlePDF}
           >
@@ -771,9 +831,9 @@ ${filasPdf}
                 Volver
               </Button>
             </div>
-          ) : cajaCerrada ? (
+          ) : estaCerrada ? (
             <div className="flex min-h-[52px] items-center justify-center gap-2 bg-muted rounded-xl py-3">
-              <Lock className="h-4 w-4 text-muted-foreground" />
+              <LockKeyhole className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-medium text-muted-foreground">Caja cerrada</span>
             </div>
           ) : (

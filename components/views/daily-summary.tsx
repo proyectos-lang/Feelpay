@@ -4,7 +4,7 @@ import React from "react"
 import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, Users, PieChart, LockKeyhole, Eye, X, Play, Loader2 } from "lucide-react"
+import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, Users, PieChart, LockKeyhole, LockKeyholeOpen, Eye, X, Play, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
  import { createClient } from "@/lib/supabase/client"
 import { getResumenDia } from "@/lib/resumen-dia"
@@ -680,20 +680,42 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                   </>
                 )}
 
-                {/* Cierre de Caja: el candado, en rojo y del mismo tamaño que
-                    el del informe. El candado ya se entendia — el problema era
-                    que iba diminuto y en ghost sobre el degradado, asi que no
-                    se veia. El rojo dice "esto cierra el dia": es la accion mas
-                    consecuente de la pantalla, cuadra la plata y deja al
-                    vendedor sin poder registrar mas hasta mañana. */}
+                {/* Cierre de Caja: el candado, del mismo tamaño que el del
+                    informe. Iba diminuto y en ghost sobre el degradado, asi
+                    que no se veia; en pastilla blanca si.
+
+                    Y AHORA DICE EN QUE ESTADO ESTA LA CAJA, no solo a donde
+                    lleva: abierto y verde mientras la jornada esta en curso,
+                    cerrado y rojo cuando ya se cuadro. Antes era rojo siempre
+                    —para decir "esto cierra el dia"— y de reojo se leia como
+                    si la caja ya estuviera cerrada.
+
+                    EN ESTA PANTALLA, HOY, SOLO SE VE EL VERDE. Cerrar la caja
+                    saca al vendedor del Resumen del Dia: `app/page.tsx` lo
+                    manda a "Jornada cerrada" y solo le deja el cierre y el
+                    chat, y esta pantalla es de vendedor y asesor nada mas. La
+                    rama roja se deja igual —es la misma regla que la insignia
+                    del cierre y la del renglon de abajo— pero no se muestra
+                    sola: el candado rojo que la gente va a ver es el del
+                    encabezado del Cierre de Caja. */}
                 <Button
                   size="icon"
-                  className="h-8 w-8 rounded-full bg-white hover:bg-white/90 text-destructive shadow-sm shrink-0"
-                  title="Cierre de Caja"
+                  className={`h-8 w-8 rounded-full bg-white hover:bg-white/90 shadow-sm shrink-0 ${
+                    rutaDiariaEstado === "cerrada" ? "text-destructive" : "text-success"
+                  }`}
+                  title={
+                    rutaDiariaEstado === "cerrada"
+                      ? "Caja cerrada — ver el cierre del dia"
+                      : "Cierre de Caja"
+                  }
                   aria-label="Cierre de Caja"
                   onClick={() => onViewChange?.("cierre-caja")}
                 >
-                  <LockKeyhole className="h-5 w-5" />
+                  {rutaDiariaEstado === "cerrada" ? (
+                    <LockKeyhole className="h-5 w-5" />
+                  ) : (
+                    <LockKeyholeOpen className="h-5 w-5" />
+                  )}
                 </Button>
               </div>
             </div>
