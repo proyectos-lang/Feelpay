@@ -652,42 +652,76 @@ export function NewLoan({
   // Mock cuota value - this would come from loan calculation
   const cuotaValue = 50000
 
-  const compressImage = (base64String: string): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const img = new Image()
-      img.crossOrigin = "anonymous"
-      img.onload = () => {
-        const canvas = document.createElement("canvas")
-        let width = img.width
-        let height = img.height
+  /** Lo más largo que puede quedar la foto guardada. */
+  const MAX_LADO_CEDULA = 1200
 
-        // Redimensionar si la imagen es muy grande
-        // Máximo 1200px de ancho para mantener calidad pero reducir tamaño
-        if (width > 1200) {
-          height = (height * 1200) / width
-          width = 1200
-        }
+  /**
+   * La foto de la cédula, comprimida ANTES de tocar nada más.
+   *
+   * ESTO ES LO QUE CERRABA LA APP EN IPHONE. El camino anterior era:
+   * `readAsDataURL` sobre la foto → una cadena de varios MB → al estado de
+   * React → `<img>` que la decodifica para la vista previa → `new Image()`
+   * que la decodifica OTRA VEZ a tamaño completo para comprimirla. Medido
+   * sobre las fotos que quedaron guardadas en la base: 6.738 KB en base64
+   * cada una, o sea ~5 MB de foto y unos 12 megapíxeles al decodificar.
+   * Sumado, eso se pasa del presupuesto de memoria de una pestaña en un
+   * teléfono y Safari la mata sin decir nada — lo que el cobrador ve es que
+   * "se cerró el sistema".
+   *
+   * Ahora se trabaja desde el `File` y nunca existe la cadena gigante.
+   *
+   * `createImageBitmap` con `resizeWidth` decodifica Y reescala en un solo
+   * paso, sin pasar por el bitmap de tamaño completo: es el camino barato.
+   * No todos los navegadores aceptan esas opciones, así que si falla se cae al
+   * de siempre — pero con un objectURL, que tampoco crea la cadena.
+   */
+  const comprimirFoto = async (file: File): Promise<string> => {
+    const alLienzo = (
+      fuente: CanvasImageSource, ancho: number, alto: number,
+    ): string | null => {
+      const escala = Math.min(1, MAX_LADO_CEDULA / Math.max(ancho, alto))
+      const w = Math.max(1, Math.round(ancho * escala))
+      const h = Math.max(1, Math.round(alto * escala))
+      const canvas = document.createElement("canvas")
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext("2d")
+      if (!ctx) return null
+      ctx.drawImage(fuente, 0, 0, w, h)
+      return canvas.toDataURL("image/jpeg", 0.7)
+    }
 
-        canvas.width = width
-        canvas.height = height
-
-        const ctx = canvas.getContext("2d")
-        if (!ctx) {
-          reject(new Error("No se pudo obtener contexto de canvas"))
-          return
-        }
-
-        ctx.drawImage(img, 0, 0, width, height)
-
-        // Comprimir a JPEG con calidad 0.7
-        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.7)
-        resolve(compressedBase64)
+    // Camino barato.
+    if (typeof createImageBitmap === "function") {
+      try {
+        const bmp = await createImageBitmap(file, {
+          resizeWidth: MAX_LADO_CEDULA,
+          resizeQuality: "medium",
+        })
+        const salida = alLienzo(bmp, bmp.width, bmp.height)
+        bmp.close()
+        if (salida) return salida
+      } catch {
+        /* el navegador no acepta las opciones: se sigue por el otro camino */
       }
-      img.onerror = () => {
-        reject(new Error("Error al cargar imagen"))
-      }
-      img.src = base64String
-    })
+    }
+
+    // Respaldo: objectURL en vez de base64. Decodifica a tamaño completo, que
+    // es caro, pero al menos no se suma la cadena de varios MB.
+    const url = URL.createObjectURL(file)
+    try {
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const i = new Image()
+        i.onload = () => resolve(i)
+        i.onerror = () => reject(new Error("No se pudo leer la foto"))
+        i.src = url
+      })
+      const salida = alLienzo(img, img.naturalWidth, img.naturalHeight)
+      if (!salida) throw new Error("No se pudo preparar la foto")
+      return salida
+    } finally {
+      URL.revokeObjectURL(url)
+    }
   }
 
   /**
@@ -708,98 +742,92 @@ export function NewLoan({
     e.target.value = ""
     if (!file) return
 
-    const reader = new FileReader()
-    reader.onerror = () => {
-      toast({
-        title: "No se pudo leer la foto",
-        description: "Intenta tomarla de nuevo.",
-        variant: "destructive",
+    const control = new AbortController()
+    const reloj = setTimeout(() => control.abort(), ESPERA_CEDULA_MS)
+    try {
+      setProcessandoCedula(true)
+
+      // SE COMPRIME PRIMERO Y SOLO ENTONCES SE GUARDA.
+      //
+      // La foto comprimida es la ÚNICA que existe de acá en adelante: la que
+      // se ve en la vista previa y la que se manda a la base al guardar la
+      // venta. Antes se guardaba la original de ~5 MB, y esa foto viajaba
+      // entera en el payload de la venta y quedaba en `clients`. Ver el
+      // comentario de `comprimirFoto`.
+      const foto = await comprimirFoto(file)
+      setCedulaImage(foto)
+
+      const response = await fetch("/api/escanear-cedula", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: foto }),
+        signal: control.signal,
       })
-    }
-    reader.onload = async (event) => {
-      const imageBase64 = event.target?.result as string
-      setCedulaImage(imageBase64)
 
-      const control = new AbortController()
-      const reloj = setTimeout(() => control.abort(), ESPERA_CEDULA_MS)
+      const responseText = await response.text()
+
+      let responseData
       try {
-        setProcessandoCedula(true)
+        responseData = JSON.parse(responseText)
+      } catch {
+        throw new Error(`Respuesta inválida del servidor: ${responseText.substring(0, 100)}`)
+      }
 
-        const compressedImage = await compressImage(imageBase64)
+      if (!response.ok) {
+        throw new Error(responseData.details || responseData.error || "Error desconocido")
+      }
 
-        const response = await fetch("/api/escanear-cedula", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ imageBase64: compressedImage }),
-          signal: control.signal,
-        })
+      const doc = String(responseData.numero_documento ?? "").trim().toUpperCase()
+      const nom = String(responseData.nombre_completo ?? "").trim().toUpperCase()
 
-        const responseText = await response.text()
-
-        let responseData
-        try {
-          responseData = JSON.parse(responseText)
-        } catch {
-          throw new Error(`Respuesta inválida del servidor: ${responseText.substring(0, 100)}`)
-        }
-
-        if (!response.ok) {
-          throw new Error(responseData.details || responseData.error || "Error desconocido")
-        }
-
-        const doc = String(responseData.numero_documento ?? "").trim().toUpperCase()
-        const nom = String(responseData.nombre_completo ?? "").trim().toUpperCase()
-
-        // LA IA CONTESTÓ, PERO SIN LEER NADA.
-        //
-        // Esto es lo que se reportaba como "no carga sus datos": con una foto
-        // borrosa, con reflejo o cortada, el modelo devuelve el JSON vacío, la
-        // ruta responde 200 tal cual, y acá se escribían dos cadenas vacías en
-        // los campos. Ni error ni aviso: la pantalla simplemente no hacía
-        // nada y no había forma de saber por qué.
-        //
-        // La foto NO se borra: sirve igual como respaldo, y así se pueden
-        // escribir los datos a mano sin tener que volver a fotografiar.
-        if (!doc && !nom) {
-          toast({
-            title: "No se pudo leer la cédula",
-            description:
-              "La foto quedó guardada. Vuelve a tomarla bien enfocada, sin reflejos y con la cédula completa dentro del cuadro — o escribe los datos a mano en los campos de abajo, que ya quedaron abiertos.",
-            variant: "destructive",
-          })
-          return
-        }
-
-        setDocumento(doc)
-        setNombreCompleto(nom)
-
-        // Leyó a medias. Se pone lo que vino y se dice qué falta, en vez de
-        // dejar que la persona descubra sola el campo vacío.
-        if (!doc || !nom) {
-          toast({
-            title: "Se leyó solo una parte",
-            description: `Falta ${!doc ? "el número de documento" : "el nombre"}. Complétalo a mano.`,
-          })
-        }
-      } catch (error) {
-        const abortado = error instanceof DOMException && error.name === "AbortError"
+      // LA IA CONTESTÓ, PERO SIN LEER NADA.
+      //
+      // Esto es lo que se reportaba como "no carga sus datos": con una foto
+      // borrosa, con reflejo o cortada, el modelo devuelve el JSON vacío, la
+      // ruta responde 200 tal cual, y acá se escribían dos cadenas vacías en
+      // los campos. Ni error ni aviso: la pantalla simplemente no hacía nada
+      // y no había forma de saber por qué.
+      //
+      // La foto NO se borra: sirve igual como respaldo, y así se pueden
+      // escribir los datos a mano sin tener que volver a fotografiar.
+      if (!doc && !nom) {
         toast({
-          title: abortado ? "El escaneo tardó demasiado" : "Error al procesar la cédula",
-          description: abortado
-            ? "Revisa la señal e intenta de nuevo. La foto quedó guardada."
-            : error instanceof Error
-              ? error.message
-              : "Error desconocido",
+          title: "No se pudo leer la cédula",
+          description:
+            "La foto quedó guardada. Vuelve a tomarla bien enfocada, sin reflejos y con la cédula completa dentro del cuadro — o escribe los datos a mano en los campos de abajo, que ya quedaron abiertos.",
           variant: "destructive",
         })
-        // La foto se conserva a propósito: borrarla obligaba a repetir la
-        // captura por un problema que casi siempre es de red, no de la foto.
-      } finally {
-        clearTimeout(reloj)
-        setProcessandoCedula(false)
+        return
       }
+
+      setDocumento(doc)
+      setNombreCompleto(nom)
+
+      // Leyó a medias. Se pone lo que vino y se dice qué falta, en vez de
+      // dejar que la persona descubra sola el campo vacío.
+      if (!doc || !nom) {
+        toast({
+          title: "Se leyó solo una parte",
+          description: `Falta ${!doc ? "el número de documento" : "el nombre"}. Complétalo a mano.`,
+        })
+      }
+    } catch (error) {
+      const abortado = error instanceof DOMException && error.name === "AbortError"
+      toast({
+        title: abortado ? "El escaneo tardó demasiado" : "Error al procesar la cédula",
+        description: abortado
+          ? "Revisa la señal e intenta de nuevo. La foto quedó guardada."
+          : error instanceof Error
+            ? error.message
+            : "Error desconocido",
+        variant: "destructive",
+      })
+      // La foto se conserva a propósito: borrarla obligaba a repetir la
+      // captura por un problema que casi siempre es de red, no de la foto.
+    } finally {
+      clearTimeout(reloj)
+      setProcessandoCedula(false)
     }
-    reader.readAsDataURL(file)
   }
 
   const clearCedulaImage = () => {
