@@ -1086,10 +1086,11 @@ export function NewLoan({
 
       const errors = new Set<string>()
       if (isNewClient) {
-        // El documento SIEMPRE hizo falta —es NOT NULL UNIQUE en `clients`—,
-        // pero no estaba en esta lista porque no había forma de teclearlo: o
-        // lo llenaba el escaneo o no había venta. Ahora que se puede escribir,
-        // se valida y se resalta como cualquier otro campo.
+        // El documento SIEMPRE hizo falta —es NOT NULL en `clients`, y único
+        // dentro de la ruta desde el script 095—, pero no estaba en esta lista
+        // porque no había forma de teclearlo: o lo llenaba el escaneo o no
+        // había venta. Ahora que se puede escribir, se valida y se resalta
+        // como cualquier otro campo.
         if (!documento.trim()) errors.add("documento")
         if (!nombreCompleto.trim()) errors.add("nombreCompleto")
         if (!apodo.trim()) errors.add("apodo")
@@ -1607,15 +1608,23 @@ export function NewLoan({
       } catch (err) {
         // Documento repetido: mensaje claro en vez del generico. Antes este
         // caso solo se veia por la llamada duplicada que ya se elimino.
+        //
+        // Y AHORA EL CHOQUE ES SOLO DENTRO DE LA RUTA. Desde el script 095 la
+        // unicidad de `clients.documento` es por (ruta, documento): la misma
+        // persona puede estar en varias rutas. Asi que un 23505 aca ya no
+        // significa "existe en el sistema" sino "existe EN ESTA RUTA" — y eso
+        // cambia el consejo: "Cliente Existente" trae solo los de esta ruta
+        // (`.eq("ruta", rutaId)`), asi que antes se podia estar mandando al
+        // cobrador a buscar una ficha que no le iba a aparecer nunca.
         const msg = mensajeDeError(err)
         const code = (err as { code?: string })?.code
         const esDocDuplicado =
           code === "23505" || /documento/i.test(msg) || /clients_documento/i.test(msg)
         console.error("[v0] Error creando venta:", err)
         toast({
-          title: esDocDuplicado ? "Documento ya registrado" : "Error al crear la venta",
+          title: esDocDuplicado ? "Documento ya registrado en esta ruta" : "Error al crear la venta",
           description: esDocDuplicado
-            ? `Ya existe un cliente con el documento ${documento}. Búscalo en "Cliente Existente" para registrarle otra venta.`
+            ? `El documento ${documento} ya está cargado en esta ruta. Búscalo en "Cliente Existente" para registrarle otra venta. En otra ruta sí se puede registrar aparte.`
             : msg || "No se pudo completar la operación",
           variant: "destructive",
         })
