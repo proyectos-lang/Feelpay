@@ -47,8 +47,12 @@ import {
   ReceiptText,
   Eye,
   Filter,
+  Snowflake,
+  Unlock,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { descongelarJornada, puedeDescongelar } from "@/lib/jornada-pendiente"
+import { fmtFecha } from "@/lib/colombia-date"
 import { DetalleClientesDialog } from "@/components/detalle-clientes-dialog"
 import { PagosDelDiaDialog, type FuentePagos } from "@/components/pagos-del-dia-dialog"
 import {
@@ -73,6 +77,22 @@ const AdminRouteMonitorMap = dynamic(() => import("./admin-route-monitor-map"), 
 // Types
 // ────────────────────────────────────────────────────────────────────────────
 type MonitoreoRuta = {
+  /**
+   * El id de la fila de `rutas_diarias`. Es lo que hace falta para
+   * DESCONGELAR: `descongelarJornada` cierra esa jornada por id, no por
+   * (ruta, fecha). Viene en la vista; las filas "sin apertura" no lo tienen
+   * porque no existe la fila que representarían.
+   */
+  registro_id: number | null
+  /**
+   * LA JORNADA VIEJA QUE TIENE CONGELADA A ESTA RUTA, si la hay.
+   *
+   * Solo se llena en las filas de HOY, y por eso hace falta: la fila que
+   * quedó abierta es la de AYER, y el monitoreo abre en el día de hoy. Sin
+   * esto, para enterarse de que una ruta está congelada había que acordarse
+   * de mover el rango de fechas hacia atrás — o sea, no enterarse.
+   */
+  jornada_congelada: { id: number; fecha: string } | null
   ruta_id: number
   estado_ruta: "abierta" | "cerrada" | string | null
   aprobacion_admin: "pendiente" | "aprobado" | string | null
@@ -215,7 +235,7 @@ interface AdminRouteMonitorProps {
    * Quién está mirando. Sin esto la pantalla mostraba todas las rutas a
    * cualquiera que tuviera el módulo habilitado — ver `rutasPermitidas`.
    */
-  currentUser?: { id: number | string; rol?: string | null } | null
+  currentUser?: { id: number | string; rol?: string | null; nombre?: string | null } | null
 }
 
 export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
@@ -427,6 +447,16 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
   // Tracks which ruta_id is currently being approved (for per-card loading state)
   const [approvingRutaId, setApprovingRutaId] = useState<number | null>(null)
 
+  // ── DESCONGELAR UNA RUTA ────────────────────────────────────────────────
+  // `porDescongelar` es la fila que está esperando confirmación. No se
+  // descongela de un toque: cerrar una jornada sin cuadrarla deja ese día sin
+  // cierre para siempre, y acá hay una fila por ruta y por día — un dedo
+  // torcido en el teléfono no puede costar el cierre de un día.
+  type Descongelable = { ruta: MonitoreoRuta; jornada: { id: number; fecha: string } }
+  const [porDescongelar, setPorDescongelar] = useState<Descongelable | null>(null)
+  const [descongelandoId, setDescongelandoId] = useState<number | null>(null)
+  const puedeDescongelarRutas = puedeDescongelar(currentUser?.rol)
+
   // Financial details dialog state ("Detalle de Caja")
   const [cajaRuta, setCajaRuta] = useState<MonitoreoRuta | null>(null)
   const [cajaLoading, setCajaLoading] = useState(false)
@@ -518,6 +548,10 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
               }
             }
             return {
+              // No hay fila en `rutas_diarias`: esa es toda la noticia de esta
+              // fila sintética. Sin id no hay nada que descongelar.
+              registro_id: null,
+              jornada_congelada: null,
               ruta_id,
               // `null` es lo que dispara la insignia "Sin apertura".
               estado_ruta: null,
@@ -626,6 +660,52 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
         console.error("[v0] caja del monitoreo:", e)
       }
 
+      /**
+       * QUÉ RUTAS ESTÁN CONGELADAS HOY.
+       *
+       * Una ruta se congela cuando le quedó una jornada ABIERTA en un día
+       * pasado. Esa fila vive en el pasado, así que en el monitoreo —que abre
+       * en hoy— no se ve. La marca se pega en las filas de HOY, que son las
+       * que la secretaría está mirando cuando alguien le escribe que no puede
+       * empezar.
+       *
+       * Se toma la MÁS VIEJA de cada ruta, igual que `buscarJornadaPendiente`:
+       * si hay varias hay que ir resolviéndolas en orden, y mostrar la última
+       * dejaría las anteriores escondidas detrás.
+       *
+       * Si esta consulta falla no pasa nada más que no ver la marca: el
+       * monitoreo se muestra igual. Y si `cerrada_sin_cuadre` todavía no
+       * existe —script 086 sin correr— PostgREST responde 42703 y el
+       * congelamiento no está en vigor, así que tampoco hay nada que marcar.
+       */
+      try {
+        const hoy = todayColombia()
+        if (todas.some((r) => (r.fecha ?? "") === hoy)) {
+          let viejas = supabase
+            .from("rutas_diarias")
+            .select("id, ruta_id, fecha")
+            .eq("estado", "abierta")
+            .lt("fecha", hoy)
+            .order("fecha", { ascending: true })
+          if (rutasPermitidas !== null) viejas = viejas.in("ruta_id", rutasPermitidas)
+          const { data: pendientes, error: errPend } = await viejas
+          if (errPend) throw errPend
+
+          const masVieja = new Map<number, { id: number; fecha: string }>()
+          for (const j of (pendientes ?? []) as { id: number; ruta_id: number; fecha: string }[]) {
+            // Vienen ordenadas de la más vieja a la más nueva: la primera de
+            // cada ruta es la que manda.
+            if (!masVieja.has(j.ruta_id)) masVieja.set(j.ruta_id, { id: j.id, fecha: j.fecha })
+          }
+          for (const r of todas) {
+            if ((r.fecha ?? "") !== hoy) continue
+            r.jornada_congelada = masVieja.get(r.ruta_id) ?? null
+          }
+        }
+      } catch (e) {
+        console.error("[v0] jornadas congeladas del monitoreo:", e)
+      }
+
       // El día más reciente arriba; dentro de cada día, por número de ruta.
       todas.sort(
         (a, b) =>
@@ -681,6 +761,50 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
       }
     },
     [approvingRutaId, hasta, fetchRutas],
+  )
+
+  // ── Descongelar una ruta desde el monitoreo ───────────────────────────────
+  //
+  // Cierra la jornada vieja SIN cuadrarla, que es lo que libera la ruta para
+  // que el cobrador pueda empezar hoy. Es el mismo `descongelarJornada` del
+  // aviso de la barra superior, así que deja el mismo rastro: quién la cerró y
+  // cuándo, con `cerrada_sin_cuadre = true`.
+  //
+  // NO cuadra el día ni inventa un cierre. Ese día queda sin cierre; lo único
+  // que cambia es que deja de trabar el de hoy. Hacerlo bien —con sus
+  // números— es el botón "Hacer el cierre" del aviso, y hay que estar parado
+  // en esa ruta para usarlo. El diálogo lo dice.
+  const handleDescongelar = useCallback(
+    async ({ ruta, jornada }: Descongelable) => {
+      if (descongelandoId !== null) return
+      if (!currentUser?.id) {
+        toast({
+          title: "No se pudo desbloquear",
+          description: "No hay sesión con la que dejar constancia de quién la desbloqueó.",
+          variant: "destructive",
+        })
+        return
+      }
+      setDescongelandoId(jornada.id)
+      const r = await descongelarJornada(jornada.id, {
+        id: currentUser.id,
+        nombre: currentUser.nombre || "sin nombre",
+      })
+      setDescongelandoId(null)
+      if (!r.ok) {
+        toast({ title: "No se pudo desbloquear", description: r.error, variant: "destructive" })
+        return
+      }
+      setPorDescongelar(null)
+      toast({
+        title: `Ruta ${ruta.ruta_id} desbloqueada`,
+        description:
+          `El ${fmtFecha(jornada.fecha)} quedó cerrado sin cuadre, a tu nombre. ` +
+          "El cobrador ya puede iniciar la ruta de hoy.",
+      })
+      await fetchRutas()
+    },
+    [descongelandoId, currentUser?.id, currentUser?.nombre, toast, fetchRutas],
   )
 
   // ── Detalle de Caja: consultar gastos/ingresos/retiros/ventas ─────────────
@@ -1173,13 +1297,36 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                * quedaron sin cerrar.
                */
               const esHoy = (r.fecha ?? hasta) === todayColombia()
+
+              /**
+               * CONGELADA = una jornada de un día pasado que sigue abierta.
+               *
+               * Antes esto decía "Sin cierre", que es cierto pero cuenta la
+               * mitad: además de que ese día no cuadró, la ruta NO PUEDE
+               * empezar el día de hoy hasta que se resuelva. Esa es la parte
+               * que le importa a quien mira el monitoreo, porque es la que
+               * tiene a alguien parado en la calle.
+               */
+              //
+              // La jornada que hay que cerrar para soltar la ruta. Puede ser
+              // ESTA fila —un día pasado que sigue abierto— o, en una fila de
+              // hoy, la vieja que se marcó al cargar (`jornada_congelada`).
+              const jornadaACerrar =
+                isAbierta && !esHoy && r.registro_id !== null
+                  ? { id: r.registro_id, fecha: r.fecha ?? "" }
+                  : r.jornada_congelada
+              const congelada = jornadaACerrar !== null
+
+              const FRIA = { clase: "border-0 bg-info text-info-foreground", icono: true }
               const jornada = isCerrada
-                ? { texto: "Cerrada", clase: "border-0 bg-success text-success-foreground" }
+                ? { texto: "Cerrada", clase: "border-0 bg-success text-success-foreground", icono: false }
                 : isAbierta
                   ? esHoy
-                    ? { texto: "Abierta", clase: "border-0 bg-info text-info-foreground" }
-                    : { texto: "Sin cierre", clase: "border-0 bg-warning text-warning-foreground" }
-                  : { texto: "Sin apertura", clase: "border-0 bg-destructive-light text-destructive" }
+                    ? { texto: "Abierta", clase: "border-0 bg-info text-info-foreground", icono: false }
+                    : { texto: "Congelada", ...FRIA }
+                  : congelada
+                    ? { texto: "Congelada", ...FRIA }
+                    : { texto: "Sin apertura", clase: "border-0 bg-destructive-light text-destructive", icono: false }
               const aprobacion = (r.aprobacion_admin ?? "").toLowerCase()
               const pendienteAprobacion = isCerrada && aprobacion === "pendiente"
               const aprobado = isCerrada && aprobacion === "aprobado"
@@ -1227,15 +1374,16 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                           #{r.ruta_id}
                         </span>
                         <Badge
-                          className={jornada.clase}
+                          className={`gap-1 ${jornada.clase}`}
                           title={
-                            jornada.texto === "Sin cierre"
-                              ? "La jornada se abrió y nunca se cerró la caja"
+                            jornada.texto === "Congelada"
+                              ? "Esa jornada se abrió y nunca se cerró la caja. Mientras siga así, el cobrador no puede empezar el día de hoy."
                               : jornada.texto === "Sin apertura"
                                 ? "Nadie abrió esta ruta ese día: no hubo un solo movimiento"
                                 : undefined
                           }
                         >
+                          {jornada.icono && <Snowflake className="h-3 w-3" />}
                           {jornada.texto}
                         </Badge>
                       </div>
@@ -1255,6 +1403,40 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                           <ShieldCheck className="h-3 w-3" />
                           Cierre auditado
                         </span>
+                      )}
+                      {/* EL ESTADO Y SU REMEDIO, JUNTOS.
+                          El botón va acá y no en la fila de acciones de la
+                          derecha: ahí sería el cuarto, y a 1280px con los tres
+                          de siempre le robaba el ancho a los contadores hasta
+                          montarlos encima de la caja. Esta columna tiene ancho
+                          fijo (190px) y sitio de sobra hacia abajo, y además
+                          se lee mejor — el problema y lo que se hace con él,
+                          uno debajo del otro. */}
+                      {congelada && jornadaACerrar && (
+                        <>
+                          <span className="mt-1 inline-flex items-start gap-1 text-[10px] font-semibold leading-tight text-info">
+                            <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+                            <span>
+                              Sin cerrar el {fmtFecha(jornadaACerrar.fecha)} — el cobrador no puede
+                              empezar
+                            </span>
+                          </span>
+                          {puedeDescongelarRutas && (
+                            <Button
+                              size="sm"
+                              className="mt-1.5 h-7 w-full gap-1.5 bg-info text-info-foreground hover:bg-info/90"
+                              onClick={() => setPorDescongelar({ ruta: r, jornada: jornadaACerrar })}
+                              disabled={descongelandoId !== null}
+                            >
+                              {descongelandoId === jornadaACerrar.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Unlock className="h-3.5 w-3.5" />
+                              )}
+                              <span className="text-xs">Descongelar</span>
+                            </Button>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -1792,6 +1974,67 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
         onOpenChange={(v) => { if (!v) setPagosDialog(null) }}
         fuente={pagosDialog}
       />
+
+      {/* ── Confirmar el descongelamiento ──────────────────────────────────
+          Dice las dos cosas que pasan, no solo la buena: la ruta se libera Y
+          ese día queda sin cierre. Quien aprieta el botón tiene que poder
+          decidir con las dos a la vista. */}
+      <Dialog open={porDescongelar !== null} onOpenChange={(v) => { if (!v) setPorDescongelar(null) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Snowflake className="h-5 w-5 text-info" />
+              Descongelar la ruta {porDescongelar?.ruta.ruta_id}
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 pt-1 text-left">
+                <p className="text-sm text-foreground">
+                  La jornada del{" "}
+                  <span className="font-semibold">{fmtFecha(porDescongelar?.jornada.fecha)}</span> queda
+                  cerrada y el cobrador puede iniciar la ruta de hoy.
+                </p>
+                <div className="rounded-lg border border-warning/40 bg-warning/10 p-3">
+                  <p className="text-[13px] font-semibold text-foreground">
+                    Ese día queda sin cierre de caja.
+                  </p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+                    No se cuadra ni se inventan números: la jornada se marca como cerrada sin
+                    cuadre, a tu nombre. Si querés hacer el cierre de verdad, con sus totales,
+                    entrá a esa ruta y usá <span className="font-medium">Hacer el cierre</span> en
+                    el aviso de arriba.
+                  </p>
+                </div>
+                <p className="text-[12px] text-muted-foreground">
+                  Queda registrado que lo hiciste vos
+                  {currentUser?.nombre ? ` (${currentUser.nombre})` : ""} y cuándo.
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => setPorDescongelar(null)}
+              disabled={descongelandoId !== null}
+            >
+              Cancelar
+            </Button>
+            <Button
+              className="flex-1 gap-1.5 bg-info text-info-foreground hover:bg-info/90"
+              onClick={() => porDescongelar && handleDescongelar(porDescongelar)}
+              disabled={descongelandoId !== null}
+            >
+              {descongelandoId !== null ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Unlock className="h-4 w-4" />
+              )}
+              {descongelandoId !== null ? "Desbloqueando..." : "Sí, descongelar"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

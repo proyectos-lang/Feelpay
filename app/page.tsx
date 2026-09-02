@@ -1090,9 +1090,12 @@ export default function Page() {
   /**
    * ¿Quedó una jornada vieja sin cerrar en esta ruta?
    *
-   * Se pregunta al elegir ruta y cada vez que alguien la descongela. No hace
-   * falta un reloj: una jornada vieja no aparece sola a mitad del día — la
-   * deja el día anterior, y para verla basta con haber abierto la app hoy.
+   * Se pregunta al elegir ruta y cada vez que alguien la descongela. Acá no
+   * hace falta un reloj: una jornada vieja no aparece sola a mitad del día —
+   * la deja el día anterior, y para verla basta con haber abierto la app hoy.
+   *
+   * El reloj está en el efecto de abajo, y es para lo contrario: para enterarse
+   * de que la DESCONGELARON.
    */
   useEffect(() => {
     if (!selectedRuta) { setJornadaPendiente(null); return }
@@ -1100,6 +1103,43 @@ export default function Page() {
     buscarJornadaPendiente(selectedRuta.id).then((j) => { if (vigente) setJornadaPendiente(j) })
     return () => { vigente = false }
   }, [selectedRuta, releerJornada])
+
+  /**
+   * MIENTRAS SIGA CONGELADA, SE VUELVE A PREGUNTAR SOLA.
+   *
+   * Quien desbloquea es OTRA PERSONA en OTRO TELÉFONO: la secretaría, desde el
+   * aviso de arriba o desde el Monitoreo de Rutas. El cobrador está mirando una
+   * pantalla que le tapa la app, y sin esto seguiría bloqueado hasta cerrarla y
+   * volver a abrirla — mientras la secretaría cree que ya lo soltó.
+   *
+   * Solo corre cuando hay algo congelado: sin jornada pendiente no hay reloj ni
+   * escuchas. Y al volver a la pantalla se pregunta de una, que es el caso
+   * normal —el cobrador guarda el teléfono, llama, y vuelve.
+   *
+   * `setJornadaPendiente` conserva el objeto anterior cuando no cambió nada,
+   * porque si devolviera uno nuevo cada vez este mismo efecto se rearmaría en
+   * cada vuelta.
+   */
+  useEffect(() => {
+    if (!selectedRuta || !jornadaPendiente) return
+    let vigente = true
+    const revisar = () => {
+      buscarJornadaPendiente(selectedRuta.id).then((j) => {
+        if (!vigente) return
+        setJornadaPendiente((prev) => (prev && j && prev.id === j.id ? prev : j))
+      })
+    }
+    const alVolver = () => { if (document.visibilityState === "visible") revisar() }
+    const reloj = setInterval(revisar, 45000)
+    document.addEventListener("visibilitychange", alVolver)
+    window.addEventListener("focus", revisar)
+    return () => {
+      vigente = false
+      clearInterval(reloj)
+      document.removeEventListener("visibilitychange", alVolver)
+      window.removeEventListener("focus", revisar)
+    }
+  }, [selectedRuta, jornadaPendiente])
 
   // ── El vendedor no entra a nada antes de iniciar la ruta ──────────────
   //
