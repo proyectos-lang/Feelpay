@@ -47,6 +47,8 @@ const formatCurrency = (value: number): string =>
 
 interface SaleRow {
   id: string
+  /** Hace falta para poder escribir el abono en el libro desde la edición. */
+  client_id: string | null
   valor: number
   valor_cuota: number
   numero_cuotas: number
@@ -124,7 +126,10 @@ export function SalesTodayList({ currentRutaId, onCountChange }: SalesTodayListP
       const { data, error: queryError } = await supabase
         .from("loans")
         .select(
-          "id, valor, valor_cuota, numero_cuotas, tipo_venta, tipo_amortizacion, frecuencia_pago, estado, fecha_creacion, clients(nombre_completo, apodo)",
+          // `client_id` va para poder marcar el pago adelantado desde la
+          // edición: el evento del libro lo pide, y sin él la casilla ni se
+          // ofrece.
+          "id, client_id, valor, valor_cuota, numero_cuotas, tipo_venta, tipo_amortizacion, frecuencia_pago, estado, fecha_creacion, clients(nombre_completo, apodo)",
         )
         .eq("ruta", currentRutaId)
         // UNA VENTA ANULADA NO ES UNA VENTA DEL DÍA.
@@ -287,6 +292,7 @@ export function SalesTodayList({ currentRutaId, onCountChange }: SalesTodayListP
         onOpenChange={(o) => {
           if (!o) setEditingSale(null)
         }}
+        clientId={editingSale?.client_id ?? null}
         sale={
           editingSale
             ? {

@@ -47,6 +47,18 @@ export interface MovimientoExtracto {
   valorCuota: number | null
   /** Lo que entró. 0 en un no pago. */
   pagado: number
+  /**
+   * LO QUE QUEDÓ DEBIENDO DESPUÉS DE ESTE MOVIMIENTO.
+   *
+   * Es el saldo corrido: el total a pagar menos todo lo que había entrado
+   * hasta ese renglón, ese mismo incluido. Es lo que el cliente quiere leer al
+   * lado de su abono —"pagué esto y me quedaron debiendo tanto"— y lo que
+   * antes decía la columna "Valor", que mostraba el valor de la CUOTA: un
+   * número que se repite igual en todos los renglones y no informa nada.
+   *
+   * `null` cuando no se pudo saber el total a pagar del crédito.
+   */
+  saldoDespues: number | null
   tipo: "pago" | "no_pago" | "cancelacion" | "abono_venta"
 }
 
@@ -64,7 +76,7 @@ export async function cargarMovimientosExtracto(loanId: string): Promise<Movimie
 
     // Se piden TAMBIÉN las reversas, que no se muestran: son las que dicen
     // qué eventos dejaron de valer. Sin ellas no hay forma de saberlo.
-    const [gesRes, planRes] = await Promise.all([
+    const [gesRes, planRes, finRes] = await Promise.all([
       supabase
         .from("gestiones")
         .select("id, tipo, estado, fecha_gestion, fecha_hora, monto, cuota_objetivo, referencia_gestion_id, origen")
@@ -76,6 +88,15 @@ export async function cargarMovimientosExtracto(loanId: string): Promise<Movimie
         .from("payment_plan")
         .select("id, numero_cuota, valor_cuota, fecha_pago")
         .eq("loan_id", loanId),
+      // El total a pagar, para poder ir restando. Sale de la MISMA vista que
+      // manda en todo lo financiero: si el saldo del último renglón no
+      // coincidiera con el saldo grande del extracto, el papel se
+      // contradiría solo.
+      supabase
+        .from("v_loan_financiero")
+        .select("total_a_pagar")
+        .eq("loan_id", loanId)
+        .maybeSingle(),
     ])
 
     if (gesRes.error) throw new Error(gesRes.error.message)
@@ -105,7 +126,12 @@ export async function cargarMovimientosExtracto(loanId: string): Promise<Movimie
              .map((g) => g.referencia_gestion_id as string),
     )
 
-    return eventos
+    const totalAPagar = Number(
+      (finRes.data as { total_a_pagar?: number | null } | null)?.total_a_pagar,
+    )
+    const hayTotal = Number.isFinite(totalAPagar) && totalAPagar > 0
+
+    const vivos = eventos
       .filter((g) => (CON_PLATA as readonly string[]).includes(g.tipo) || g.tipo === "no_pago")
       .filter((g) => !anulados.has(g.id))
       .map((g) => {
@@ -121,9 +147,24 @@ export async function cargarMovimientosExtracto(loanId: string): Promise<Movimie
           numeroCuota: c?.numero ?? null,
           valorCuota: c?.valor ?? null,
           pagado: g.tipo === "no_pago" ? 0 : Number(g.monto) || 0,
+          saldoDespues: null as number | null,
           tipo: g.tipo as MovimientoExtracto["tipo"],
         }
       })
+
+    // EL SALDO CORRIDO SE ARMA DEL MÁS VIEJO AL MÁS NUEVO, que es el único
+    // orden en que se puede ir restando. La lista se devuelve al revés —del
+    // más reciente al más viejo, como se lee— así que se recorre en reversa y
+    // se deja cada saldo puesto en su renglón.
+    if (hayTotal) {
+      let acumulado = 0
+      for (let i = vivos.length - 1; i >= 0; i--) {
+        acumulado += vivos[i].pagado
+        vivos[i].saldoDespues = Math.max(0, totalAPagar - acumulado)
+      }
+    }
+
+    return vivos
   } catch (err) {
     console.error("[v0] cargarMovimientosExtracto falló:", err)
     return []

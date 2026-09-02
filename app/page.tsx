@@ -1432,6 +1432,14 @@ export default function Page() {
           <RutaCongelada
             jornada={jornadaPendiente}
             onIrAlChat={() => handleViewChange("chat")}
+            /* Cuando la secretaría ya habilitó, el cobrador cierra ese día él
+               mismo: `cierre-caja` está en VISTAS_SIN_RUTA, así que se puede
+               entrar con la ruta congelada — que es justamente cuando hace
+               falta. */
+            desbloqueada={jornadaPendiente.desbloqueada}
+            onIrAlCierre={() =>
+              handleViewChange("cierre-caja", { fechaJornada: jornadaPendiente.fecha })
+            }
           />
         ) : rutaSinIniciar ? (
           <RutaNoIniciada

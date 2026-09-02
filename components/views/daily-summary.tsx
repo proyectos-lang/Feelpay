@@ -763,28 +763,46 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
               </p>
             )}
 
-            {/* Caja Anterior & Efectivo */}
+            {/* Caja Anterior & Efectivo
+
+                EL COLOR LO DECIDE EL SIGNO, no cuál de las dos cajas es.
+
+                Antes Caja Anterior iba SIEMPRE en azul y Efectivo SIEMPRE en
+                verde, así que una caja en rojo —plata que falta— se leía igual
+                de tranquila que una en orden. La 151 lleva -$591.800 y la 1
+                -$199.305, y las dos salían en el color de "todo bien".
+
+                Verde en cero también, no solo en positivo: cero no es un
+                problema, es una caja vacía. */}
             <div className="grid grid-cols-2 gap-1.5">
               <Card className="bg-card shadow-sm border-0">
                 <CardContent className="px-2 py-0.5 flex items-center gap-1.5">
-                  <div className="h-5 w-5 rounded bg-warning-light flex items-center justify-center shrink-0">
-                    <Wallet className="h-3.5 w-3.5 text-icon-wallet" />
+                  <div className={`h-5 w-5 rounded flex items-center justify-center shrink-0 ${
+                    cajaAnterior < 0 ? "bg-destructive-light" : "bg-success-light"
+                  }`}>
+                    <Wallet className={`h-3.5 w-3.5 ${cajaAnterior < 0 ? "text-destructive" : "text-icon-wallet"}`} />
                   </div>
                   <div className="min-w-0">
                     <p className="text-[10px] text-muted-foreground font-medium leading-none">Caja Anterior</p>
-                    <p className="text-lg font-bold text-info leading-none">${cajaAnterior.toLocaleString()}</p>
+                    <p className={`text-lg font-bold leading-none ${
+                      cajaAnterior < 0 ? "text-destructive" : "text-success"
+                    }`}>${cajaAnterior.toLocaleString()}</p>
                   </div>
                 </CardContent>
               </Card>
 
               <Card className="bg-card shadow-sm border-0">
                 <CardContent className="px-2 py-0.5 flex items-center gap-1.5">
-                  <div className="h-5 w-5 rounded bg-success-light flex items-center justify-center shrink-0">
-                    <Banknote className="h-3.5 w-3.5 text-icon-cash" />
+                  <div className={`h-5 w-5 rounded flex items-center justify-center shrink-0 ${
+                    efectivo < 0 ? "bg-destructive-light" : "bg-success-light"
+                  }`}>
+                    <Banknote className={`h-3.5 w-3.5 ${efectivo < 0 ? "text-destructive" : "text-icon-cash"}`} />
                   </div>
                   <div className="min-w-0">
                     <p className="text-[10px] text-muted-foreground font-medium leading-none">Efectivo</p>
-                    <p className="text-lg font-bold text-success leading-none">${efectivo.toLocaleString()}</p>
+                    <p className={`text-lg font-bold leading-none ${
+                      efectivo < 0 ? "text-destructive" : "text-success"
+                    }`}>${efectivo.toLocaleString()}</p>
                   </div>
                 </CardContent>
               </Card>

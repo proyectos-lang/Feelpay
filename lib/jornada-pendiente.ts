@@ -34,6 +34,17 @@ import { todayColombia } from "@/lib/colombia-date"
 export interface JornadaPendiente {
   id: number
   fecha: string
+  /**
+   * LA SECRETARÍA YA ABRIÓ LA PUERTA.
+   *
+   * `false` = congelada de verdad: el cobrador no puede hacer nada.
+   * `true`  = habilitada: el cobrador ve el día viejo y hace SU cierre.
+   *
+   * Siempre `false` mientras el script 096 no haya corrido, porque la columna
+   * que lo dice no existe. Eso deja el comportamiento viejo intacto en vez de
+   * habilitar a todo el mundo por accidente.
+   */
+  desbloqueada: boolean
 }
 
 /**
@@ -66,18 +77,32 @@ export function puedeDescongelar(rol: string | null | undefined): boolean {
 export async function buscarJornadaPendiente(rutaId: number): Promise<JornadaPendiente | null> {
   try {
     const supabase = await getSupabaseSafe()
-    const { data, error } = await supabase
-      .from("rutas_diarias")
-      .select("id, fecha, cerrada_sin_cuadre")
-      .eq("ruta_id", rutaId)
-      .eq("estado", "abierta")
-      .lt("fecha", todayColombia())
-      .order("fecha", { ascending: true })
-      .limit(1)
-      .maybeSingle()
+    const pedir = (columnas: string) =>
+      supabase
+        .from("rutas_diarias")
+        .select(columnas)
+        .eq("ruta_id", rutaId)
+        .eq("estado", "abierta")
+        .lt("fecha", todayColombia())
+        .order("fecha", { ascending: true })
+        .limit(1)
+        .maybeSingle()
+
+    let { data, error } = await pedir("id, fecha, cerrada_sin_cuadre, desbloqueada_at")
+
+    // 42703 = falta alguna columna. Puede ser `desbloqueada_at` (script 096
+    // pendiente) o `cerrada_sin_cuadre` (script 086 pendiente), y no son lo
+    // mismo: sin la del 086 el congelamiento NO debe estar en vigor, y sin la
+    // del 096 sí pero sin poder habilitar a nadie. Se reintenta pidiendo solo
+    // la del 086 para distinguir los dos casos.
+    let hayDesbloqueo = true
+    if (error && (error as { code?: string }).code === "42703") {
+      hayDesbloqueo = false
+      ;({ data, error } = await pedir("id, fecha, cerrada_sin_cuadre"))
+    }
 
     if (error) {
-      // 42703 = la columna no existe: el script 086 todavía no corrió y el
+      // Sigue faltando `cerrada_sin_cuadre`: el 086 no corrió y el
       // congelamiento no debe estar en vigor. Cualquier otro error tampoco
       // justifica bloquear.
       if ((error as { code?: string }).code !== "42703") {
@@ -86,8 +111,12 @@ export async function buscarJornadaPendiente(rutaId: number): Promise<JornadaPen
       return null
     }
     if (!data) return null
-    const d = data as unknown as { id: number; fecha: string }
-    return { id: d.id, fecha: d.fecha }
+    const d = data as unknown as { id: number; fecha: string; desbloqueada_at?: string | null }
+    return {
+      id: d.id,
+      fecha: d.fecha,
+      desbloqueada: hayDesbloqueo && !!d.desbloqueada_at,
+    }
   } catch (err) {
     console.error("[v0] buscarJornadaPendiente falló:", err)
     return null
@@ -95,7 +124,53 @@ export async function buscarJornadaPendiente(rutaId: number): Promise<JornadaPen
 }
 
 /**
- * Cerrar una jornada vieja para descongelar la ruta.
+ * HABILITAR AL COBRADOR PARA QUE CIERRE ÉL.
+ *
+ * Es lo que hace hoy el botón de la secretaría, y NO cierra la jornada: la
+ * deja abierta y marcada. El cobrador entonces ve el día viejo en su teléfono
+ * con el botón para hacer su cierre, y ese cierre sí lleva los números.
+ *
+ * POR QUÉ NO LO CIERRA ELLA. Porque el que tiene la plata contada en la mano
+ * es el cobrador. Cerrar desde el escritorio dejaba ese día sin cuadre para
+ * siempre: la ruta se liberaba, pero la jornada nunca tuvo cierre.
+ *
+ * SI EL SCRIPT 096 NO CORRIÓ TODAVÍA, la columna no existe y esto se cae al
+ * comportamiento de antes —cerrar sin cuadre— en vez de dejar a la secretaría
+ * sin poder desbloquear nada. Se avisa por consola cuál de los dos pasó.
+ */
+export async function habilitarCierreAtrasado(
+  jornadaId: number,
+  quien: { id: number | string; nombre: string },
+): Promise<{ ok: boolean; error?: string; modo: "habilitada" | "cerrada_sin_cuadre" }> {
+  try {
+    const supabase = await getSupabaseSafe()
+    const { error } = await supabase
+      .from("rutas_diarias")
+      .update({
+        desbloqueada_at: new Date().toISOString(),
+        desbloqueada_por_nombre: quien.nombre,
+      })
+      .eq("id", jornadaId)
+      .eq("estado", "abierta")
+
+    if (!error) return { ok: true, modo: "habilitada" }
+
+    if ((error as { code?: string }).code === "42703") {
+      console.warn("[v0] rutas_diarias sin las columnas del script 096; cerrando sin cuadre")
+      const r = await descongelarJornada(jornadaId, quien)
+      return { ...r, modo: "cerrada_sin_cuadre" }
+    }
+
+    console.error("[v0] habilitarCierreAtrasado error:", error.message)
+    return { ok: false, error: "No se pudo habilitar la ruta. Revisa la conexión.", modo: "habilitada" }
+  } catch (err) {
+    console.error("[v0] habilitarCierreAtrasado falló:", err)
+    return { ok: false, error: "No se pudo habilitar la ruta.", modo: "habilitada" }
+  }
+}
+
+/**
+ * Cerrar una jornada vieja SIN CUADRARLA. La salida de emergencia.
  *
  * NO inventa un cuadre: `hora_fin` se queda en NULL y `cerrada_sin_cuadre`
  * queda en true, igual que hace el script 086. La diferencia es que acá queda

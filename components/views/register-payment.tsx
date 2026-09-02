@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DollarSign, X, Check, Eye, Clock, ArrowLeftRight, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, GripVertical, ArrowUp, ArrowDown, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown, ChevronUp, ChevronDown } from "lucide-react"
+import { DollarSign, X, Check, Eye, Clock, ArrowLeftRight, Camera, Edit, FileText, History, User, MoreVertical, Receipt, Loader2, CheckCircle2, XCircle, Users, Pencil, Trash2, RefreshCw, ShoppingCart, MapPinOff, MapPin, AlertCircle, Play, Share2, FileDown, ChevronUp, ChevronDown } from "lucide-react"
 import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
 import { leerAplazados, aplazar, quitarAplazado, horaDeAplazado } from "@/lib/aplazados"
 import {
@@ -54,6 +54,7 @@ import {
   montoEfectivo,
   apodoSiAporta,
   type Gestion,
+  cuotasConDecimal,
 } from "@/lib/gestion-core"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, type RutaUmbrales } from "@/lib/ruta-umbrales"
 import { renderComprobanteImagen, type SeccionComprobante } from "@/lib/imagen-comprobante"
@@ -61,6 +62,59 @@ import { CompartirComprobanteDialog } from "@/components/compartir-comprobante-d
 import { getUsuarioSesion } from "@/lib/movimientos"
 import { obtenerUbicacion, evaluarGeocerca, formatearDistancia, type ResultadoGeocerca, type UbicacionMedida } from "@/lib/geo"
 import { useEstadoGps } from "@/lib/use-gps"
+
+/**
+ * LAS CASILLAS DEL FORMULARIO DE PAGO.
+ *
+ * Iban en `bg-muted`, que en este tema es un gris-azulado clarísimo
+ * (`oklch(0.95 0.012 230)`). En una pantalla al sol, con el teléfono en la
+ * mano y de pie en la calle, ese fondo y el blanco de la tarjeta son el mismo
+ * color: no se veía dónde empezaba la casilla ni qué decía adentro.
+ *
+ * Ahora van en azul lleno con letra blanca y en negrilla.
+ *
+ * EL COLOR VIVE EN `globals.css`, NO ACÁ. Ese archivo pinta TODOS los inputs
+ * con `background-color: var(--input) !important` —a propósito, para que los
+ * campos se vean iguales en toda la app—, así que una clase de Tailwind sobre
+ * el input no hace nada. Las dos excepciones están puestas como
+ * `.casilla-info` y `.casilla-escribible` junto a esa regla, que es donde se
+ * decide el color de un input.
+ */
+const CASILLA_INFO = "h-7 md:h-10 text-xs md:text-sm font-bold casilla-info"
+
+/** La misma casilla, pero la que SE ESCRIBE: más oscura, para que el número que se teclea resalte. */
+const CASILLA_ESCRIBIBLE = "casilla-escribible"
+
+/**
+ * EL MONTO, ESCRITO COMO PLATA: "$ 19.500".
+ *
+ * `paymentAmount` sigue guardando el número crudo —"19500" o "19500.75"—
+ * porque medio módulo lo lee con `Number.parseFloat`. Lo único que cambia es
+ * lo que se ve y lo que se acepta al teclear.
+ *
+ * SE ACEPTA LA COMA COMO DECIMAL, y no es un detalle de estilo: en Ecuador las
+ * cuotas llevan centavos (el script 087 no redondea nada por debajo de $1.000),
+ * así que un campo que solo tragara dígitos dejaría a esa ruta sin poder cobrar
+ * $19,50. El punto es SIEMPRE separador de miles, como en el resto de la app.
+ */
+function mostrarMonto(crudo: string): string {
+  if (!crudo) return ""
+  const [ent, dec] = crudo.split(".")
+  const n = Number(ent || "0")
+  const miles = Number.isFinite(n) ? n.toLocaleString("es-CO") : ent
+  return dec !== undefined ? `$ ${miles},${dec}` : `$ ${miles}`
+}
+
+function leerMonto(texto: string): string {
+  const soloValidos = texto.replace(/[^0-9,]/g, "")
+  if (!soloValidos) return ""
+  const partes = soloValidos.split(",")
+  // Se quitan los ceros de adelante para que no quede "0019500", pero un "0"
+  // solo tiene que sobrevivir: es lo que se ve mientras se borra el campo.
+  const enteros = partes[0].replace(/^0+(?=[0-9])/, "")
+  if (partes.length === 1) return enteros
+  return `${enteros || "0"}.${partes.slice(1).join("").slice(0, 2)}`
+}
 
 // Types matching DB schema
 type LoanWithClient = {
@@ -737,9 +791,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const [clientInfoLoading, setClientInfoLoading] = useState(false)
 
   // Drag-and-drop reorder state
-  const [dragIndex, setDragIndex] = useState<number | null>(null)
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
-  const [savingOrder, setSavingOrder] = useState(false)
 
   // El estado del permiso sale de `lib/use-gps.ts`, el MISMO que usa el
   // encabezado. Antes cada pantalla lo averiguaba por su cuenta y podian
@@ -1007,109 +1058,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     }
   }
 
-  /**
-   * Guarda el orden de la ruta.
-   *
-   * `reordered` son SOLO los que estan en pantalla. Renumerarlos 1..N a secas
-   * —que es lo que hacia antes— pisaba los numeros de los que no se ven: si a
-   * media manana ya hay diez clientes gestionados, los treinta y uno restantes
-   * quedaban 1..31 y los diez de la manana conservaban numeros dentro de ese
-   * mismo rango. Al dia siguiente, con todos visibles otra vez, el orden tenia
-   * empates y la ruta que alguien acomodo a mano se desarmaba sola.
-   *
-   * Asi que se renumera la ruta COMPLETA: se toman todos los clientes en su
-   * orden actual y se reemplaza, en los puestos que ocupaban los visibles, la
-   * secuencia nueva. Los que no se ven no se mueven de su lugar relativo, y
-   * el resultado es 1..N sin repetidos.
-   */
-  const saveNewOrder = async (reordered: DisplayClient[]) => {
-    setSavingOrder(true)
-    try {
-      const porOrden = (c: DisplayClient) => (c.ordenvisita > 0 ? c.ordenvisita : 99999)
-      const idsMovidos = new Set(reordered.map((c) => c.loanId))
-      const todos = [...clients].sort((a, b) => porOrden(a) - porOrden(b))
+  /* Acá vivían `saveNewOrder`, el arrastre y las flechas: unas 90 líneas que
+     renumeraban la ruta ENTERA desde la pantalla de cobro. Se fueron con el
+     acceso directo a enrutar — `PUT /api/route-order` sigue existiendo y lo
+     usa el módulo "Ordenar Ruta" (components/views/configure-route.tsx), que
+     es donde se acomoda la ruta a propósito y no de refilón. */
 
-      let k = 0
-      const rutaCompleta = todos.map((c) => (idsMovidos.has(c.loanId) ? reordered[k++] : c))
-
-      const items = rutaCompleta.map((c, idx) => ({
-        id: c.loanId,
-        ordenvisita: idx + 1,
-      }))
-      const res = await fetch("/api/route-order", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items }),
-      })
-      if (!res.ok) throw new Error("Error saving order")
-      // El estado local recibe los MISMOS numeros que se acaban de guardar.
-      //
-      // Antes esto era `setClients(reordered...)`, que reemplazaba la lista
-      // completa por el subconjunto reordenado: todo cliente que no estuviera
-      // en pantalla en ese momento desaparecia del estado hasta el siguiente
-      // refresco.
-      const nuevoOrden = new Map(items.map((it) => [it.id, it.ordenvisita]))
-      setClients((prev) =>
-        prev.map((c) => {
-          const orden = nuevoOrden.get(c.loanId)
-          return orden === undefined ? c : { ...c, ordenvisita: orden }
-        }),
-      )
-    } catch (error) {
-      toast({ title: "Error", description: "No se pudo guardar el orden", variant: "destructive" })
-    } finally {
-      setSavingOrder(false)
-    }
-  }
-
-  const handleDragStart = (index: number) => {
-    setDragIndex(index)
-  }
-
-  const handleDragOver = (e: React.DragEvent, index: number) => {
-    e.preventDefault()
-    setDragOverIndex(index)
-  }
-
-  const handleDrop = (dropIndex: number) => {
-    if (dragIndex === null || dragIndex === dropIndex) {
-      setDragIndex(null)
-      setDragOverIndex(null)
-      return
-    }
-    // Se reordena SOBRE LA LISTA QUE SE VE, igual que hacen las flechas.
-    //
-    // Antes se rearmaba aca una lista aparte con un filtro que NO coincidia
-    // con el de la pantalla: no descartaba a los ya gestionados ni a los de
-    // saldo cero, en modo Diario se quedaba solo con los diarios (la lista
-    // muestra todos), ignoraba el filtro de mora y ni siquiera aplicaba el
-    // mismo orden. Los indices del arrastre venian de la lista visible, asi
-    // que apuntaban a otro cliente: arrastrar movia a alguien mas.
-    const reordered = [...displayClients]
-    const [moved] = reordered.splice(dragIndex, 1)
-    reordered.splice(dropIndex, 0, moved)
-    saveNewOrder(reordered)
-    setDragIndex(null)
-    setDragOverIndex(null)
-  }
-
-  const handleMoveUp = (index: number) => {
-    if (index === 0) return
-    const reordered = [...displayClients]
-    const temp = reordered[index - 1]
-    reordered[index - 1] = reordered[index]
-    reordered[index] = temp
-    saveNewOrder(reordered)
-  }
-
-  const handleMoveDown = (index: number) => {
-    if (index >= displayClients.length - 1) return
-    const reordered = [...displayClients]
-    const temp = reordered[index + 1]
-    reordered[index + 1] = reordered[index]
-    reordered[index] = temp
-    saveNewOrder(reordered)
-  }
 
   const fetchData = useCallback(async (options?: { silent?: boolean }) => {
     // silent=true: refresh en background sin tocar el flag `loading` (no se
@@ -2287,7 +2241,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           { label: "Interés", valor: `${c.tasaInteres ?? 0}%` },
           { label: "Total a pagar", valor: money(c.totalAPagar) },
           { label: "Valor de cuota", valor: money(c.valorCuota) },
-          { label: "Cuotas", valor: `${c.cuotasPagadas}/${c.cuotasTotales}` },
+          { label: "Cuotas", valor: `${cuotasConDecimal(c.abonado, c.valorCuota, c.cuotasTotales)}/${c.cuotasTotales}` },
           { label: "Abonado", valor: money(c.abonado) },
           { label: "Saldo", valor: money(c.saldo) },
           { label: "Estado", valor: c.mora > 0 ? `Mora: ${etiquetaMora(c.mora)}` : "Al día" },
@@ -2297,15 +2251,21 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     if (movs.length > 0) {
       secciones.push({
         titulo: `Movimientos (${movs.length})`,
+        // LA CUOTA YA NO VA PEGADA A LA FECHA.
+        //
+        // Iban las dos en la etiqueta separadas por un punto —"01/09/2026 ·
+        // Cuota 11"— y a 300pt de ancho eso es una sola parrafada que hay que
+        // leer entera para encontrar el número. Ahora la fecha manda el
+        // renglón y la cuota va con las cifras, donde se compara con las de
+        // arriba y abajo.
+        //
+        // Y a la derecha, lo mismo que en pantalla: lo que pagó y con cuánto
+        // quedó. Un no pago dice $0, no una raya.
         filas: movs.map((m) => ({
-          // Fecha y cuota a la izquierda, pagado y valor a la derecha: el
-          // mismo renglón que se ve en pantalla.
-          label: `${fechaCorta(m.fecha)}  ·  ${
-            m.numeroCuota !== null ? `Cuota ${m.numeroCuota}` : ETIQUETA_MOVIMIENTO[m.tipo]
-          }`,
-          valor: `${m.pagado > 0 ? money(m.pagado) : "—"}${
-            m.valorCuota !== null ? ` / ${money(m.valorCuota)}` : ""
-          }`,
+          label: fechaCorta(m.fecha),
+          valor: `${
+            m.numeroCuota !== null ? `Cta ${m.numeroCuota}` : ETIQUETA_MOVIMIENTO[m.tipo]
+          }   ${money(m.pagado)}${m.saldoDespues !== null ? `   ${money(m.saldoDespues)}` : ""}`,
         })),
       })
     }
@@ -2427,6 +2387,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     const cuotasCubiertas = finRow?.cuotas_cubiertas ?? client.cuotasPagadas
     const cuotasTotales = finRow?.cuotas_totales ?? client.cuotasTotales
     const moraActual = finRow?.cuotas_mora ?? client.mora
+    // La plata neta que lleva el crédito, de la misma consulta. Es el
+    // numerador del X/Y con decimal: `cuotas_cubiertas` viene con el piso ya
+    // puesto desde la vista y no sirve para sacarle la fracción.
+    const totalPagadoAhora = Number(finRow?.total_pagado ?? client.abonado) || 0
 
     const rows: [string, string][] = [
       ["Fecha venta:", fmtFechaCorta(client.fechaVenta)],
@@ -2437,7 +2401,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       // la mano y las cuotas extra de extensiones y prorrogas le agregaban un
       // numero que no sabe leer. El X/Y sigue siendo sobre las cuotas BASE del
       // plan, que es lo que el cliente pacto.
-      ["Cuotas:", `${cuotasCubiertas} / ${cuotasTotales}`],
+      ["Cuotas:", `${cuotasConDecimal(totalPagadoAhora, client.valorCuota, cuotasTotales)} / ${cuotasTotales}`],
       ["Frecuencia:", frecuenciaLabel(client.frecuenciaPago)],
       // Antes esta fila decía "Fallas" pero imprimía la mora, que es otra
       // cosa (cuotas vencidas sin cubrir, no visitas incumplidas).
@@ -2461,15 +2425,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
        * dueño para todo el sistema (script 084): la plata dividida por el
        * valor de la cuota.
        *
-       * Si no alcanza para una cuota completa se dice "Abono parcial" en vez
-       * de "0": un comprobante de plata recibida que dice cero cuotas se lee
-       * como que no se abonó nada.
+       * Y AHORA CON UN DECIMAL. El piso escondía justo lo que el cliente
+       * quiere ver: quien pagó cinco cuotas y media leía "5", igual que quien
+       * acababa de pagar la quinta.
+       *
+       * Con el decimal ya no hace falta el "Abono parcial": media cuota se
+       * escribe "0.5", que dice más y no mezcla letras con números.
        */
       const valorCuotaRef = Number(client.valorCuota) || 0
-      const cuotasDelAbono = valorCuotaRef > 0 ? Math.floor(abonoHoy / valorCuotaRef) : 0
       rows.splice(1, 0,
         ["Fecha del abono:", fmtFechaCorta(fechaAbono)],
-        ["Cuotas abonadas:", cuotasDelAbono >= 1 ? `${cuotasDelAbono}` : "Abono parcial"],
+        ["Cuotas abonadas:", cuotasConDecimal(abonoHoy, valorCuotaRef)],
         ["Valor pagado:", fmt(abonoHoy)],
       )
     }
@@ -3181,21 +3147,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     aplazado: boolean,
   ) => {
       const canManage = canManageClient(client)
-      const arrastre = {
-        draggable: true,
-        onDragStart: () => handleDragStart(index),
-        onDragOver: (e: React.DragEvent) => handleDragOver(e, index),
-        onDragEnd: () => { setDragIndex(null); setDragOverIndex(null) },
-        onDrop: () => handleDrop(index),
-      }
+      /* ENRUTAR YA NO SE HACE DESDE ACÁ.
+         Se fue el arrastre de la fila y con él las flechas del menú. El orden
+         de visita tiene su propio módulo —"Ordenar Ruta"—, y tenerlo también
+         acá era un atajo caro: se reordena la ruta ENTERA con un dedo que se
+         resbala mientras se está cobrando, y el cobrador no se entera de que
+         movió a alguien hasta el día siguiente. */
       return (
       <TableRow
         key={client.loanId}
-        {...arrastre}
         className={`${index % 2 === 0 ? "bg-card" : "bg-muted"} hover:bg-accent/30 transition-colors border-b-2 border-b-border ${
-          dragIndex === index ? "opacity-50" : ""
-        } ${!canManage ? "opacity-60" : ""} ${
-          dragOverIndex === index ? "border-t-2 border-t-brand" : ""
+          !canManage ? "opacity-60" : ""
         }`}
       >
         {/* La franja de color va en la CELDA y no en la fila:
@@ -3254,7 +3216,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               {client.mora > 0 ? `Mora: ${client.mora}` : "Al día"}
             </span>
             <span className="text-[10px] md:text-sm text-muted-foreground tabular-nums">
-              Cta {client.cuotasPagadas}/{client.cuotasTotales}
+              Cta {cuotasConDecimal(client.abonado, client.valorCuota, client.cuotasTotales)}/{client.cuotasTotales}
             </span>
             {aplazado && (
               <span className="rounded bg-amber-500/15 px-1 text-[9px] md:text-xs font-semibold text-amber-700">
@@ -3350,26 +3312,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-52">
-                  {/* SUBIR Y BAJAR viven acá desde que la columna de flechas
-                      se fue: medía 95px de alto y era la que decidía cuánto
-                      media cada fila. Arrastrar la fila sigue funcionando. */}
-                  <DropdownMenuItem
-                    className="text-xs md:text-base cursor-pointer"
-                    disabled={index === 0 || savingOrder}
-                    onClick={() => handleMoveUp(index)}
-                  >
-                    <ArrowUp className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                    Subir en la ruta
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className="text-xs md:text-base cursor-pointer"
-                    disabled={index >= total - 1 || savingOrder}
-                    onClick={() => handleMoveDown(index)}
-                  >
-                    <ArrowDown className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                    Bajar en la ruta
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
+                  {/* Acá vivían "Subir en la ruta" y "Bajar en la ruta". Se
+                      fueron con el arrastre: enrutar es del módulo Ordenar
+                      Ruta. Ver el comentario de `filaCliente`. */}
                   <DropdownMenuItem
                     className="text-xs md:text-base cursor-pointer"
                     onClick={() => {
@@ -4239,10 +4184,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         </Card>
       ) : (
         <Card>
-          <CardHeader className="p-3 md:p-6">
-            <CardTitle className="text-sm md:text-lg">Informacion del Pago</CardTitle>
+          {/* EL ENCABEZADO, A LA MITAD.
+              Son 24px menos de alto en el teléfono, y ese alto es lo que se
+              pelea con el teclado: con el teclado abierto, el botón de
+              registrar el pago quedaba justo debajo del borde y había que
+              esconderlo para llegar. */}
+          <CardHeader className="px-3 pt-2 pb-1 md:px-6 md:pt-4 md:pb-2">
+            <CardTitle className="text-sm font-bold md:text-lg">Informacion del Pago</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 md:space-y-3 p-3 md:p-6">
+          <CardContent className="space-y-2 md:space-y-3 px-3 pb-3 pt-1 md:px-6 md:pb-6 md:pt-2">
             {renderAvisoGeocerca()}
             {/* Alerta: última cuota programada de préstamo americano */}
             {selectedClient.tipoAmortizacion?.toLowerCase().trim() === "americano" &&
@@ -4257,22 +4207,22 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             {/* Primera fila: Apodo, Saldo y Ultima Pago */}
             <div className="grid gap-2 md:gap-3 grid-cols-3">
               <div className="space-y-1 md:space-y-1.5">
-                <Label htmlFor="apodo" className="text-xs md:text-sm">Apodo</Label>
-                <Input id="apodo" type="text" value={selectedClient.nombre} readOnly className="h-7 md:h-10 text-xs md:text-sm bg-muted" />
+                <Label htmlFor="apodo" className="text-xs font-bold md:text-sm">Apodo</Label>
+                <Input id="apodo" type="text" value={selectedClient.nombre} readOnly className={CASILLA_INFO} />
               </div>
               <div className="space-y-1 md:space-y-1.5">
-                <Label htmlFor="saldoCliente" className="text-xs md:text-sm">Saldo a Pagar</Label>
+                <Label htmlFor="saldoCliente" className="text-xs font-bold md:text-sm">Saldo a Pagar</Label>
                 <Input
                   id="saldoCliente"
                   type="text"
                   value={`$${Math.round(selectedClient.saldo).toLocaleString()}`}
                   readOnly
-                  className="h-7 md:h-10 text-xs md:text-sm font-semibold bg-amber-50 text-amber-800 border-amber-300"
+                  className="h-7 md:h-10 text-xs md:text-sm font-bold casilla-alerta"
                 />
               </div>
               <div className="space-y-1 md:space-y-1.5">
-                <Label htmlFor="lastPaymentDate" className="text-xs md:text-sm">Ult. Pago</Label>
-                <Input id="lastPaymentDate" type="text" value={selectedClient.ultimoPagoFecha || "N/A"} readOnly className="h-7 md:h-10 text-xs md:text-sm bg-muted" />
+                <Label htmlFor="lastPaymentDate" className="text-xs font-bold md:text-sm">Ult. Pago</Label>
+                <Input id="lastPaymentDate" type="text" value={selectedClient.ultimoPagoFecha || "N/A"} readOnly className={CASILLA_INFO} />
               </div>
             </div>
 
@@ -4296,15 +4246,19 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             {/* Segunda fila: Monto del Pago + Nuevo Saldo */}
             <div className="grid grid-cols-2 gap-2 md:gap-3">
               <div className="space-y-1 md:space-y-1.5">
-                <Label htmlFor="paymentAmount" className="text-xs md:text-sm">Monto del Pago</Label>
+                <Label htmlFor="paymentAmount" className="text-xs font-bold md:text-sm">Monto del Pago</Label>
                 <Input
                   id="paymentAmount"
-                  type="number"
-                  value={paymentAmount}
+                  /* `type="text"` y no `number`: un input numérico no deja
+                     pintar los puntos de miles. `inputMode="numeric"` saca
+                     igual el teclado de números en el teléfono. */
+                  type="text"
+                  inputMode="numeric"
+                  value={mostrarMonto(paymentAmount)}
                   onChange={(e) => {
-                      const value = e.target.value
-                      const saldoDisponible = selectedClient.saldo
-                    const numValue = Number.parseFloat(value)
+                    const crudo = leerMonto(e.target.value)
+                    const saldoDisponible = selectedClient.saldo
+                    const numValue = Number.parseFloat(crudo)
                     if (!isNaN(numValue) && numValue > saldoDisponible) {
                       toast({
                         title: "Monto excede el saldo",
@@ -4314,16 +4268,20 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                       setPaymentAmount(saldoDisponible.toString())
                       return
                     }
-                    setPaymentAmount(value)
+                    setPaymentAmount(crudo)
                   }}
                   readOnly={!isPartialPayment}
-                  className={`h-7 md:h-10 text-xs md:text-sm ${!isPartialPayment ? "bg-muted" : ""}`}
+                  className={
+                    isPartialPayment
+                      ? `h-7 md:h-10 text-xs md:text-sm font-bold ${CASILLA_ESCRIBIBLE}`
+                      : CASILLA_INFO
+                  }
                 />
               </div>
               <div className="space-y-1 md:space-y-1.5">
-                <Label className="text-xs md:text-sm">Nuevo Saldo</Label>
-                <div className="h-7 md:h-10 flex items-center px-3 rounded-md border bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-800">
-                  <span className="text-xs md:text-sm font-semibold text-green-700 dark:text-green-400">
+                <Label className="text-xs font-bold md:text-sm">Nuevo Saldo</Label>
+                <div className="h-7 md:h-10 flex items-center px-3 rounded-md border bg-green-100 dark:bg-green-950/40 border-green-400 dark:border-green-800">
+                  <span className="text-xs md:text-sm font-bold text-green-900 dark:text-green-300">
                     ${Math.max(0, selectedClient.saldo - (Number.parseFloat(paymentAmount) || 0)).toLocaleString("es-CO")}
                   </span>
                 </div>
@@ -4333,7 +4291,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             {/* Tercera fila: Numero de Cuotas y Metodo de Pago */}
             <div className="grid gap-2 md:gap-3 grid-cols-2">
               <div className="space-y-1 md:space-y-1.5">
-                <Label htmlFor="numCuotas" className="text-xs md:text-sm">Nro Cuotas</Label>
+                <Label htmlFor="numCuotas" className="text-xs font-bold md:text-sm">Nro Cuotas</Label>
                 <Select
                   value={numCuotas.toString()}
                   onValueChange={(value) => {
@@ -4350,22 +4308,22 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                   </SelectTrigger>
                   <SelectContent>
                     {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
-                      <SelectItem key={num} value={num.toString()} className="text-xs md:text-base">{num}</SelectItem>
+                      <SelectItem key={num} value={num.toString()} className="text-xs font-bold md:text-base">{num}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="space-y-1 md:space-y-1.5">
-                <Label htmlFor="paymentMethod" className="text-xs md:text-base">Metodo de Pago</Label>
+                <Label htmlFor="paymentMethod" className="text-xs font-bold md:text-base">Metodo de Pago</Label>
                 <Select value={paymentMethod} onValueChange={setPaymentMethod}>
                   <SelectTrigger className="h-7 md:h-10 text-xs md:text-base">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="efectivo" className="text-xs md:text-base">Efectivo</SelectItem>
-                    <SelectItem value="transferencia" className="text-xs md:text-base">Transferencia</SelectItem>
-                    <SelectItem value="tarjeta" className="text-xs md:text-base">Tarjeta</SelectItem>
+                    <SelectItem value="efectivo" className="text-xs font-bold md:text-base">Efectivo</SelectItem>
+                    <SelectItem value="transferencia" className="text-xs font-bold md:text-base">Transferencia</SelectItem>
+                    <SelectItem value="tarjeta" className="text-xs font-bold md:text-base">Tarjeta</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -4374,15 +4332,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             {/* Cuenta bancaria si transferencia */}
             {paymentMethod === "transferencia" && (
               <div className="space-y-1 md:space-y-1.5">
-                <Label htmlFor="accountNumber" className="text-xs md:text-base">Numero de Cuenta</Label>
+                <Label htmlFor="accountNumber" className="text-xs font-bold md:text-base">Numero de Cuenta</Label>
                 <Select value={accountNumber} onValueChange={setAccountNumber}>
                   <SelectTrigger className="h-7 md:h-10 text-xs md:text-base">
                     <SelectValue placeholder="Seleccionar cuenta..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="davivienda-123456789" className="text-xs md:text-base">Davivienda - 123456789</SelectItem>
-                    <SelectItem value="bancolombia-123456789" className="text-xs md:text-base">Bancolombia - 123456789</SelectItem>
-                    <SelectItem value="nequi-123456789" className="text-xs md:text-base">Nequi - 123456789</SelectItem>
+                    <SelectItem value="davivienda-123456789" className="text-xs font-bold md:text-base">Davivienda - 123456789</SelectItem>
+                    <SelectItem value="bancolombia-123456789" className="text-xs font-bold md:text-base">Bancolombia - 123456789</SelectItem>
+                    <SelectItem value="nequi-123456789" className="text-xs font-bold md:text-base">Nequi - 123456789</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -4393,7 +4351,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               <div className="flex gap-2 flex-wrap">
                 <div className="flex items-center space-x-1.5">
                   <Checkbox id="partialPayment" checked={isPartialPayment} onCheckedChange={(c) => handlePartialPaymentChange(c as boolean)} className="h-4 w-4 border-2 border-gray-400 dark:border-gray-500" />
-                  <Label htmlFor="partialPayment" className="text-[11px] md:text-sm font-normal cursor-pointer whitespace-nowrap">Pago manual</Label>
+                  <Label htmlFor="partialPayment" className="text-[11px] md:text-sm font-bold cursor-pointer whitespace-nowrap">Pago manual</Label>
                 </div>
                 <div className="flex items-center space-x-1.5">
                   <Checkbox
@@ -4410,7 +4368,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                     }}
                     className="h-4 w-4 border-2 border-gray-400 dark:border-gray-500"
                   />
-                  <Label htmlFor="cancelada" className="text-[11px] md:text-sm font-normal cursor-pointer whitespace-nowrap">Cancelada</Label>
+                  <Label htmlFor="cancelada" className="text-[11px] md:text-sm font-bold cursor-pointer whitespace-nowrap">Cancelada</Label>
                 </div>
                 {/* Checkbox de extension de plazo: solo visible para
                     prestamos tipo "americano" en su ULTIMA cuota. */}
@@ -4443,7 +4401,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                       />
                       <Label
                         htmlFor="extenderCuotas"
-                        className="text-[11px] md:text-sm font-normal cursor-pointer whitespace-nowrap"
+                        className="text-[11px] md:text-sm font-bold cursor-pointer whitespace-nowrap"
                       >
                         Extender Cuotas (Prórroga)
                       </Label>
@@ -4461,7 +4419,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                       onCheckedChange={(c) => setPagarMulta(c as boolean)}
                       className="h-4 w-4 border-2 border-red-400"
                     />
-                    <Label htmlFor="pagarMulta" className="text-[11px] md:text-sm font-normal cursor-pointer whitespace-nowrap text-red-700">
+                    <Label htmlFor="pagarMulta" className="text-[11px] md:text-sm font-bold cursor-pointer whitespace-nowrap text-red-700">
                       Pagar multa (${selectedClient.multaPendiente.valor.toLocaleString("es-CO")})
                     </Label>
                   </div>
@@ -4483,7 +4441,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                         onCheckedChange={(c) => setAgregarCuotaSiDebe(c as boolean)}
                         className="h-4 w-4 border-2 border-amber-400"
                       />
-                      <Label htmlFor="agregarCuotaSiDebe" className="text-[11px] md:text-sm font-normal cursor-pointer whitespace-nowrap text-amber-700">
+                      <Label htmlFor="agregarCuotaSiDebe" className="text-[11px] md:text-sm font-bold cursor-pointer whitespace-nowrap text-amber-700">
                         Agregar cuota adicional si aún debe (última cuota)
                       </Label>
                     </div>
@@ -4842,7 +4800,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               ["Interés", `${extractoClient.tasaInteres ?? 0}%`],
               ["Total a pagar", fmt(extractoClient.totalAPagar)],
               ["Valor de cuota", fmt(extractoClient.valorCuota)],
-              ["Cuotas", `${extractoClient.cuotasPagadas}/${extractoClient.cuotasTotales}`],
+              ["Cuotas", `${cuotasConDecimal(extractoClient.abonado, extractoClient.valorCuota, extractoClient.cuotasTotales)}/${extractoClient.cuotasTotales}`],
               ["Abonado", fmt(extractoClient.abonado)],
             ]
             return (
@@ -4993,7 +4951,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                     <th className="w-[74px] px-2 py-1.5 text-left font-semibold">Fecha</th>
                     <th className="px-1 py-1.5 text-left font-semibold">Cuota</th>
                     <th className="w-[70px] px-1 py-1.5 text-right font-semibold">Pagado</th>
-                    <th className="w-[70px] px-2 py-1.5 text-right font-semibold">Valor</th>
+                    {/* SALDO, no "Valor". La columna mostraba el valor de la
+                        CUOTA: el mismo número en todos los renglones, que no
+                        dice nada. Ahora dice con cuánto quedó el cliente
+                        después de ese abono, que es lo que viene a preguntar. */}
+                    <th className="w-[74px] px-2 py-1.5 text-right font-semibold">Saldo</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -5017,10 +4979,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                         <td className={`px-1 py-1.5 text-right text-[10px] md:text-xs font-semibold tabular-nums ${
                           esNoPago ? "text-red-600 dark:text-red-400" : ""
                         }`}>
-                          {m.pagado > 0 ? `$${Math.round(m.pagado).toLocaleString("es-CO")}` : "—"}
+                          {/* UN NO PAGO DICE $0, no una raya. Mezclar un
+                              guión con las cifras de la columna obliga a
+                              traducir; "$0" se suma de un vistazo. */}
+                          {`$${Math.round(m.pagado).toLocaleString("es-CO")}`}
                         </td>
                         <td className="px-2 py-1.5 text-right text-[10px] md:text-xs tabular-nums text-muted-foreground">
-                          {m.valorCuota !== null ? `$${Math.round(m.valorCuota).toLocaleString("es-CO")}` : "—"}
+                          {m.saldoDespues !== null ? `$${Math.round(m.saldoDespues).toLocaleString("es-CO")}` : "—"}
                         </td>
                       </tr>
                     )

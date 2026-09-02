@@ -51,7 +51,7 @@ import {
   Unlock,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { descongelarJornada, puedeDescongelar } from "@/lib/jornada-pendiente"
+import { habilitarCierreAtrasado, puedeDescongelar } from "@/lib/jornada-pendiente"
 import { fmtFecha } from "@/lib/colombia-date"
 import { DetalleClientesDialog } from "@/components/detalle-clientes-dialog"
 import { PagosDelDiaDialog, type FuentePagos } from "@/components/pagos-del-dia-dialog"
@@ -765,15 +765,20 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
 
   // ── Descongelar una ruta desde el monitoreo ───────────────────────────────
   //
-  // Cierra la jornada vieja SIN cuadrarla, que es lo que libera la ruta para
-  // que el cobrador pueda empezar hoy. Es el mismo `descongelarJornada` del
-  // aviso de la barra superior, así que deja el mismo rastro: quién la cerró y
-  // cuándo, con `cerrada_sin_cuadre = true`.
+  // DESBLOQUEAR NO CIERRA EL DÍA: habilita al cobrador para que lo cierre él.
   //
-  // NO cuadra el día ni inventa un cierre. Ese día queda sin cierre; lo único
-  // que cambia es que deja de trabar el de hoy. Hacerlo bien —con sus
-  // números— es el botón "Hacer el cierre" del aviso, y hay que estar parado
-  // en esa ruta para usarlo. El diálogo lo dice.
+  // La jornada vieja queda ABIERTA y marcada, y el cobrador ve esa fecha en su
+  // teléfono con el botón para hacer su cierre. Al cerrarlo —con sus números,
+  // no sin cuadre— la ruta queda lista para hoy.
+  //
+  // POR QUÉ NO LA CIERRA LA SECRETARÍA. Porque el que tiene la plata contada
+  // en la mano es el cobrador. Cerrar desde el escritorio dejaba ese día sin
+  // cuadre para siempre: la ruta se liberaba, pero la jornada nunca tuvo
+  // cierre.
+  //
+  // Si el script 096 todavía no corrió, `habilitarCierreAtrasado` se cae al
+  // comportamiento viejo —cerrar sin cuadre— y lo dice en el aviso, para que
+  // nadie se quede sin poder desbloquear una ruta por un script pendiente.
   const handleDescongelar = useCallback(
     async ({ ruta, jornada }: Descongelable) => {
       if (descongelandoId !== null) return
@@ -786,7 +791,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
         return
       }
       setDescongelandoId(jornada.id)
-      const r = await descongelarJornada(jornada.id, {
+      const r = await habilitarCierreAtrasado(jornada.id, {
         id: currentUser.id,
         nombre: currentUser.nombre || "sin nombre",
       })
@@ -797,10 +802,14 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
       }
       setPorDescongelar(null)
       toast({
-        title: `Ruta ${ruta.ruta_id} desbloqueada`,
+        title:
+          r.modo === "habilitada"
+            ? `Ruta ${ruta.ruta_id}: cobrador habilitado`
+            : `Ruta ${ruta.ruta_id} desbloqueada sin cuadre`,
         description:
-          `El ${fmtFecha(jornada.fecha)} quedó cerrado sin cuadre, a tu nombre. ` +
-          "El cobrador ya puede iniciar la ruta de hoy.",
+          r.modo === "habilitada"
+            ? `Ya puede cerrar la caja del ${fmtFecha(jornada.fecha)} desde su teléfono. Al cerrarla, la ruta queda lista para hoy.`
+            : `El ${fmtFecha(jornada.fecha)} quedó cerrado sin cuadre, a tu nombre. Falta correr el script 096.`,
       })
       await fetchRutas()
     },
@@ -1433,7 +1442,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                               ) : (
                                 <Unlock className="h-3.5 w-3.5" />
                               )}
-                              <span className="text-xs">Descongelar</span>
+                              <span className="text-xs">Habilitar cierre</span>
                             </Button>
                           )}
                         </>
@@ -1975,37 +1984,36 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
         fuente={pagosDialog}
       />
 
-      {/* ── Confirmar el descongelamiento ──────────────────────────────────
-          Dice las dos cosas que pasan, no solo la buena: la ruta se libera Y
-          ese día queda sin cierre. Quien aprieta el botón tiene que poder
-          decidir con las dos a la vista. */}
+      {/* ── Confirmar que se habilita al cobrador ──────────────────────────
+          Dice exactamente qué pasa y qué NO pasa: la jornada no se cierra acá,
+          se habilita para que la cierre quien tiene la plata contada. */}
       <Dialog open={porDescongelar !== null} onOpenChange={(v) => { if (!v) setPorDescongelar(null) }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Snowflake className="h-5 w-5 text-info" />
-              Descongelar la ruta {porDescongelar?.ruta.ruta_id}
+              Habilitar el cierre — ruta {porDescongelar?.ruta.ruta_id}
             </DialogTitle>
             <DialogDescription asChild>
               <div className="space-y-3 pt-1 text-left">
                 <p className="text-sm text-foreground">
-                  La jornada del{" "}
-                  <span className="font-semibold">{fmtFecha(porDescongelar?.jornada.fecha)}</span> queda
-                  cerrada y el cobrador puede iniciar la ruta de hoy.
+                  Al cobrador le va a aparecer la jornada del{" "}
+                  <span className="font-semibold">{fmtFecha(porDescongelar?.jornada.fecha)}</span> con
+                  el botón para hacer el cierre. Cuando lo haga, la ruta queda lista para
+                  trabajar hoy.
                 </p>
-                <div className="rounded-lg border border-warning/40 bg-warning/10 p-3">
+                <div className="rounded-lg border border-info/40 bg-info/10 p-3">
                   <p className="text-[13px] font-semibold text-foreground">
-                    Ese día queda sin cierre de caja.
+                    Esto NO cierra la caja de ese día.
                   </p>
                   <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
-                    No se cuadra ni se inventan números: la jornada se marca como cerrada sin
-                    cuadre, a tu nombre. Si querés hacer el cierre de verdad, con sus totales,
-                    entrá a esa ruta y usá <span className="font-medium">Hacer el cierre</span> en
-                    el aviso de arriba.
+                    La cierra el cobrador, que es el que tiene la plata contada — y así ese día
+                    queda con sus números en vez de quedar sin cuadre para siempre. Mientras no
+                    la cierre, la ruta sigue sin poder empezar hoy.
                   </p>
                 </div>
                 <p className="text-[12px] text-muted-foreground">
-                  Queda registrado que lo hiciste vos
+                  Queda registrado que lo habilitaste vos
                   {currentUser?.nombre ? ` (${currentUser.nombre})` : ""} y cuándo.
                 </p>
               </div>
@@ -2030,7 +2038,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
               ) : (
                 <Unlock className="h-4 w-4" />
               )}
-              {descongelandoId !== null ? "Desbloqueando..." : "Sí, descongelar"}
+              {descongelandoId !== null ? "Habilitando..." : "Sí, habilitar"}
             </Button>
           </div>
         </DialogContent>

@@ -41,9 +41,12 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { getSupabaseSafe, callRpcAtomic } from "@/lib/api-helper"
+import { enviarOEncolar } from "@/lib/offline-queue"
+import { nuevaGestionId, todayColombia, ahoraColombiaISO } from "@/lib/gestion-core"
 import type { Frecuencia, TipoAmortizacion } from "@/lib/loan-schedule"
 
 interface EditSaleDialogProps {
@@ -60,11 +63,13 @@ interface EditSaleDialogProps {
     tipo_venta: string | null
     clientName?: string
   } | null
+  /** Hace falta para escribir el abono en el libro. Sin esto no se ofrece. */
+  clientId?: string | null
   /** Callback que el padre invoca para refrescar el listado tras guardar. */
   onSaved?: () => void
 }
 
-export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDialogProps) {
+export function EditSaleDialog({ open, onOpenChange, sale, onSaved, clientId }: EditSaleDialogProps) {
   const { toast } = useToast()
   const [saving, setSaving] = useState(false)
 
@@ -72,6 +77,22 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDi
   // el dialogo se abre con un loan distinto.
   const [valor, setValor] = useState("")
   const [tasaInteres, setTasaInteres] = useState("")
+
+  /**
+   * EL PAGO ADELANTADO, TAMBIÉN DESDE ACÁ.
+   *
+   * Marcarlo al crear la venta era la única forma: si el cobrador se olvidaba,
+   * había que pedirle a la secretaría que lo corrigiera desde Control de
+   * Pagos. Ahora se corrige donde se ve el error, el mismo día.
+   *
+   * `abonoActual` es lo que HAY hoy en el libro —los `abono_venta` vivos,
+   * netos de reversas—. Si el valor cambia se corrige como manda la casa: una
+   * reversa del anterior y el evento nuevo. Nada se edita ni se borra.
+   */
+  const [pagoAdelantado, setPagoAdelantado] = useState(false)
+  const [valorAbono, setValorAbono] = useState("")
+  const [abonoActual, setAbonoActual] = useState(0)
+  const [abonoIds, setAbonoIds] = useState<string[]>([])
   const [numeroCuotas, setNumeroCuotas] = useState("")
   const [frecuenciaPago, setFrecuenciaPago] = useState<Frecuencia>("daily")
   const [tipoAmortizacion, setTipoAmortizacion] = useState<TipoAmortizacion>("americano")
@@ -115,6 +136,32 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDi
             : ((data.tipo_amortizacion as TipoAmortizacion) || "americano"),
         )
         setDiaSemana(data.dia_semana ?? "")
+
+        // EL ABONO QUE YA TIENE, del libro y no de una columna.
+        //
+        // Se piden también las reversas: un abono con una reversa apuntándole
+        // ya no vale, y sin ellas se leería un abono que se anuló. Mismo
+        // criterio que `lib/extracto-cliente.ts`.
+        const { data: evs } = await supabase
+          .from("gestiones")
+          .select("id, tipo, monto, referencia_gestion_id")
+          .eq("loan_id", sale.id)
+          .eq("estado", "aplicada")
+          .in("tipo", ["abono_venta", "reversa"])
+        if (cancelled) return
+        const filas = (evs ?? []) as unknown as {
+          id: string; tipo: string; monto: number | null; referencia_gestion_id: string | null
+        }[]
+        const anulados = new Set(
+          filas.filter((g) => g.tipo === "reversa" && g.referencia_gestion_id)
+               .map((g) => g.referencia_gestion_id as string),
+        )
+        const vivos = filas.filter((g) => g.tipo === "abono_venta" && !anulados.has(g.id))
+        const total = vivos.reduce((acc, g) => acc + (Number(g.monto) || 0), 0)
+        setAbonoActual(total)
+        setAbonoIds(vivos.map((g) => g.id))
+        setPagoAdelantado(total > 0)
+        setValorAbono(total > 0 ? String(total) : "")
       } catch (e) {
         console.error("[v0] EditSaleDialog load error:", e)
       }
@@ -178,10 +225,72 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDi
         idempotency_key: crypto.randomUUID(),
       })
 
+      // ── EL PAGO ADELANTADO, DESPUÉS DEL PLAN ───────────────────────────
+      //
+      // Va al final a propósito: `editar_venta_atomica` regenera el
+      // cronograma, y el abono se reparte sobre las cuotas que queden. Al
+      // revés, el abono caería sobre un plan que está por desaparecer.
+      //
+      // NADA SE EDITA: si ya había un abono y el valor cambió, se registra una
+      // reversa por cada evento vivo y después el nuevo. Es la regla de la
+      // casa —"toda escritura de plata pasa por un evento del libro; nada se
+      // borra ni se edita: se reversa"— y es lo que deja el rastro de qué se
+      // corrigió y cuándo.
+      const abonoNuevo = pagoAdelantado ? Math.round(Number.parseFloat(valorAbono) || 0) : 0
+      const cambioElAbono = abonoNuevo !== Math.round(abonoActual)
+
+      if (cambioElAbono && clientId) {
+        for (const idViejo of abonoIds) {
+          const idRev = nuevaGestionId()
+          await enviarOEncolar({
+            tipo: "gestion",
+            id: idRev,
+            descripcion: `Corrección del abono — ${sale.clientName ?? "venta"}`,
+            payload: {
+              id: idRev,
+              tipo: "reversa",
+              loan_id: sale.id,
+              client_id: clientId,
+              referencia_gestion_id: idViejo,
+              fecha_gestion: todayColombia(),
+              fecha_hora: ahoraColombiaISO(),
+              cliente_nombre: sale.clientName ?? "",
+              observacion: "Abono de venta corregido desde Ventas del día",
+            },
+          })
+        }
+
+        if (abonoNuevo > 0) {
+          const idAbono = nuevaGestionId()
+          await enviarOEncolar({
+            tipo: "gestion",
+            id: idAbono,
+            descripcion: `Pago adelantado — ${sale.clientName ?? "venta"} ($${abonoNuevo.toLocaleString()})`,
+            payload: {
+              id: idAbono,
+              tipo: "abono_venta",
+              loan_id: sale.id,
+              client_id: clientId,
+              monto: abonoNuevo,
+              fecha_gestion: todayColombia(),
+              fecha_hora: ahoraColombiaISO(),
+              cliente_nombre: sale.clientName ?? "",
+              observacion: "Pago adelantado marcado desde Ventas del día",
+            },
+          })
+        }
+      }
+
       const saldo = Number(r.nuevo_saldo ?? 0)
       toast({
         title: "Venta actualizada",
-        description: `Plan regenerado con ${cuotasNum} cuota${cuotasNum === 1 ? "" : "s"}. Saldo: $${saldo.toLocaleString()}.`,
+        description:
+          `Plan regenerado con ${cuotasNum} cuota${cuotasNum === 1 ? "" : "s"}. Saldo: $${saldo.toLocaleString()}.` +
+          (cambioElAbono
+            ? abonoNuevo > 0
+              ? ` Pago adelantado: $${abonoNuevo.toLocaleString()}.`
+              : " Se quitó el pago adelantado."
+            : ""),
       })
       onSaved?.()
       onOpenChange(false)
@@ -312,6 +421,65 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved }: EditSaleDi
                   <SelectItem value="sabado">Sábado</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+          )}
+
+          {/* ── PAGO ADELANTADO ────────────────────────────────────────────
+              Solo si se sabe de quién es la venta: el evento del libro pide
+              `client_id`, y sin él no se puede escribir plata.
+
+              Va al final del formulario porque no toca el crédito, toca la
+              caja: es plata que ya entró. */}
+          {clientId && (
+            <div className="grid gap-1.5 border-t border-border pt-3">
+              <label
+                htmlFor="edit-adelantado"
+                className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 cursor-pointer transition-all ${
+                  pagoAdelantado
+                    ? "bg-sky-100 border-sky-400 text-sky-900"
+                    : "bg-muted/50 border-border hover:bg-muted"
+                }`}
+              >
+                <Checkbox
+                  id="edit-adelantado"
+                  checked={pagoAdelantado}
+                  onCheckedChange={(c) => {
+                    const marcado = c as boolean
+                    setPagoAdelantado(marcado)
+                    // Al marcarlo se propone la cuota, que es el caso normal
+                    // —"pagó una por adelantado"—. Se puede cambiar.
+                    if (marcado && !valorAbono) {
+                      setValorAbono(String(Math.round(sale?.valor_cuota ?? 0) || ""))
+                    }
+                  }}
+                  className="h-4 w-4"
+                />
+                <span className="text-sm font-medium">Pago adelantado</span>
+              </label>
+
+              {pagoAdelantado && (
+                <div className="grid gap-1.5">
+                  <Label htmlFor="edit-abono" className="text-xs">Valor del pago adelantado</Label>
+                  <Input
+                    id="edit-abono"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={valorAbono}
+                    onChange={(e) => setValorAbono(e.target.value)}
+                    className="h-9"
+                    placeholder="Ej: 20000"
+                  />
+                </div>
+              )}
+
+              {abonoActual > 0 && (
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  Esta venta ya tiene ${Math.round(abonoActual).toLocaleString()} de abono. Si lo
+                  cambias, el anterior queda anulado con su reversa y el nuevo entra como
+                  movimiento aparte — nada se borra del historial.
+                </p>
+              )}
             </div>
           )}
         </div>

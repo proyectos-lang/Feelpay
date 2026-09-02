@@ -665,49 +665,35 @@ ${filasPdf}
             </Button>
             <div>
               <h1 className="text-xl font-bold tracking-tight leading-tight">Cierre de Caja</h1>
-              <p className="text-[11px] text-brand-foreground/80">
-                {rutaNombre ? `Ruta ${rutaId} — ${rutaNombre}` : `Ruta ${rutaId}`}
-              </p>
+              {/* SOLO EL NÚMERO DE LA RUTA.
+                  Decía "Ruta 1 — Colombia", y el país no distingue nada: todas
+                  las rutas de una pantalla son del mismo. Lo que sí hacía era
+                  empujar el título a dos renglones en el teléfono. */}
+              <p className="text-[11px] text-brand-foreground/80">Ruta {rutaId}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {/* EL CANDADO DICE EL ESTADO, no solo la palabra.
-                Abierto y verde mientras la jornada está en curso; cerrado y
-                rojo cuando ya se cuadró. Sobre el degradado del encabezado el
-                color solo no alcanzaba: verde y rojo en una pastilla blanca
-                chiquita se parecen bastante de reojo y bajo el sol. */}
-            <Badge
-              className={`gap-1 border-0 bg-white text-xs ${estaCerrada ? "text-destructive" : "text-success"}`}
-            >
-              {estaCerrada ? (
-                <LockKeyhole className="h-3.5 w-3.5" />
-              ) : (
-                <LockKeyholeOpen className="h-3.5 w-3.5" />
-              )}
-              {estaCerrada ? "Cerrada" : "Abierta"}
-            </Badge>
-            {/* Pastilla blanca sólida y con texto, no un icono fantasma: sobre
-                el degradado del encabezado un ghost se confundía con el fondo
-                y el usuario no sabía que ahí había un botón. */}
-            <Button
-              size="sm"
-              className="h-8 gap-1.5 rounded-full bg-white px-3 text-brand hover:bg-white/90 shadow-sm font-semibold"
-              title="Compartir el cierre como imagen"
-              onClick={() => setCompartirAbierto(true)}
-            >
-              <Share2 className="h-4 w-4" />
-              <span className="text-xs">Compartir</span>
-            </Button>
-            <Button
-              size="sm"
-              className="h-8 gap-1.5 rounded-full bg-white px-3 text-brand hover:bg-white/90 shadow-sm font-semibold"
-              title="Descargar el PDF del cierre"
-              onClick={handlePDF}
-            >
-              <FileDown className="h-4 w-4" />
-              <span className="text-xs">PDF</span>
-            </Button>
-          </div>
+          {/* LA PASTILLA DEL ESTADO, SOLA EN LA ESQUINA.
+              Compartir y PDF se fueron de acá: los mismos dos botones están al
+              final del reporte, que es donde se usan —terminaste de leer, lo
+              mandás—. Repetirlos arriba llenaba la esquina de tres cosas y
+              dejaba la que importa, el estado de la caja, apretada entre
+              medio.
+
+              EL CANDADO DICE EL ESTADO, no solo la palabra: abierto y verde
+              mientras la jornada está en curso; cerrado y rojo cuando ya se
+              cuadró. Sobre el degradado del encabezado el color solo no
+              alcanza — verde y rojo en una pastilla blanca chiquita se parecen
+              bastante de reojo y bajo el sol. */}
+          <Badge
+            className={`gap-1 border-0 bg-white text-xs ${estaCerrada ? "text-destructive" : "text-success"}`}
+          >
+            {estaCerrada ? (
+              <LockKeyhole className="h-3.5 w-3.5" />
+            ) : (
+              <LockKeyholeOpen className="h-3.5 w-3.5" />
+            )}
+            {estaCerrada ? "Cerrada" : "Abierta"}
+          </Badge>
         </div>
         <div className="flex items-center gap-4 text-sm text-brand-foreground/90 pl-10">
           <div className="flex items-center gap-1.5">

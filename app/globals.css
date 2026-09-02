@@ -331,6 +331,60 @@ input[type="number"] {
     color: oklch(0.65 0.04 245);
   }
 
+  /* ── LAS CASILLAS DEL FORMULARIO DE PAGO ─────────────────────────────────
+     La regla de arriba pinta TODOS los inputs con `!important`, y la de
+     `input[readonly]` los pinta de `--muted`. Eso es a propósito —que todos
+     los campos se vean igual— pero deja sin efecto cualquier clase de
+     Tailwind, así que las dos excepciones del módulo de pagos tienen que
+     vivir acá, que es donde se decide el color de un input.
+
+     Por qué la excepción: en la calle, con el teléfono al sol, `--input`
+     (L 98) contra el blanco de la tarjeta es el mismo color. No se veía dónde
+     empezaba la casilla ni qué decía adentro. Ver `CASILLA_INFO` y
+     `CASILLA_ESCRIBIBLE` en components/views/register-payment.tsx.
+
+     OJO CON LA ESPECIFICIDAD. La regla de arriba es
+     `input:not([type="checkbox"]):not([type="radio"])`, que pesa (0,2,1)
+     porque `:not()` cuenta lo que lleva adentro. Un `input.casilla-x` pesa
+     (0,1,1) y PIERDE, aunque los dos lleven `!important` y este vaya después.
+     Por eso las tres repiten los mismos `:not()`: para empatar en peso y
+     ganar por orden. Sin ellos la clase se aplica y no se ve nada. */
+
+  input.casilla-info:not([type="checkbox"]):not([type="radio"]),
+  input.casilla-info[readonly] {
+    background-color: var(--info) !important;
+    color: var(--info-foreground) !important;
+    border: 1px solid var(--info) !important;
+    opacity: 1 !important;
+    cursor: default;
+  }
+
+  /* La que SE ESCRIBE: más oscura todavía, para que el número que se teclea
+     resalte contra todo lo demás de la pantalla. */
+  input.casilla-escribible:not([type="checkbox"]):not([type="radio"]),
+  input.casilla-escribible:not([type="checkbox"]):not([type="radio"]):focus,
+  input.casilla-escribible:not([type="checkbox"]):not([type="radio"]):focus-visible {
+    background-color: var(--brand-primary) !important;
+    color: var(--brand-foreground) !important;
+    border: 1px solid var(--brand-primary) !important;
+    caret-color: var(--brand-foreground);
+  }
+
+  input.casilla-escribible::placeholder {
+    color: color-mix(in oklch, var(--brand-foreground) 60%, transparent);
+  }
+
+  /* El saldo que el cliente debe: ámbar, para que no se confunda con los dos
+     azules de al lado. Va acá por lo mismo que las otras dos. */
+  input.casilla-alerta:not([type="checkbox"]):not([type="radio"]),
+  input.casilla-alerta[readonly] {
+    background-color: var(--warning) !important;
+    color: var(--warning-foreground) !important;
+    border: 1px solid var(--warning) !important;
+    opacity: 1 !important;
+    cursor: default;
+  }
+
   /* SelectContent, DropdownContent, PopoverContent · sin sombra */
   [data-radix-popper-content-wrapper],
   [data-radix-select-viewport],

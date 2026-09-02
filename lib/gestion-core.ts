@@ -487,3 +487,38 @@ export function apodoSiAporta(
 export function fmtMoneda(valor: number | null | undefined): string {
   return `$${Math.round(Number(valor) || 0).toLocaleString("es-CO")}`
 }
+
+// ── Cuotas con decimal ─────────────────────────────────────────────────────
+
+/**
+ * CUÁNTAS CUOTAS LLEVA PAGADAS, CON UN DECIMAL.
+ *
+ * `v_loan_financiero.cuotas_cubiertas` es un ENTERO por construcción — la
+ * vista hace `FLOOR(pagado_neto / valor_cuota)` desde el script 084 —, así que
+ * un cliente que lleva cinco cuotas y media aparecía como 5, igual que uno que
+ * acababa de pagar la quinta. Media cuota de diferencia, invisible.
+ *
+ * Acá se hace la misma división SIN el piso: 5,5 se muestra como "5.5". Se
+ * calcula sobre la misma plata (`total_pagado`) y la misma cuota de referencia
+ * que usa la vista, así que la parte entera coincide siempre con el
+ * `cuotas_cubiertas` de la base — nunca puede decir 6 donde la vista dice 5.
+ *
+ * SE TOPA EN EL TOTAL, igual que la vista (`LEAST(cob.totales, ...)`), para
+ * que un crédito con extras no diga 27.3/25.
+ *
+ * EL SEPARADOR ES UN PUNTO, no la coma de es-CO: es el formato que se pidió
+ * ("5.5", "1.80"). Las cifras de plata siguen con punto de miles —$19.500— y
+ * son de otro orden de magnitud, así que no se confunden.
+ */
+export function cuotasConDecimal(
+  pagado: number | null | undefined,
+  valorCuota: number | null | undefined,
+  totales?: number | null,
+): string {
+  const cuota = Number(valorCuota) || 0
+  if (cuota <= 0) return "0.0"
+  const crudo = (Number(pagado) || 0) / cuota
+  const tope = Number(totales)
+  const n = Number.isFinite(tope) && tope > 0 ? Math.min(crudo, tope) : crudo
+  return (Math.max(0, n)).toFixed(1)
+}
