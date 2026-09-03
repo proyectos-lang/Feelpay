@@ -3804,47 +3804,35 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             </div>
           </CardHeader>
 
-          {/* ── Contenedor deslizable ──────────────────────────────────────
-               Los 3 paneles van en fila (100 % de ancho cada uno) y el
-               `translateX` los corre según el índice activo.
+          {/* ── Los cuatro paneles ─────────────────────────────────────────
+               SOLO SE MONTA EL QUE SE ESTÁ VIENDO. Los otros llevan `hidden`.
 
-               OJO: acá decía que en móvil se podía deslizar el dedo. NO se
-               puede — no hay ni un `onTouchStart` en el archivo, nunca se
-               implementó. Se cambia de panel con la barra de pestañas o con
-               los puntos de abajo, y con el encabezado plegado quedan solo los
-               puntos.
-               Se usa `will-change: transform` para que el GPU compuesto
-               no repinte el contenido de las otras pestañas durante el
-               deslizamiento. ─────────────────────────────────────────── */}
+               ANTES ERA UN CARRUSEL: los cuatro en fila y un `translateX` que
+               los corría. Eso obligaba a que los cuatro ocuparan sitio siempre,
+               y de ahí salía el vacío que se reportó — con 2 pendientes y 22
+               gestionados, el alto lo ponía Gestionados: el panel visible medía
+               185px, el flex 2.160, y se podían bajar 1.729px de blanco después
+               del último cliente.
+
+               Y LA CORRECCIÓN A MEDIAS FUE PEOR: al esconder los otros tres,
+               los que quedaban dejaban de ocupar ancho, pero el `translateX`
+               seguía corriendo el 100% por cada pestaña anterior. Gestionados
+               —índice 2— se iba a -200% de un contenedor que ya solo medía un
+               panel: quedaba en x=-775 con sus 22 tarjetas dentro, fuera de la
+               pantalla. La pestaña decía "22" y no se veía nada.
+
+               Sin `translateX` no hay a dónde correrse: el único panel montado
+               empieza en x=0. Se pierde la animación de deslizar, que de todas
+               formas nunca se pudo hacer con el dedo —no hay un solo
+               `onTouchStart` en el archivo— y el cambio de pestaña siempre fue
+               por la barra de arriba o por los puntos de abajo.
+
+               `hidden` y no `invisible`: lo invisible sigue ocupando sitio, que
+               es justo lo que hay que quitar. Los ocultos llevan `aria-hidden`
+               para que un lector de pantalla no anuncie cuatro listas donde hay
+               una. ─────────────────────────────────────────────────────── */}
           <div className="overflow-hidden">
-          <div
-            /* EL CARRUSEL MIDE LO QUE MIDE EL PANEL QUE SE ESTÁ VIENDO.
-               NO el más alto de los cuatro, que es de donde salía el vacío que
-               se reportó: "con pocos clientes se puede seguir bajando".
-
-               Son dos cosas, y hacían falta las dos:
-
-               · `items-start` — un flex alinea sus hijos con `stretch`, así
-                 que los cuatro paneles quedaban del alto del mayor aunque
-                 estuvieran vacíos.
-
-               · esconder los que no se ven — aun con `items-start`, el flex en
-                 sí mide lo del hijo más alto, y ese alto es el que hereda el
-                 contenedor y el que produce el scroll. Con `hidden` el panel
-                 oculto sale del flujo y deja de contar.
-
-               Medido en la ruta 151 el 03/09/2026 (2 pendientes y 22
-               gestionados, teléfono de 850px): el panel visible medía 185px,
-               el de Gestionados 2.160, y el cobrador podía bajar 1.729px de
-               blanco después de sus dos clientes.
-
-               `hidden` y no `invisible`: lo invisible sigue ocupando sitio,
-               que es justo lo que hay que quitar. La animación de deslizar se
-               conserva porque el panel destino se muestra en el mismo render
-               en que arranca el `translateX`. */
-            className="flex items-start transition-transform duration-300 ease-in-out will-change-transform"
-            style={{ transform: `translateX(${-TAB_ORDER.indexOf(activeTab) * 100}%)` }}
-          >
+          <div className="flex items-start">
 
           {/* ── Panel 0: Pendientes ────────────────────────────────────── */}
           <div
