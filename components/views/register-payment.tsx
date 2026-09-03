@@ -442,6 +442,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const [editMonto, setEditMonto] = useState("")
   /** A que se quiere convertir la gestion abierta en el editor. */
   const [editTipo, setEditTipo] = useState<"pago" | "no_pago">("pago")
+  /**
+   * LA FORMA DE PAGO, TAMBIÉN CORREGIBLE.
+   *
+   * Se equivoca igual de fácil que el monto —el `Select` arranca en Efectivo y
+   * quien cobró por transferencia se lo salta— y hasta ahora la corrección
+   * conservaba el método viejo sin forma de tocarlo. El desglose
+   * Efectivo/Transferencia del Resumen sale de ahí (script 059), así que un
+   * método equivocado descuadra ese cuadro sin que nadie pueda arreglarlo.
+   */
+  const [editMetodo, setEditMetodo] = useState<"efectivo" | "transferencia">("efectivo")
   const [savingManaged, setSavingManaged] = useState(false)
   // Gestión que se está por anular. Se pide confirmación porque deshace un
   // movimiento de plata y devuelve el cliente a la lista de cobro.
@@ -968,6 +978,22 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
    * que guardaba la hora ya escrita— se van al final en vez de mezclarse en un
    * sitio arbitrario.
    */
+  /**
+   * CUÁNTAS CUOTAS LE QUEDAN AL CLIENTE QUE SE ESTÁ COBRANDO.
+   *
+   * Es el tope del selector "Nro Cuotas". `cuotasPagadas` viene de la vista ya
+   * con el piso puesto (`FLOOR(pagado / valor_cuota)`, script 084), así que la
+   * resta contra el total da cuotas ENTERAS que todavía se deben — que es
+   * justo lo que se puede elegir.
+   *
+   * Nunca baja de 1: con el saldo en cero el cliente ya no sale en la ruta, y
+   * un selector vacío sería peor que uno con una sola opción.
+   */
+  const cuotasQueLeQuedan = Math.max(
+    1,
+    (selectedClient?.cuotasTotales ?? 0) - (selectedClient?.cuotasPagadas ?? 0),
+  )
+
   const sortedManaged = [...managedToday, ...aplazadosComoGestion].sort((a, b) => {
     const ta = Date.parse(a.gestionInstante)
     const tb = Date.parse(b.gestionInstante)
@@ -2776,9 +2802,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
     // Sin cambios no se escribe nada: dos eventos de más en el libro por un
     // "Guardar" sin querer ensucian el historial y no corrigen nada.
+    // Cambiar SOLO la forma de pago cuenta como cambio: es lo que decide de
+    // qué lado cae la plata en el desglose Efectivo/Transferencia.
+    const metodoViejo = m.metodoPago === "transferencia" ? "transferencia" : "efectivo"
     const igual =
       destino === m.gestionTipo &&
-      (destino === "no_pago" || newMonto === (m.valorAbonado ?? 0))
+      (destino === "no_pago" ||
+        (newMonto === (m.valorAbonado ?? 0) && editMetodo === metodoViejo))
     if (igual) { setEditingManaged(null); return }
 
     setSavingManaged(true)
@@ -2786,9 +2816,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       const original = await resolveGestionHoy(m)
       if (!original) throw new Error("No se encontró la gestión de hoy de este cliente")
 
+      const cambioSoloElMetodo =
+        destino === m.gestionTipo &&
+        destino === "pago" &&
+        newMonto === (m.valorAbonado ?? 0) &&
+        editMetodo !== metodoViejo
       const queCambio =
         destino === m.gestionTipo
-          ? "Monto corregido desde el módulo de pagos"
+          ? cambioSoloElMetodo
+            ? `Forma de pago corregida a ${editMetodo} desde el módulo de pagos`
+            : "Monto corregido desde el módulo de pagos"
           : destino === "pago"
             ? "Corregido de no pago a pago desde el módulo de pagos"
             : "Corregido de pago a no pago desde el módulo de pagos"
@@ -2831,7 +2868,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           fecha_gestion: todayColombia(),
           fecha_hora: ahoraColombiaISO(),
           cuota_objetivo: original.cuota_objetivo,
-          metodo_pago: destino === "pago" ? original.metodo_pago : null,
+          // El método sale del selector, no del evento original: es lo que
+          // se está corrigiendo. Un no pago no tiene forma de pago.
+          metodo_pago: destino === "pago" ? editMetodo : null,
           // LAS COORDENADAS DE LA VISITA QUE SE CORRIGE.
           //
           // Sin esto la corrección no entra. El servidor trata un `pago` o un
@@ -3918,7 +3957,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                         // un borde de 1px sobre franjeado al 40% es blanco
                         // contra blanco. Borde grueso + franja de color al
                         // inicio, verde si pagó y roja si no.
-                        className={`rounded-lg border-2 border-border border-l-4 px-3 py-2 ${
+                        /* MÁS APRETADA, para que quepan más clientes.
+                           Se fue el renglón de Cuota/Préstamo/Saldo entero y
+                           los botones subieron al costado, así que la tarjeta
+                           pasó de tres líneas a dos y el padding de 8px ya no
+                           hace falta. */
+                        className={`rounded-lg border-2 border-border border-l-4 px-2.5 py-1.5 ${
                           m.gestionTipo === "pago"
                             ? "border-l-green-500"
                             : m.gestionTipo === "aplazado"
@@ -3926,6 +3970,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               : "border-l-red-500"
                         } ${index % 2 === 0 ? "bg-card" : "bg-muted"}`}
                       >
+                      {/* EL TEXTO A LA IZQUIERDA, LOS BOTONES AL COSTADO.
+                          Los botones estaban en un tercer renglón propio; acá
+                          se ponen al lado y aprovechan el alto que ya ocupan
+                          el nombre y la insignia. Es la misma forma que tiene
+                          la fila de Pendientes. */}
+                      <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1">
                         {/* Línea 1: SOLO el nombre, con todo el ancho.
                             Compartía renglón con la insignia del monto y con la
                             hora, que juntas se llevan unos 180px de los 336 que
@@ -3979,32 +4030,58 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               <XCircle className="h-3.5 w-3.5" />No pago
                             </span>
                           )}
-                          {/* TRANSFERENCIA. Va pegada a la insignia del pago
-                              porque es parte de la misma frase: cuánto y cómo.
-                              Solo sale cuando NO fue efectivo — el efectivo es
-                              lo normal, y marcarlo también dejaría la lista
-                              llena de etiquetas que no distinguen nada. */}
+                          {/* TRANSFERENCIA: SOLO EL ICONO, y más grande.
+                              La palabra se llevaba unos 90px de un renglón que
+                              ya lleva la insignia del pago y la hora, y no
+                              decía nada que el icono no diga. Ahora es una
+                              pastilla redonda con las flechas a 18px: se ve de
+                              lejos y deja el ancho para lo que sí cambia entre
+                              filas.
+
+                              El nombre va en `title` —que es donde se consulta
+                              cuando hace falta— y en `aria-label`, para que un
+                              lector de pantalla no lea una pastilla muda. */}
                           {m.metodoPago && m.metodoPago !== "efectivo" && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-info-light px-2 py-1 text-[11px] font-bold text-info shrink-0">
-                              <ArrowLeftRight className="h-3.5 w-3.5" />
-                              {m.metodoPago === "mixto" ? "Mixto" : "Transferencia"}
+                            <span
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-info-light text-info shrink-0"
+                              title={m.metodoPago === "mixto" ? "Pago mixto" : "Transferencia"}
+                              aria-label={m.metodoPago === "mixto" ? "Pago mixto" : "Transferencia"}
+                            >
+                              <ArrowLeftRight className="h-[18px] w-[18px]" strokeWidth={2.5} />
                             </span>
                           )}
                           <span className="text-[11px] text-muted-foreground shrink-0">{m.gestionHora}</span>
                         </div>
-                        {/* Línea 3: los datos a la izquierda, las acciones a la
-                            derecha. Los tres botones estaban arriba, apretando
-                            el nombre contra la insignia y midiendo 24px — por
-                            debajo del mínimo de un dedo (44px). Acá abajo hay
-                            sitio y quedan en 40px, con borde para que se vean
-                            sin tener que tocarlos a ver si están. */}
-                        <div className="flex items-end justify-between gap-2 mt-1.5">
-                          <div className="flex flex-wrap gap-x-3 gap-y-0.5 min-w-0">
-                            <span className="text-[11px] text-muted-foreground">Cuota: <span className="font-semibold text-foreground">${m.valorCuota.toLocaleString()}</span></span>
-                            <span className="text-[11px] text-muted-foreground">Préstamo: <span className="font-semibold text-info">${m.valorPrestamo.toLocaleString()}</span></span>
-                            <span className="text-[11px] text-muted-foreground">Saldo: <span className="font-semibold text-warning">${Math.round(m.saldo).toLocaleString()}</span></span>
-                          </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
+                        </div>{/* fin del texto */}
+
+                        {/* SE FUERON CUOTA, PRÉSTAMO Y SALDO.
+                            Eran tres cifras que no cambian con la gestión —son
+                            del crédito, no del día— y ocupaban un renglón
+                            entero de cada tarjeta. Quien las necesita las tiene
+                            todas juntas en el extracto, a un toque del ojo de
+                            al lado. */}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                            {/* EL OJO, el mismo extracto del módulo de pagos.
+                                Mismo icono, mismo diálogo, misma información:
+                                dos fichas distintas del mismo cliente según
+                                por qué pestaña se entre serían dos verdades. */}
+                            <Button
+                              size="icon"
+                              variant="outline"
+                              className="h-9 w-9"
+                              onClick={() => setExtractoClient(m)}
+                              title="Ver el extracto del cliente"
+                              aria-label="Ver el extracto del cliente"
+                            >
+                              <Eye className="h-[18px] w-[18px]" />
+                            </Button>
+
+                            {/* EL LÁPIZ ENCIMA DE LOS TRES PUNTOS.
+                                Apilados ocupan una columna de 36px en vez de
+                                dos, y ese ancho se lo lleva el nombre del
+                                cliente. Es la misma forma que tiene la fila de
+                                Pendientes con el ojo y los tres puntos. */}
+                            <div className="flex flex-col gap-0.5">
                             {/* AL APLAZADO NO SE LE CORRIGE NADA: se le cobra.
                                 No hay gestión detrás suyo —ni pago ni no pago—
                                 así que un lápiz que abre "corregir esta
@@ -4034,10 +4111,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                   variant="outline"
                                   title="Corregir esta gestión"
                                   aria-label="Corregir esta gestión"
-                                  className="h-10 w-10 border-info/40 text-info hover:text-info hover:bg-info-light"
+                                  className="h-9 w-9 border-info/40 text-info hover:text-info hover:bg-info-light"
                                   disabled={savingManaged}
                                 >
-                                  <Pencil className="h-5 w-5" />
+                                  <Pencil className="h-[18px] w-[18px]" />
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="w-52">
@@ -4054,6 +4131,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                         ? (m.valorAbonado ?? 0).toString()
                                         : (m.valorCuota ?? 0).toString(),
                                     )
+                                    // El método que ya tenía. 'mixto' no se
+                                    // ofrece en este selector —lo arma el
+                                    // formulario de cobro, no la corrección—
+                                    // así que cae a efectivo.
+                                    setEditMetodo(
+                                      m.metodoPago === "transferencia" ? "transferencia" : "efectivo",
+                                    )
                                   }}
                                 >
                                   <span className="mr-2 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-600">
@@ -4068,6 +4152,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                     setEditingManaged(m)
                                     setEditTipo("no_pago")
                                     setEditMonto((m.valorCuota ?? 0).toString())
+                                    setEditMetodo(
+                                      m.metodoPago === "transferencia" ? "transferencia" : "efectivo",
+                                    )
                                   }}
                                 >
                                   <span className="mr-2 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-red-600">
@@ -4104,24 +4191,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               </>
                             )}
 
-                            {/* EL OJO, el mismo extracto del módulo de pagos.
-                                Mismo icono, mismo diálogo, misma información:
-                                dos fichas distintas del mismo cliente según
-                                por qué pestaña se entre serían dos verdades. */}
-                            <Button
-                              size="icon"
-                              variant="outline"
-                              className="h-10 w-10"
-                              onClick={() => setExtractoClient(m)}
-                              title="Ver el extracto del cliente"
-                              aria-label="Ver el extracto del cliente"
-                            >
-                              <Eye className="h-5 w-5" />
-                            </Button>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
-                                <Button size="icon" variant="outline" className="h-10 w-10" aria-label="Más opciones">
-                                  <MoreVertical className="h-5 w-5" />
+                                <Button size="icon" variant="outline" className="h-9 w-9" aria-label="Más opciones">
+                                  <MoreVertical className="h-[18px] w-[18px]" />
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="w-48">
@@ -4159,8 +4232,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 )}
                               </DropdownMenuContent>
                             </DropdownMenu>
-                          </div>
-                        </div>
+                            </div>{/* fin de la columna lápiz + tres puntos */}
+                          </div>{/* fin de los botones */}
+                        </div>{/* fin de la fila texto + botones */}
                       </div>
                     ))}
                   </div>
@@ -4291,7 +4365,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             {/* Tercera fila: Numero de Cuotas y Metodo de Pago */}
             <div className="grid gap-2 md:gap-3 grid-cols-2">
               <div className="space-y-1 md:space-y-1.5">
-                <Label htmlFor="numCuotas" className="text-xs font-bold md:text-sm">Nro Cuotas</Label>
+                <Label htmlFor="numCuotas" className="text-xs font-bold md:text-sm">
+                  Nro Cuotas
+                  {/* CUÁNTAS LE QUEDAN, dicho al lado del selector: sin esto,
+                      que la lista llegue hasta 7 y no hasta 10 se lee como un
+                      error de la app. */}
+                  <span className="ml-1 font-normal text-muted-foreground">
+                    (le quedan {cuotasQueLeQuedan})
+                  </span>
+                </Label>
                 <Select
                   value={numCuotas.toString()}
                   onValueChange={(value) => {
@@ -4307,7 +4389,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
+                    {/* SOLO LO QUE DEBE. La lista era 1..10 fija, así que a un
+                        cliente al que le quedaban tres cuotas se le ofrecían
+                        diez: elegir 5 armaba un cobro por más del saldo, y lo
+                        único que lo frenaba era el aviso de "monto excede el
+                        saldo" —después de haberlo elegido—. */}
+                    {Array.from({ length: cuotasQueLeQuedan }, (_, i) => i + 1).map((num) => (
                       <SelectItem key={num} value={num.toString()} className="text-xs font-bold md:text-base">{num}</SelectItem>
                     ))}
                   </SelectContent>
@@ -4949,7 +5036,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 <thead className="sticky top-0 bg-muted">
                   <tr className="text-[10px] md:text-xs text-muted-foreground">
                     <th className="w-[74px] px-2 py-1.5 text-left font-semibold">Fecha</th>
-                    <th className="px-1 py-1.5 text-left font-semibold">Cuota</th>
+                    {/* LA CUOTA VA CENTRADA, no pegada a la fecha.
+                        Alineada a la izquierda, el número quedaba a un par de
+                        píxeles del último dígito del año y las dos columnas se
+                        leían como un solo dato. Centrada respira, y además los
+                        números quedan alineados entre sí de arriba abajo. */}
+                    <th className="px-1 py-1.5 text-center font-semibold">Cuota</th>
                     <th className="w-[70px] px-1 py-1.5 text-right font-semibold">Pagado</th>
                     {/* SALDO, no "Valor". La columna mostraba el valor de la
                         CUOTA: el mismo número en todos los renglones, que no
@@ -4969,7 +5061,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                         <td className="px-2 py-1.5 text-[10px] md:text-xs tabular-nums whitespace-nowrap">
                           {fechaCorta(m.fecha)}
                         </td>
-                        <td className={`px-1 py-1.5 text-[10px] md:text-xs truncate ${
+                        <td className={`px-1 py-1.5 text-center text-[10px] md:text-xs truncate ${
                           esNoPago ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
                         }`}>
                           {m.numeroCuota !== null
@@ -5051,6 +5143,37 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 className="h-9 text-sm"
                 autoFocus
               />
+
+              {/* LA FORMA DE PAGO. Dos botones y no un desplegable: son dos
+                  opciones y se resuelve de un toque, sin abrir nada. Es lo
+                  mismo que hacen Pago / No pago de arriba. */}
+              <label className="block pt-1 text-xs md:text-sm text-muted-foreground">Forma de pago</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditMetodo("efectivo")}
+                  className={`flex items-center justify-center gap-1.5 rounded-lg border-2 px-2 py-2 text-xs font-bold transition-colors ${
+                    editMetodo === "efectivo"
+                      ? "border-green-500 bg-green-100 text-green-700"
+                      : "border-border bg-card text-muted-foreground"
+                  }`}
+                >
+                  <DollarSign className="h-4 w-4" />
+                  Efectivo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditMetodo("transferencia")}
+                  className={`flex items-center justify-center gap-1.5 rounded-lg border-2 px-2 py-2 text-xs font-bold transition-colors ${
+                    editMetodo === "transferencia"
+                      ? "border-info bg-info-light text-info"
+                      : "border-border bg-card text-muted-foreground"
+                  }`}
+                >
+                  <ArrowLeftRight className="h-4 w-4" />
+                  Transferencia
+                </button>
+              </div>
             </div>
           ) : (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-[11px] leading-snug text-red-700">
