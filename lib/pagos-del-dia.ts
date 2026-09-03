@@ -290,6 +290,18 @@ export async function getPagosDelDia(
 export async function getCreditosComoFilas(
   supabase: SupabaseClient,
   loanIds: string[],
+  /**
+   * EL DÍA DEL QUE SE HABLA, "YYYY-MM-DD".
+   *
+   * Con fecha, `pago` y `cuotasPagas` son lo de ESE día: cuánto entró y
+   * cuántas cuotas cubrió. Sin fecha, lo acumulado del crédito entero.
+   *
+   * La distinción importa porque de acá cuelgan dos ojitos distintos. El de
+   * "Cuotas Clientes" pregunta por HOY —"quiénes pagaron de 1 a 3 cuotas"— y
+   * mostrarle el acumulado contestaba otra cosa: una columna que decía "6 de
+   * 30" cuando lo que se buscaba era "pagó 2".
+   */
+  fecha?: string,
 ): Promise<PagoDelDiaRow[]> {
   const ids = Array.from(new Set(loanIds.filter(Boolean)))
   if (ids.length === 0) return []
@@ -299,7 +311,7 @@ export async function getCreditosComoFilas(
     // PostgREST, y revienta en silencio. Mismo criterio que detalle-clientes.
     for (let i = 0; i < ids.length; i += 150) {
       const tanda = ids.slice(i, i + 150)
-      const [prestamos, financiero] = await Promise.all([
+      const [prestamos, financiero, delDia] = await Promise.all([
         supabase
           .from("loans")
           .select("id, client_id, valor_cuota, clients:clients(nombre_completo, apodo)")
@@ -308,27 +320,68 @@ export async function getCreditosComoFilas(
           .from("v_loan_financiero")
           .select("loan_id, saldo, total_pagado, cuotas_cubiertas, cuotas_totales")
           .in("loan_id", tanda),
+        // LA PLATA DE ESE DÍA, del libro. Mismo criterio del script 060 y del
+        // cuadro que abre este ojito: suman pago, cancelación y abono de
+        // venta; resta la reversa; las homologaciones quedan fuera.
+        fecha
+          ? supabase
+              .from("gestiones")
+              .select("loan_id, tipo, monto, metodo_pago")
+              .in("loan_id", tanda)
+              .eq("fecha_gestion", fecha)
+              .eq("estado", "aplicada")
+              .neq("origen", "homologacion")
+              .in("tipo", ["pago", "cancelacion", "abono_venta", "reversa"])
+          : Promise.resolve({ data: [] as Record<string, unknown>[] }),
       ])
       const fin = new Map(
         ((financiero.data ?? []) as Record<string, unknown>[]).map((f) => [String(f.loan_id), f]),
       )
+
+      // Se arman los MISMOS dos baldes que usa la lista del día, para que
+      // `clasificar` diga Efectivo / Transferencia / Mixto con el criterio de
+      // siempre en vez de una regla nueva que se separe de aquella.
+      const netoDelDia = new Map<string, number>()
+      const baldes = new Map<string, { efectivo: number; transferencia: number }>()
+      for (const g of (delDia.data ?? []) as Record<string, any>[]) {
+        const id = String(g.loan_id)
+        const signo = g.tipo === "reversa" ? -1 : 1
+        const monto = signo * (Number(g.monto) || 0)
+        netoDelDia.set(id, (netoDelDia.get(id) ?? 0) + monto)
+        const b = baldes.get(id) ?? { efectivo: 0, transferencia: 0 }
+        // NULL cuenta como efectivo, igual que en el script 059.
+        if ((g.metodo_pago ?? "efectivo").toLowerCase() === "transferencia") b.transferencia += monto
+        else b.efectivo += monto
+        baldes.set(id, b)
+      }
+
       for (const l of (prestamos.data ?? []) as Record<string, any>[]) {
         const f = fin.get(String(l.id)) ?? {}
         const saldo = Number(f.saldo) || 0
+        const cuota = Number(l.valor_cuota) || 0
+        const pagoDelDia = netoDelDia.get(String(l.id)) ?? 0
         filas.push({
           loanId: String(l.id),
           clientId: String(l.client_id ?? ""),
           nombre: l.clients?.nombre_completo ?? "Cliente",
           apodo: l.clients?.apodo ?? null,
-          pago: Number(f.total_pagado) || 0,
-          valorCuota: Number(l.valor_cuota) || 0,
-          cuotasPagas: Number(f.cuotas_cubiertas) || 0,
+          pago: fecha ? pagoDelDia : Number(f.total_pagado) || 0,
+          valorCuota: cuota,
+          // CUÁNTAS CUOTAS PAGÓ ESE DÍA: la plata del día sobre el valor de
+          // su cuota. Es la misma división con la que el informe repartió a
+          // los clientes en las bandas de 1-3 y más de 3, así que la lista no
+          // puede contradecir al contador que la abrió.
+          cuotasPagas: fecha
+            ? cuota > 0
+              ? pagoDelDia / cuota
+              : 0
+            : Number(f.cuotas_cubiertas) || 0,
           cuotasTotales: Number(f.cuotas_totales) || 0,
           movimiento: saldo <= 0 ? "Cancelada" : "Abono",
-          // La forma de pago es de UN día. Acá `pago` es lo acumulado del
-          // crédito entero, que puede haber entrado de las dos maneras a lo
-          // largo de meses: no hay una respuesta que dar.
-          formaPago: null,
+          // Sin fecha, `pago` es lo acumulado del crédito entero, que pudo
+          // entrar de las dos maneras a lo largo de meses: no hay una
+          // respuesta que dar. Con fecha sí, y es la de ese día.
+          formaPago: fecha ? clasificar(baldes.get(String(l.id))) : null,
           saldo,
         })
       }

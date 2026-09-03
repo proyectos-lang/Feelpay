@@ -50,7 +50,20 @@ export type FuentePagos =
       /** Encabezado propio. Sin esto dice "Pagos del día". */
       titulo?: string
     }
-  | { tipo: "creditos"; loanIds: string[]; titulo: string }
+  | {
+      tipo: "creditos"
+      loanIds: string[]
+      titulo: string
+      /**
+       * EL DÍA DEL QUE SE HABLA, "YYYY-MM-DD".
+       *
+       * Con fecha, la tabla muestra lo de ESE día: cuánto pagó y cuántas
+       * cuotas cubrió. Sin ella, lo acumulado del crédito entero.
+       *
+       * Lo manda el ojito de "Cuotas Clientes", que pregunta por hoy.
+       */
+      fecha?: string
+    }
 
 interface Props {
   open: boolean
@@ -85,7 +98,15 @@ export function PagosDelDiaDialog({ open, onOpenChange, fuente }: Props) {
   const [historial, setHistorial] = useState<HistorialCredito | null>(null)
   const [cargandoHistorial, setCargandoHistorial] = useState(false)
 
-  const porDia = fuente?.tipo === "dia"
+  /**
+   * ¿LA TABLA HABLA DE UN DÍA?
+   *
+   * Vale para las dos fuentes: la lista del día, y el grupo de créditos
+   * cuando trae fecha. Lo que decide es si `pago` y `cuotasPagas` son de una
+   * jornada o de toda la vida del crédito — y de eso dependen el "de N" de la
+   * columna de cuotas y el texto del pie.
+   */
+  const porDia = fuente?.tipo === "dia" || (fuente?.tipo === "creditos" && !!fuente.fecha)
   // Los no pagos no llevan plata ni cuotas: esas dos columnas se apagan.
   const soloNoPagos = fuente?.tipo === "dia" && fuente.modo === "no_pagos"
   // Efectivo / transferencia: la tabla es la misma, pero el pie tiene que
@@ -104,7 +125,7 @@ export function PagosDelDiaDialog({ open, onOpenChange, fuente }: Props) {
     const pedir =
       fuente.tipo === "dia"
         ? getPagosDelDia(sb, fuente.rutaId, fuente.fecha, fuente.modo ?? "pagos")
-        : getCreditosComoFilas(sb, fuente.loanIds)
+        : getCreditosComoFilas(sb, fuente.loanIds, fuente.fecha)
     pedir
       .then((d) => { if (vigente) setFilas(d) })
       .finally(() => { if (vigente) setCargando(false) })
@@ -292,9 +313,11 @@ export function PagosDelDiaDialog({ open, onOpenChange, fuente }: Props) {
                     {!soloNoPagos && (
                     <td className="px-2 py-2 text-center font-semibold tabular-nums text-foreground">
                       {fmtCuotas(f.cuotasPagas)}
-                      {/* En el grupo se agrega "de N": ahí la gracia es ver
-                          qué tan avanzado va cada crédito, no solo cuántas
-                          cuotas lleva. */}
+                      {/* El "de N" solo cuando la tabla habla del CRÉDITO
+                          ENTERO: ahí la gracia es ver qué tan avanzado va.
+                          Hablando de un día sobra y estorba — se preguntó
+                          "cuántas cuotas pagó hoy" y la columna contestaba
+                          "6 de 30", que es otra cosa. */}
                       {!porDia && f.cuotasTotales > 0 && (
                         <span className="ml-1 font-normal text-muted-foreground">
                           de {f.cuotasTotales}

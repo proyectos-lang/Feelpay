@@ -1531,6 +1531,11 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                                     tipo: "creditos",
                                     loanIds: [...ids],
                                     titulo: label,
+                                    // El día del que habla la tarjeta. Con
+                                    // esto la tabla muestra lo que pagó HOY
+                                    // cada uno y cuántas cuotas cubrió, en vez
+                                    // del acumulado del crédito entero.
+                                    fecha: todayColombia(),
                                   })
                                 }
                               />
