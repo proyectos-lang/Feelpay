@@ -3818,12 +3818,39 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                deslizamiento. ─────────────────────────────────────────── */}
           <div className="overflow-hidden">
           <div
-            className="flex transition-transform duration-300 ease-in-out will-change-transform"
+            /* EL CARRUSEL MIDE LO QUE MIDE EL PANEL QUE SE ESTÁ VIENDO.
+               NO el más alto de los cuatro, que es de donde salía el vacío que
+               se reportó: "con pocos clientes se puede seguir bajando".
+
+               Son dos cosas, y hacían falta las dos:
+
+               · `items-start` — un flex alinea sus hijos con `stretch`, así
+                 que los cuatro paneles quedaban del alto del mayor aunque
+                 estuvieran vacíos.
+
+               · esconder los que no se ven — aun con `items-start`, el flex en
+                 sí mide lo del hijo más alto, y ese alto es el que hereda el
+                 contenedor y el que produce el scroll. Con `hidden` el panel
+                 oculto sale del flujo y deja de contar.
+
+               Medido en la ruta 151 el 03/09/2026 (2 pendientes y 22
+               gestionados, teléfono de 850px): el panel visible medía 185px,
+               el de Gestionados 2.160, y el cobrador podía bajar 1.729px de
+               blanco después de sus dos clientes.
+
+               `hidden` y no `invisible`: lo invisible sigue ocupando sitio,
+               que es justo lo que hay que quitar. La animación de deslizar se
+               conserva porque el panel destino se muestra en el mismo render
+               en que arranca el `translateX`. */
+            className="flex items-start transition-transform duration-300 ease-in-out will-change-transform"
             style={{ transform: `translateX(${-TAB_ORDER.indexOf(activeTab) * 100}%)` }}
           >
 
           {/* ── Panel 0: Pendientes ────────────────────────────────────── */}
-          <div className="w-full shrink-0 p-2 md:p-6">
+          <div
+            className={`w-full shrink-0 p-2 md:p-6 ${activeTab === "pendientes" ? "" : "hidden"}`}
+            aria-hidden={activeTab !== "pendientes"}
+          >
             {loading && (
               <div className="flex items-center justify-center py-10">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -3898,7 +3925,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               cliente y las mismas acciones: desde acá también se le cobra o se
               le marca no pago, que es a lo que va. Lo único que cambia es que
               el reloj, en vez de aplazar, lo devuelve a la ruta. */}
-          <div className="w-full shrink-0 p-2 md:p-6">
+          <div
+            className={`w-full shrink-0 p-2 md:p-6 ${activeTab === "aplazados" ? "" : "hidden"}`}
+            aria-hidden={activeTab !== "aplazados"}
+          >
             {aplazadosDeLaRuta.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-10 text-center text-muted-foreground">
                 <Clock className="h-8 w-8 opacity-40" />
@@ -3928,7 +3958,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           </div>{/* fin Panel 1: Pendientes */}
 
           {/* ── Panel 2: Gestionados ────────────────────────────────────── */}
-          <div className="w-full shrink-0 p-2 md:p-6">
+          <div
+            className={`w-full shrink-0 p-2 md:p-6 ${activeTab === "gestionados" ? "" : "hidden"}`}
+            aria-hidden={activeTab !== "gestionados"}
+          >
             <div className="space-y-2">
                 {filteredManaged.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-10 text-muted-foreground gap-2">
@@ -4249,7 +4282,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           {/* Vista informativa: listado de ventas creadas HOY en la ruta.
               El formulario de creación vive en la pantalla "Nueva Venta"
               del menú principal — aquí solo se consulta lo registrado. */}
-          <div className="w-full shrink-0 p-2 md:p-6">
+          <div
+            className={`w-full shrink-0 p-2 md:p-6 ${activeTab === "ventas" ? "" : "hidden"}`}
+            aria-hidden={activeTab !== "ventas"}
+          >
             <SalesTodayList currentRutaId={currentRutaId} onCountChange={setSalesTodayCount} />
           </div>{/* fin Panel 2: Ventas */}
 
