@@ -25,7 +25,7 @@
  *     de la semana elegido, y de ahí cada 7 días.
  *   · Semanal sin día / quincenal / mensual: +7 / +15 / +30 desde el inicio.
  *   · La cuota se redondea al MILLAR más cercano, con el 500 subiendo
- *     ($19.500 → $20.000, $19.499 → $19.000). Ver `redondearCuota`.
+ *     ($19.600 → $19.500, $19.750 → $20.000). Ver `redondearCuota`.
  *   · La ÚLTIMA cuota absorbe el residuo del redondeo, para que la suma del
  *     plan dé exactamente el total a pagar.
  */
@@ -86,33 +86,48 @@ export interface ScheduleResult {
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
+/** El escalón del redondeo. Ver `redondearCuota`. */
+const PASO_CUOTA = 500
+
 /**
- * La cuota, en números redondos. ESPEJO de `public.redondear_cuota`
- * (scripts/087-las-cuotas-en-numeros-redondos.sql).
+ * La cuota, en múltiplos de 500. ESPEJO de `public.redondear_cuota`
+ * (scripts/097-las-cuotas-de-quinientos-en-quinientos.sql).
  *
- * Al millar más cercano, y el 500 sube: $19.500 queda en $20.000 y $19.499 en
- * $19.000. Lo que se recorta o se agrega lo absorbe la última cuota, así que
- * la suma del plan sigue dando exactamente el total.
+ * Al múltiplo de 500 más cercano, y el punto medio sube: $19.600 queda en
+ * $19.500 y $19.750 en $20.000. Lo que se recorta o se agrega lo absorbe la
+ * última cuota, así que la suma del plan sigue dando exactamente el total.
+ *
+ * EMPEZÓ EN MILLARES (script 087) y bajó a 500 porque el millar mueve
+ * demasiado: una cuota de $19.499 se iba a $19.000, medio punto porcentual
+ * abajo, y esa diferencia por veinticinco cuotas se la come entera la última.
+ * Con 500 el ajuste es la mitad y las cuotas siguen siendo números que se
+ * dicen en voz alta y se pagan con billetes.
  *
  * DOS GUARDAS, las dos medidas contra los créditos reales antes de escribirlas:
  *
  * 1. POR DEBAJO DE MIL NO SE REDONDEA. La ruta 933 es de Ecuador y trabaja en
- *    dólares: sus cuotas van de $2 a $80, y al millar quedarían todas en cero.
- *    No hace falta configurar nada por país — una cuota de $6 no se redondea a
- *    millares en ninguna moneda.
+ *    dólares: sus cuotas van de $2 a $80, y a múltiplos de 500 quedarían todas
+ *    en cero. No hace falta configurar nada por país — una cuota de $6 no se
+ *    redondea a quinientos en ninguna moneda.
+ *
+ *    El corte sigue en MIL y no en 500 a propósito: entre 500 y 999 el paso
+ *    vale más que la mitad de la cuota, así que redondear ahí la deforma en vez
+ *    de acomodarla.
  *
  * 2. LA ÚLTIMA NUNCA QUEDA EN CERO NI NEGATIVA. Subir la cuota le quita hasta
- *    $500 a cada una de las n−1 primeras, y eso puede pasarse de lo que vale
- *    la última. Caso real de la ruta 154: 20 cuotas sobre $150.000 dan $7.500,
- *    que sube a $8.000 — pero 8.000 × 19 = 152.000, más que el total. La cuota
- *    baja un escalón, a $7.000, y la última queda en $17.000.
+ *    $250 a cada una de las n−1 primeras, y eso puede pasarse de lo que vale la
+ *    última. Se baja de 500 en 500 hasta que quepa. Caso real de la ruta 154:
+ *    20 cuotas sobre $150.000 dan $7.500 justos, que ya es múltiplo de 500 —
+ *    con el millar subía a $8.000 y había que bajarla a $7.000, dejando una
+ *    última cuota de $17.000. Con 500 no se mueve, y la última queda en $7.500
+ *    como las demás.
  */
 export function redondearCuota(base: number, total: number, cuotas: number): number {
   if (!Number.isFinite(base) || !Number.isFinite(total) || cuotas < 1) return base
   if (base < 1000) return round2(base)
 
-  let r = Math.floor(base / 1000 + 0.5) * 1000
-  while (r > 0 && total - r * (cuotas - 1) <= 0) r -= 1000
+  let r = Math.floor(base / PASO_CUOTA + 0.5) * PASO_CUOTA
+  while (r > 0 && total - r * (cuotas - 1) <= 0) r -= PASO_CUOTA
   return r > 0 ? r : round2(base)
 }
 
