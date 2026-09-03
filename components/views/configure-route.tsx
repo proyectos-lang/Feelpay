@@ -66,18 +66,56 @@ export function ConfigureRoute({ currentRutaId = 1 }: ConfigureRouteProps) {
     saveOrder(reordenado)
   }
 
+  /**
+   * LA RUTA, RENUMERADA 1..N AL ABRIRLA.
+   *
+   * POR QUÉ HACE FALTA. `loans.ordenvisita` se ensucia sola con el uso: un
+   * crédito nuevo entra con `null`, uno que se cancela deja su número
+   * ocupado, y arrastrar una fila renumera solo lo que estaba a la vista. La
+   * ruta 151, medida el 03/09/2026: 24 clientes activos, CATORCE sin número,
+   * diecisiete números repetidos y un rango de 1 a 9. Cinco parejas
+   * compartiendo puesto —dos "1", dos "2", dos "4"—.
+   *
+   * QUÉ SE VEÍA POR ESO. La pantalla numeraba los huecos al vuelo
+   * (`ordenvisita ?? i + 1`) pero NO guardaba esa numeración: se veía 1..24 y
+   * en la base seguían los catorce `null` y los repetidos. Al mover una fila
+   * se guardaba el orden nuevo, pero el módulo de pagos ordena por el número
+   * de la base, y ahí los empates los desempataba otra cosa — así que el
+   * cambio parecía no aplicarse. Al día siguiente, con los créditos ya
+   * numerados de la vez anterior, sí se veía. De ahí el "queda para mañana".
+   *
+   * QUÉ HACE AHORA. Si lo que llegó no es exactamente 1..N sin repetir, se
+   * renumera y SE GUARDA en el acto. Lo que se ve en pantalla es lo que está
+   * escrito en la base, que es la única forma de que mover una fila tenga
+   * efecto inmediato.
+   *
+   * No cambia el orden de nadie: respeta el que ya trae la consulta
+   * (`ordenvisita` ascendente, los nulos al final). Solo lo hace explícito.
+   */
   const fetchLoans = useCallback(async () => {
     setLoading(true)
     try {
       const res = await fetch(`/api/route-order?ruta=${currentRutaId}`)
       if (!res.ok) throw new Error("Error fetching loans")
-      const data = await res.json()
-      // Assign sequential order if null
-      const ordered = data.map((loan: LoanItem, i: number) => ({
-        ...loan,
-        ordenvisita: loan.ordenvisita ?? i + 1,
-      }))
+      const data = (await res.json()) as LoanItem[]
+
+      const ordered = data.map((loan, i) => ({ ...loan, ordenvisita: i + 1 }))
       setLoans(ordered)
+
+      // ¿Hacía falta? Solo se escribe si la base no tenía ya 1..N exacto, para
+      // no mandar un PUT con veinticinco updates cada vez que alguien entra a
+      // mirar la ruta.
+      const yaEstaba = data.every((l, i) => l.ordenvisita === i + 1)
+      if (!yaEstaba && ordered.length > 0) {
+        console.log("[v0] Ordenar Ruta: renumerando", ordered.length, "créditos de la ruta", currentRutaId)
+        void fetch("/api/route-order", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            items: ordered.map((l) => ({ id: l.id, ordenvisita: l.ordenvisita })),
+          }),
+        }).catch((e) => console.error("[v0] Ordenar Ruta: no se pudo renumerar:", e))
+      }
     } catch {
       toast({
         title: "Error",
