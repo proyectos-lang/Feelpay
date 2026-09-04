@@ -152,6 +152,20 @@ export const ALL_MODULES: ModuleDefinition[] = [
   },
   // --- SECRETARIA ---
   {
+    viewId: "monitoreo-recaudos",
+    label: "Monitoreo de Recaudos",
+    mobileLabel: "Recaudos",
+    description: "Cómo viene el recaudo de cada ruta, día por día",
+    // Secretaría y administración: es lo que se pidió, más los roles que ya
+    // ven el Monitoreo de Rutas y usan esta misma información.
+    defaultRoles: ["secretaria", "secretario", "admin", "administrador"],
+    // Fuera de la barra inferior: es una tabla ancha para revisar sentado, no
+    // algo que se abra a cada rato en la calle.
+    defaultMobileNavRoles: [],
+    iconName: "TrendingUp",
+    group: "Secretaria",
+  },
+  {
     viewId: "secretary-authorizations",
     label: "Autorizaciones",
     mobileLabel: "Autoriz.",

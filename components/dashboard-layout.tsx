@@ -47,6 +47,7 @@ export function DashboardLayout({
       "view-loans": "Ver Ventas",
       "new-loan": "Nuevo Préstamo",
       "pending-authorizations": "Autorizaciones Administrador",
+      "monitoreo-recaudos": "Monitoreo de Recaudos",
       "secretary-authorizations": "Autorizaciones Secretaria",
       "movimientos-revision": "Movimientos en Revisión",
       "multas": "Multas",

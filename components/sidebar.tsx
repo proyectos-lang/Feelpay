@@ -81,6 +81,7 @@ const navGroups: NavGroup[] = [
   {
     group: "Secretaria",
     items: [
+      { id: "monitoreo-recaudos",        label: "Mon. Recaudos",   icon: TrendingUp,    colorClass: "sidebar-item-summary"   },
       { id: "secretary-authorizations",  label: "Autor. Secret.",  icon: CheckCircle,   colorClass: "sidebar-item-secretary" },
       { id: "movimientos-revision",      label: "Movim. Revisión", icon: ShieldCheck,   colorClass: "sidebar-item-payment"   },
       { id: "multas",                    label: "Multas",          icon: AlertTriangle, colorClass: "sidebar-item-expense"   },

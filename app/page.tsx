@@ -24,6 +24,7 @@ import { ReportesBi } from "@/components/views/reportes-bi"
 import { DailyRoute } from "@/components/views/daily-route"
 import { RegisterPayment } from "@/components/views/register-payment"
 import { PaymentControl } from "@/components/views/payment-control"
+import { MonitoreoRecaudos } from "@/components/views/monitoreo-recaudos"
 import { SaleEditor } from "@/components/views/sale-editor"
 import { LoanAudit } from "@/components/views/loan-audit"
 import { RegisterTransaction } from "@/components/views/register-transaction"
@@ -1288,6 +1289,8 @@ export default function Page() {
         )
       case "pending-authorizations":
         return <PendingAuthorizations />
+      case "monitoreo-recaudos":
+        return <MonitoreoRecaudos currentUser={currentUser} />
       case "secretary-authorizations":
         return <SecretaryAuthorizations />
       case "movimientos-revision":
