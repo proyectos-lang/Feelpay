@@ -170,8 +170,12 @@ export function MonitoreoRecaudos({ currentUser }: Props) {
         .select("*")
         .gte("fecha", desde)
         .lte("fecha", hasta)
-        .order("fecha", { ascending: false })
+        // De MENOR A MAYOR: el día 1 arriba y el último abajo, que es como
+        // se lee un mes y como está el informe que se pidió. Con la ruta en
+        // primer lugar, cada unidad queda en un bloque seguido en vez de
+        // intercalada día por día.
         .order("unidad", { ascending: true })
+        .order("fecha", { ascending: true })
 
       // `null` = ve todas. Un arreglo = solo esas. Vacío = ninguna, y `.in()`
       // con lista vacía devuelve cero filas, que es lo correcto.
@@ -191,11 +195,7 @@ export function MonitoreoRecaudos({ currentUser }: Props) {
         setFilas([])
         return
       }
-      const rows = (data ?? []) as FilaRecaudo[]
-      setFilas(rows)
-      // Las rutas del selector salen de lo que HAY, no de una lista aparte:
-      // así nunca se ofrece una ruta que no tiene filas en el rango.
-      setRutas([...new Set(rows.map((r) => Number(r.unidad)))].sort((a, b) => a - b))
+      setFilas((data ?? []) as FilaRecaudo[])
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.error("[v0] MonitoreoRecaudos:", msg)
@@ -207,6 +207,56 @@ export function MonitoreoRecaudos({ currentUser }: Props) {
   }, [desde, hasta, ruta, rutasPermitidas, resolviendoPermiso])
 
   useEffect(() => { void cargar() }, [cargar])
+
+  /**
+   * LAS RUTAS DEL SELECTOR, SIN EL FILTRO DE RUTA PUESTO.
+   *
+   * Salían de las filas que se acababan de traer, y esas ya venían filtradas:
+   * al elegir la ruta 1, la consulta devolvía solo la 1, el selector se
+   * quedaba con una sola opción y no había forma de volver a "Todas" ni de
+   * saltar a otra unidad sin recargar la página. Es el defecto que se reportó.
+   *
+   * Ahora es su propia consulta: el mismo rango y los mismos permisos, pero
+   * sin `eq("unidad")`. Depende de `desde`/`hasta` y no de `ruta`, así que
+   * elegir una unidad no vuelve a dispararla.
+   */
+  useEffect(() => {
+    if (resolviendoPermiso) return
+    let vigente = true
+    const cargarRutas = async () => {
+      try {
+        let q = createClient()
+          .from("vista_monitoreo_recaudos")
+          .select("unidad")
+          .gte("fecha", desde)
+          .lte("fecha", hasta)
+        if (rutasPermitidas !== null) q = q.in("unidad", rutasPermitidas)
+        const { data, error: err } = await q
+        if (!vigente) return
+        // Un fallo acá no puede tumbar la tabla: se queda el selector con lo
+        // que tenía y los datos se siguen viendo. El error de verdad —la
+        // vista sin crear— ya lo reporta `cargar`.
+        if (err) { console.error("[v0] MonitoreoRecaudos rutas:", err.message); return }
+        const ids = [...new Set(((data ?? []) as { unidad: number }[]).map((r) => Number(r.unidad)))]
+        setRutas(ids.sort((a, b) => a - b))
+      } catch (e) {
+        console.error("[v0] MonitoreoRecaudos rutas:", e)
+      }
+    }
+    void cargarRutas()
+    return () => { vigente = false }
+  }, [desde, hasta, rutasPermitidas, resolviendoPermiso])
+
+  /**
+   * Si la ruta elegida deja de existir en el rango nuevo, se vuelve a "Todas".
+   * Sin esto, mover las fechas a un mes donde esa unidad no trabajó dejaba la
+   * tabla vacía con un filtro puesto que ya no se podía elegir en la lista.
+   */
+  useEffect(() => {
+    if (ruta !== "todas" && rutas.length > 0 && !rutas.includes(Number(ruta))) {
+      setRuta("todas")
+    }
+  }, [rutas, ruta])
 
   /**
    * El pie de la tabla.
