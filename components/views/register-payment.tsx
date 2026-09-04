@@ -55,6 +55,7 @@ import {
   apodoSiAporta,
   type Gestion,
   cuotasConDecimal,
+  fmtMoneda,
 } from "@/lib/gestion-core"
 import { fmtFecha } from "@/lib/colombia-date"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, type RutaUmbrales } from "@/lib/ruta-umbrales"
@@ -5215,9 +5216,18 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         <DialogContent className="p-4 md:p-6 max-w-[90vw] md:max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-sm md:text-lg">Editar gestión — {editingManaged?.nombre}</DialogTitle>
-            <DialogDescription className="text-[11px] md:text-sm">
-              No se borra nada: se anula la gestión anterior y queda la
-              corrección, las dos en el historial.
+            {/* EL SALDO, en lugar de la explicación de cómo funciona el libro.
+                Esa explicación decía algo cierto —no se borra nada, se anula y
+                queda la corrección— pero se lo decía a alguien que ya está
+                corrigiendo y no le cambia la decisión. El saldo sí: es contra
+                lo que se compara el monto que se va a escribir. */}
+            <DialogDescription asChild>
+              <div className="flex items-baseline gap-1.5 text-[11px] md:text-sm">
+                <span className="text-muted-foreground">Saldo del cliente:</span>
+                <span className="font-bold tabular-nums text-foreground">
+                  {fmtMoneda(editingManaged?.saldo)}
+                </span>
+              </div>
             </DialogDescription>
           </DialogHeader>
 
