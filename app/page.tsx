@@ -1234,6 +1234,9 @@ export default function Page() {
             onViewChange={handleViewChange}
             rutaId={rutaId}
             onRouteStateChange={handleRutaActivaEstadoChange}
+            /* Solo trae valor mientras se está cerrando una jornada vieja
+               desbloqueada. Sin eso es `null` y el resumen es el de hoy. */
+            fechaResumen={jornadaAtrasadaAbierta}
           />
         )
       case "cierre-caja":

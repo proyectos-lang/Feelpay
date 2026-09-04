@@ -4,10 +4,11 @@ import React from "react"
 import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, Users, PieChart, LockKeyhole, LockKeyholeOpen, Eye, X, Play, Loader2, Share2 } from "lucide-react"
+import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, Users, PieChart, LockKeyhole, LockKeyholeOpen, Eye, X, Play, Loader2, Share2, AlertCircle } from "lucide-react"
 import { renderComprobanteImagen, type SeccionComprobante } from "@/lib/imagen-comprobante"
 import { CompartirComprobanteDialog } from "@/components/compartir-comprobante-dialog"
 import { getUsuarioSesion } from "@/lib/movimientos"
+import { fmtFecha } from "@/lib/colombia-date"
 import { Button } from "@/components/ui/button"
  import { createClient } from "@/lib/supabase/client"
 import { getResumenDia } from "@/lib/resumen-dia"
@@ -25,6 +26,17 @@ interface DailySummaryProps {
   onViewChange?: (view: string) => void
   rutaId?: number
   onRouteStateChange?: (estado: RutaDiariaEstado) => void
+  /**
+   * EL DÍA DEL QUE HABLA EL RESUMEN, "YYYY-MM-DD".
+   *
+   * Casi siempre viene vacío y todo es de HOY, como siempre.
+   *
+   * Trae fecha en un solo caso: la ruta amaneció congelada porque ayer nadie
+   * cerró la caja, la secretaría la desbloqueó, y el cobrador está terminando
+   * ese día antes de cerrarlo. Ahí el resumen tiene que mostrarle lo de ESE
+   * día — es el número con el que va a cuadrar la caja.
+   */
+  fechaResumen?: string | null
 }
 
 interface GastoRegistro {
@@ -64,7 +76,24 @@ function IconoInformeRecaudo() {
   )
 }
 
-export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: DailySummaryProps) {
+export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fechaResumen }: DailySummaryProps) {
+  /**
+   * EL DÍA DE NEGOCIO DE ESTA PANTALLA.
+   *
+   * `todayColombia()` salvo cuando se está cerrando una jornada vieja. Lo usan
+   * TODAS las lecturas: el recaudo, la caja, los movimientos, el informe y los
+   * ojitos.
+   *
+   * NO lo usan `fetchRutaDiaria` ni `handleIniciarRuta`: esos dos hablan de la
+   * jornada de HOY —si está abierta, si hay que iniciarla— y esa pregunta no
+   * cambia porque se esté cerrando otra. De hecho no puede: hoy no tiene fila
+   * hasta que el día viejo cierre.
+   *
+   * Se ignora una fecha de hoy o futura, igual que en el módulo de pagos.
+   */
+  const diaDelResumen =
+    fechaResumen && fechaResumen < todayColombia() ? fechaResumen : todayColombia()
+  const esResumenAtrasado = diaDelResumen !== todayColombia()
   const [isFlipped, setIsFlipped] = useState(false)
 
   // Estado de la ruta diaria
@@ -143,7 +172,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
     const fetchResumen = async () => {
       try {
         const supabase = createClient()
-        const fechaHoy = todayColombia()
+        const fechaHoy = diaDelResumen
 
         // ── Una sola query filtrada por ruta ─────────────────────────
         // RLS eliminado: filtramos explicitamente con `.eq('ruta', rutaId)`.
@@ -186,7 +215,9 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
     }
 
     fetchResumen()
-  }, [rutaId])
+    // `diaDelResumen` entra acá: al desbloquear una jornada vieja esta
+    // pantalla pasa a hablar de otro día y hay que volver a leer.
+  }, [rutaId, diaDelResumen])
 
   // La fecha de hoy en Colombia sale de `todayColombia()` (@/lib/gestion-core):
   // una sola definicion para toda la app.
@@ -277,8 +308,8 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
     try {
       const supabase = createClient()
 
-      // Ventana del dia de hoy en zona Colombia (inicio y fin).
-      const fechaHoy = todayColombia()
+      // Ventana del dia DE TRABAJO en zona Colombia (inicio y fin).
+      const fechaHoy = diaDelResumen
       // El offset -05:00 es obligatorio: sin el, Postgres interpreta la
       // ventana en UTC y se pierde todo lo registrado despues de las 7 pm
       // hora Colombia.
@@ -375,7 +406,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
   const abrirDetalleFinanciero = async (cual: "canceladas" | "ventas") => {
     try {
       const supabase = createClient()
-      const hoy = todayColombia()
+      const hoy = diaDelResumen
 
       if (cual === "ventas") {
         const { data } = await supabase
@@ -443,7 +474,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
     const loadBackCard = async () => {
       try {
         const supabase = createClient()
-        const fechaHoy = todayColombia()
+        const fechaHoy = diaDelResumen
 
         const [rowsHoyRes, activosRes, ventasHoyRes, gestionesHoyRes] = await Promise.all([
           supabase
@@ -632,7 +663,9 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
 
     loadBackCard()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rutaId])
+    // `diaDelResumen` entra acá: al desbloquear una jornada vieja esta
+    // pantalla pasa a hablar de otro día y hay que volver a leer.
+  }, [rutaId, diaDelResumen])
 
   const reportData = {
     totalPayments: cantidadPagos,
@@ -860,7 +893,13 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
               <div className="flex flex-col gap-0.5 text-brand-foreground/90">
                 <div className="flex items-center gap-1.5">
                   <Calendar className="h-3.5 w-3.5 shrink-0" />
-                  <span className="whitespace-nowrap">{selectedDate}</span>
+                  {/* LA FECHA DEL ENCABEZADO ES LA DE LOS NÚMEROS.
+                      Cerrando una jornada vieja decía 04/09 sobre datos del
+                      03/09 — el mismo encabezado contradiciendo a su propio
+                      contenido. */}
+                  <span className="whitespace-nowrap">
+                    {esResumenAtrasado ? fmtFecha(diaDelResumen) : selectedDate}
+                  </span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Clock className="h-3.5 w-3.5 shrink-0" />
@@ -886,6 +925,21 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
               se queda como red de seguridad para pantallas muy chicas o con el
               texto del sistema agrandado, no como la forma normal de usarlo. */}
           <div className="flex-1 px-2.5 py-1.5 space-y-1 overflow-auto">
+            {/* EL DÍA DEL QUE HABLAN ESTOS NÚMEROS.
+                Sin esto, el resumen de una jornada atrasada se lee como si
+                fuera el de hoy — y es justo al revés de lo que pasaba antes,
+                cuando mostraba ceros porque leía un día que todavía no
+                empieza. Con el aviso, el número que se ve es el que se va a
+                cuadrar en el cierre. */}
+            {esResumenAtrasado && (
+              <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1.5">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                <p className="text-[11px] leading-snug text-foreground">
+                  <span className="font-bold">Estos números son del {fmtFecha(diaDelResumen)}</span>,
+                  el día que estás cerrando. Es lo que va a cuadrar en el cierre de caja.
+                </p>
+              </div>
+            )}
             {/* Dia sin movimiento: la caja viene del ultimo dia con registro */}
             {diaSinMovimiento && (
               <p className="text-[10px] text-muted-foreground px-0.5">
@@ -1030,7 +1084,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     <Ojito
                       disabled={cantidadPagos === 0}
                       onClick={() =>
-                        setPagosDialog({ tipo: "dia", rutaId, fecha: todayColombia() })
+                        setPagosDialog({ tipo: "dia", rutaId, fecha: diaDelResumen })
                       }
                     />
                   </div>
@@ -1048,7 +1102,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                         setPagosDialog({
                           tipo: "dia",
                           rutaId,
-                          fecha: todayColombia(),
+                          fecha: diaDelResumen,
                           modo: "no_pagos",
                         })
                       }
@@ -1105,7 +1159,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                                     setPagosDialog({
                                       tipo: "dia",
                                       rutaId,
-                                      fecha: todayColombia(),
+                                      fecha: diaDelResumen,
                                       modo: c.modo!,
                                       titulo: `Pagos en ${c.label.toLowerCase()}`,
                                     })
@@ -1489,8 +1543,12 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                     </div>
                     <div className="min-w-0">
                       <p className="text-sm font-bold leading-tight text-foreground">Cuotas Clientes</p>
+                      {/* Cerrando una jornada vieja el día no es hoy, y la
+                          tarjeta no puede decir que sí. */}
                       <p className="text-[11px] leading-snug text-muted-foreground">
-                        Cuántas cuotas pagó cada cliente HOY
+                        {esResumenAtrasado
+                          ? `Cuántas cuotas pagó cada cliente el ${fmtFecha(diaDelResumen)}`
+                          : "Cuántas cuotas pagó cada cliente HOY"}
                       </p>
                     </div>
                   </div>
@@ -1535,7 +1593,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                                     // esto la tabla muestra lo que pagó HOY
                                     // cada uno y cuántas cuotas cubrió, en vez
                                     // del acumulado del crédito entero.
-                                    fecha: todayColombia(),
+                                    fecha: diaDelResumen,
                                   })
                                 }
                               />
@@ -1562,7 +1620,9 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange }: D
                       la suma se lea como el total. */}
                   <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-lg bg-success-light/50 px-2.5 py-1.5">
                     <Users className="h-3 w-3 text-icon-users" />
-                    <span className="text-[11px] text-muted-foreground">Pagaron hoy:</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {esResumenAtrasado ? "Pagaron ese día:" : "Pagaron hoy:"}
+                    </span>
                     <span className="text-[11px] font-bold text-success">
                       {reportData.installmentsByClient.small +
                         reportData.installmentsByClient.large +
