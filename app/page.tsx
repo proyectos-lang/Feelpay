@@ -1176,19 +1176,47 @@ export default function Page() {
   const puedeLevantarElCongelamiento = puedeDescongelar(userRol)
 
   /**
+   * ¿SE ESTÁ TERMINANDO UNA JORNADA VIEJA?
+   *
+   * La secretaría desbloqueó la ruta y el cobrador está cerrando el día que
+   * quedó abierto. Mientras eso dure, la app entera trabaja sobre ESE día: la
+   * lista de pagos, las ventas y el cierre.
+   *
+   * POR QUÉ NO ALCANZABA CON ABRIRLE EL CIERRE. Al desbloquear, lo único que
+   * podía hacer era cuadrar la caja — y a la caja le faltaba justo lo que no
+   * alcanzó a registrar: los pagos y no pagos del final del día, y las ventas
+   * que hizo y no cargó. Cerrar sin eso deja el día cuadrado sobre una cifra
+   * incompleta, que es lo contrario de lo que el cierre existe para hacer.
+   */
+  const jornadaAtrasadaAbierta = jornadaPendiente?.desbloqueada
+    ? jornadaPendiente.fecha
+    : null
+
+  /**
    * LA RUTA CONGELADA GANA SOBRE "no iniciada".
    *
    * Las dos tapan la pantalla, pero dicen cosas distintas y solo una es cierta:
    * con una jornada vieja sin cerrar, el botón "Iniciar Ruta" no serviría de
    * nada —y ofrecerlo sería mandar al cobrador a tocar algo que no lo va a
    * desbloquear—. El chat sigue exento en las dos.
+   *
+   * Y DESBLOQUEADA DEJA DE TAPAR. Mientras la jornada vieja siga abierta con
+   * permiso, el cobrador entra a los módulos como cualquier día: lo que cambia
+   * es a qué día se registra, no si puede registrar.
    */
   const rutaCongelada =
     rolExigeRutaIniciada &&
     !!selectedRuta &&
     !!jornadaPendiente &&
+    !jornadaPendiente.desbloqueada &&
     !VISTAS_SIN_RUTA.includes(currentView)
 
+  /**
+   * Con la jornada vieja desbloqueada NO se pide iniciar la de hoy: la de
+   * ayer sigue abierta y es sobre esa que se está trabajando. Pedir "Iniciar
+   * Ruta" ahí mandaría a abrir un día nuevo con el anterior sin cerrar, que es
+   * justo lo que el congelamiento existe para impedir.
+   */
   const rutaSinIniciar =
     rolExigeRutaIniciada &&
     !!selectedRuta &&
@@ -1241,6 +1269,11 @@ export default function Page() {
             currentRutaId={rutaId}
             rutaPais={rutaPais}
             onCancel={() => handleViewChange("register-payment")}
+            /* La venta que se hizo ese día y no se alcanzó a cargar. `NewLoan`
+               ya sabía fechar una venta hacia atrás —lo usa Control Total
+               desde el script 078— y mueve con ella la primera cuota, el abono
+               inicial y la caja del día. Acá se reusa tal cual. */
+            fechaVenta={jornadaAtrasadaAbierta ?? undefined}
           />
         )
       case "pending-authorizations":
@@ -1268,6 +1301,9 @@ export default function Page() {
             rutaActivaEstado={rutaActivaEstado}
             rutaActivaResolved={rutaActivaResolved}
             onRouteStateChange={handleRutaActivaEstadoChange}
+            /* Solo trae valor mientras se está cerrando una jornada vieja
+               desbloqueada. Sin eso es `null` y todo se fecha hoy. */
+            fechaGestion={jornadaAtrasadaAbierta}
           />
         )
       case "register-transaction":

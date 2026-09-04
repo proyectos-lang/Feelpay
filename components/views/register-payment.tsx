@@ -56,6 +56,7 @@ import {
   type Gestion,
   cuotasConDecimal,
 } from "@/lib/gestion-core"
+import { fmtFecha } from "@/lib/colombia-date"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, type RutaUmbrales } from "@/lib/ruta-umbrales"
 import { renderComprobanteImagen, type SeccionComprobante } from "@/lib/imagen-comprobante"
 import { CompartirComprobanteDialog } from "@/components/compartir-comprobante-dialog"
@@ -252,6 +253,21 @@ type RegisterPaymentProps = {
   // recarga; en su lugar mostramos un spinner discreto.
   rutaActivaResolved?: boolean
   onRouteStateChange?: (estado: "abierta" | "cerrada" | null) => void
+  /**
+   * EL DÍA AL QUE SE REGISTRAN LAS GESTIONES, "YYYY-MM-DD".
+   *
+   * Casi siempre viene vacío y todo se fecha HOY, como siempre.
+   *
+   * Trae fecha solo en un caso: la ruta amaneció congelada porque ayer nadie
+   * cerró la caja, la secretaría la desbloqueó, y el cobrador está terminando
+   * de registrar lo que le faltó de ESE día antes de cerrarlo. Ahí todo lo que
+   * registre —pagos, no pagos, ventas— pertenece al día viejo, no a hoy.
+   *
+   * `fecha_gestion` es el día de negocio al que aplica el evento (CLAUDE.md),
+   * así que fecharlo bien es lo único que hace falta: la plata cae en el
+   * cierre correcto y el resumen de ese día la cuenta.
+   */
+  fechaGestion?: string | null
 }
 
 /**
@@ -381,8 +397,22 @@ type ManagedClient = DisplayClient & {
 // la necesita (para dejar la ubicacion de referencia del cliente) y ahi mismo
 // esta la regla de la geocerca.
 
-export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = "", rutaActivaEstado, rutaActivaResolved = true, onRouteStateChange }: RegisterPaymentProps) {
+export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = "", rutaActivaEstado, rutaActivaResolved = true, onRouteStateChange, fechaGestion }: RegisterPaymentProps) {
   const { toast } = useToast()
+
+  /**
+   * EL DÍA DE NEGOCIO DE ESTE MÓDULO.
+   *
+   * `todayColombia()` salvo cuando se está cerrando una jornada vieja. Todo lo
+   * que escribe plata pasa por acá: pagos, no pagos, cancelaciones y el abono
+   * de las ventas.
+   *
+   * Se ignora una fecha de hoy o futura: este módulo escribe en el libro, y no
+   * hay gestiones que registrar en un día que no ocurrió.
+   */
+  const diaDeTrabajo =
+    fechaGestion && fechaGestion < todayColombia() ? fechaGestion : todayColombia()
+  const esDiaAtrasado = diaDeTrabajo !== todayColombia()
 
   // ── Managed-today state (loaded from Supabase payment_plan) ──
   const [managedToday, setManagedToday] = useState<ManagedClient[]>([])
@@ -1120,7 +1150,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       // importada como `todayColombia` y no se sombrea (antes se declaraba
       // una constante con ese mismo nombre y cualquier llamada a la función
       // reventaba con "todayColombia is not a function").
-      const hoy = todayColombia()
+      //
+      // ES EL DÍA DE TRABAJO, no necesariamente hoy: con la ruta desbloqueada
+      // para cerrar una jornada vieja, quien ya se gestionó ESE día tiene que
+      // salir en Gestionados, y quien no, en Pendientes. Leyendo hoy, la lista
+      // mostraría la ruta entera como pendiente y volvería a cobrarle a quien
+      // ya pagó ayer.
+      const hoy = diaDeTrabajo
       const ayer = ayerColombia()
 
       // ── Carga del módulo ─────────────────────────────────────────────
@@ -1412,7 +1448,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         setLoading(false)
       }
     }
-  }, [currentRutaId])
+    // `diaDeTrabajo` entra en las dependencias: al desbloquear la ruta el
+    // módulo pasa a hablar de otro día y la lista tiene que rearmarse.
+  }, [currentRutaId, diaDeTrabajo])
 
   useEffect(() => {
     fetchData()
@@ -1528,7 +1566,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
       // Día de negocio y hora exacta, ambos en zona Colombia y de la misma
       // fuente (ver lib/gestion-core.ts).
-      const fechaPago = todayColombia()
+      // El día al que pertenece el cobro. Con la ruta desbloqueada para
+      // cerrar una jornada vieja, es ESE día y no hoy.
+      const fechaPago = diaDeTrabajo
       const fechaPagoReal = ahoraColombiaISO()
       const { latitud, longitud } = coords
 
@@ -1902,7 +1942,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     try {
       setSaving(true)
 
-      const colombiaDateStr = todayColombia()
+      const colombiaDateStr = diaDeTrabajo
       const fechaPagoReal = ahoraColombiaISO()
       const { latitud, longitud } = coords
 
@@ -2351,19 +2391,22 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     // Abono de hoy: si el cliente ya fue gestionado viene en el objeto (que
     // ya trae la SUMA del dia); si no, se consulta lo gestionado hoy.
     let abonoHoy = gestionHoy?.valorAbonado ?? null
-    let fechaAbono: string | null = gestionHoy ? todayColombia() : null
+    // El recibo habla del DÍA DE TRABAJO, que con la ruta desbloqueada para
+    // cerrar una jornada vieja es ese día y no hoy. Si leyera hoy, el
+    // comprobante del cobro que se acaba de registrar saldría sin abono.
+    let fechaAbono: string | null = gestionHoy ? diaDeTrabajo : null
     if (abonoHoy == null) {
-      // Del libro de eventos: los movimientos de hoy de este préstamo.
+      // Del libro de eventos: los movimientos de ese día de este préstamo.
       const { data: eventosHoy } = await supabase
         .from("gestiones")
         .select("tipo, monto")
         .eq("loan_id", client.loanId)
-        .eq("fecha_gestion", todayColombia())
+        .eq("fecha_gestion", diaDeTrabajo)
         .eq("estado", "aplicada")
       const evs = (eventosHoy ?? []) as { tipo: string; monto: number | null }[]
       if (evs.length > 0) {
         abonoHoy = evs.reduce((acc, e) => acc + montoEfectivo({ tipo: e.tipo as Gestion["tipo"], monto: Number(e.monto) || 0 }), 0)
-        fechaAbono = todayColombia()
+        fechaAbono = diaDeTrabajo
       }
     }
 
@@ -2760,8 +2803,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           .map((g) => g.referencia_gestion_id as string),
       )
 
-      // La más reciente de HOY que sea una visita y siga en pie.
-      const hoy = todayColombia()
+      // La más reciente DEL DÍA DE TRABAJO que sea una visita y siga en pie.
+      // Corregir o anular tiene que encontrar la gestión de ese día, no la de
+      // hoy — que en una jornada atrasada no existe.
+      const hoy = diaDeTrabajo
       return (
         filas.find(
           (g) =>
@@ -2841,7 +2886,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           loan_id: m.loanId,
           client_id: m.clientId,
           referencia_gestion_id: original.id,
-          fecha_gestion: todayColombia(),
+          fecha_gestion: diaDeTrabajo,
           fecha_hora: ahoraColombiaISO(),
           cliente_nombre: m.nombre,
           observacion: queCambio,
@@ -2865,7 +2910,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           // Al convertir a no pago la gestión vale por UNA visita, no por las
           // cuotas que cubría el pago que se está deshaciendo.
           num_cuotas: destino === "pago" ? (original.num_cuotas ?? 1) : 1,
-          fecha_gestion: todayColombia(),
+          fecha_gestion: diaDeTrabajo,
           fecha_hora: ahoraColombiaISO(),
           cuota_objetivo: original.cuota_objetivo,
           // El método sale del selector, no del evento original: es lo que
@@ -2958,7 +3003,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           loan_id: m.loanId,
           client_id: m.clientId,
           referencia_gestion_id: original.id,
-          fecha_gestion: todayColombia(),
+          fecha_gestion: diaDeTrabajo,
           fecha_hora: ahoraColombiaISO(),
           cliente_nombre: m.nombre,
           observacion: "Gestión anulada desde el módulo de pagos",
@@ -3405,7 +3450,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // logica terminarian discrepando en cuando se considera abierta una ruta.
   // Aca la exigencia es ABIERTA y no solo iniciada: con la jornada cerrada ya
   // no se cobra.
-  if (rutaActivaEstado !== "abierta") {
+  //
+  // SALVO QUE SE ESTÉ CERRANDO UNA JORNADA VIEJA. `rutaActivaEstado` habla de
+  // HOY, y cuando la secretaría desbloquea el día anterior lo que hay abierto
+  // es ESE día — hoy no tiene fila todavía, y no puede tenerla hasta que el
+  // viejo cierre. Sin esta salida, el cobrador quedaba mirando "Ruta no
+  // iniciada" con un botón que no debe tocar: iniciar hoy es justo lo que el
+  // congelamiento existe para impedir.
+  if (!esDiaAtrasado && rutaActivaEstado !== "abierta") {
     return (
       <RutaNoIniciada
         rutaId={currentRutaId}
@@ -3499,6 +3551,21 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           <CardHeader
             className={`${encabezadoPlegado ? "p-2" : "p-3"} md:p-6 max-md:gap-1 sticky top-0 z-10 bg-card shadow-[0_1px_0_0_var(--border)]`}
           >
+            {/* EL DÍA AL QUE SE ESTÁ REGISTRANDO.
+                Va de primero, ámbar y sin poder plegarse: todo lo que el
+                cobrador haga en esta pantalla se va a contar en ESE día, no en
+                hoy, y equivocarse de día es de las pocas cosas que después
+                obligan a que la secretaría corrija una por una. */}
+            {esDiaAtrasado && (
+              <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1.5">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                <p className="text-[12px] leading-snug text-foreground">
+                  <span className="font-bold">Estás cerrando el {fmtFecha(diaDeTrabajo)}.</span>{" "}
+                  Los pagos, no pagos y ventas que registres quedan en ese día. Al cerrar
+                  la caja, la ruta queda lista para hoy.
+                </p>
+              </div>
+            )}
             {/* Plegar el encabezado. Solo en móvil: en escritorio no sobra el
                 espacio. Plegado sigue diciendo en qué modo está y cuántos
                 faltan — es lo único del encabezado que el cobrador necesita
