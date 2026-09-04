@@ -1247,10 +1247,17 @@ export default function Page() {
             rutaNombre={rutaPais}
             onRouteStateChange={handleRutaActivaEstadoChange}
             currentUser={currentUser ?? undefined}
-            /* Solo viene con valor cuando se entra desde el aviso de ruta
-               congelada. Entrando por el camino normal es undefined y el
-               cierre es el de hoy, como siempre. */
-            fechaJornada={viewData?.fechaJornada}
+            /* EL DÍA QUE SE ESTÁ CERRANDO, se entre por donde se entre.
+               Antes solo llegaba por `viewData`, o sea únicamente si se venía
+               del botón "Hacer el cierre" del aviso. Entrando por el candado
+               del Resumen —que es el camino de siempre— venía vacío y el
+               cierre mostraba el día de hoy: todo en cero, porque hoy no tiene
+               fila hasta que el día viejo cierre.
+
+               `jornadaAtrasadaAbierta` manda, y `viewData` queda de respaldo
+               para quien lo pase explícito (la secretaría desde el Monitoreo,
+               que no tiene la ruta congelada en su propia sesión). */
+            fechaJornada={jornadaAtrasadaAbierta ?? viewData?.fechaJornada}
             /* Cerro la jornada VIEJA: se vuelve a preguntar si queda alguna
                otra. Si no queda, el congelamiento se levanta solo; si quedaba
                una mas vieja todavia, aparece esa. */
