@@ -4178,21 +4178,6 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                             todas juntas en el extracto, a un toque del ojo de
                             al lado. */}
                         <div className="flex items-center gap-1.5 shrink-0">
-                            {/* EL OJO, el mismo extracto del módulo de pagos.
-                                Mismo icono, mismo diálogo, misma información:
-                                dos fichas distintas del mismo cliente según
-                                por qué pestaña se entre serían dos verdades. */}
-                            <Button
-                              size="icon"
-                              variant="outline"
-                              className="h-9 w-9"
-                              onClick={() => setExtractoClient(m)}
-                              title="Ver el extracto del cliente"
-                              aria-label="Ver el extracto del cliente"
-                            >
-                              <Eye className="h-[18px] w-[18px]" />
-                            </Button>
-
                             {/* EL LÁPIZ ENCIMA DE LOS TRES PUNTOS.
                                 Apilados ocupan una columna de 36px en vez de
                                 dos, y ese ancho se lo lleva el nombre del
@@ -4350,6 +4335,30 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               </DropdownMenuContent>
                             </DropdownMenu>
                             </div>{/* fin de la columna lápiz + tres puntos */}
+
+                            {/* EL OJO, AHORA A LA DERECHA.
+                                Se invirtió con el lápiz por pedido del dueño.
+                                Sigue siendo el mismo extracto del módulo de
+                                pagos: mismo icono, mismo diálogo, misma
+                                información: dos fichas distintas del mismo
+                                cliente según por qué pestaña se entre serían
+                                dos verdades.
+
+                                El bloque se movió de sitio en el JSX en vez de
+                                voltear la fila con `flex-row-reverse`: así el
+                                orden en que se recorre con el teclado y el que
+                                lee un lector de pantalla siguen siendo el que
+                                se ve. Volteando por CSS quedarían al revés. */}
+                            <Button
+                              size="icon"
+                              variant="outline"
+                              className="h-9 w-9"
+                              onClick={() => setExtractoClient(m)}
+                              title="Ver el extracto del cliente"
+                              aria-label="Ver el extracto del cliente"
+                            >
+                              <Eye className="h-[18px] w-[18px]" />
+                            </Button>
                           </div>{/* fin de los botones */}
                         </div>{/* fin de la fila texto + botones */}
                       </div>
