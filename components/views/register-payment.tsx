@@ -117,6 +117,27 @@ function leerMonto(texto: string): string {
   return `${enteros || "0"}.${partes.slice(1).join("").slice(0, 2)}`
 }
 
+/**
+ * LO QUE SE PROPONE COBRAR, TOPADO CONTRA EL SALDO.
+ *
+ * Si la cuota es de $1.000 y al cliente le quedan $800, se propone $800: los
+ * $200 de más no existen, no se le pueden cobrar y el formulario ya los
+ * rebotaba con "el monto excede el saldo" — después de que el cobrador
+ * hubiera abierto el pago y leído la cifra en voz alta.
+ *
+ * Pasa en TODA última cuota que no cierra exacta, que es la mayoría: el
+ * redondeo del script 098 deja el residuo en la última, así que la cuota
+ * nominal y lo que de verdad se debe casi nunca coinciden ahí.
+ *
+ * `Math.max(0, ...)` porque un saldo negativo —plata de más aplicada— no
+ * puede proponer un cobro en negativo.
+ */
+function montoAProponer(cuota: number, saldo: number, cuantas = 1): number {
+  const pedido = (Number(cuota) || 0) * (Number(cuantas) || 1)
+  const debe = Math.max(0, Number(saldo) || 0)
+  return Math.min(pedido, debe)
+}
+
 // Types matching DB schema
 type LoanWithClient = {
   id: string
@@ -1460,7 +1481,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     setSelectedClient(client)
     setNumCuotas(1)
     setIsPartialPayment(false)
-    setPaymentAmount(client.nextPaymentCuota.toString())
+    setPaymentAmount(montoAProponer(client.nextPaymentCuota, client.saldo).toString())
     setPaymentMethod("efectivo")
     setAccountNumber("")
     setPaymentPhoto(null)
@@ -2112,7 +2133,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     if (checked && selectedClient) {
       setPaymentAmount("")
     } else if (!checked && selectedClient) {
-      setPaymentAmount((selectedClient.nextPaymentCuota * numCuotas).toString())
+      setPaymentAmount(
+        montoAProponer(selectedClient.nextPaymentCuota, selectedClient.saldo, numCuotas).toString(),
+      )
     }
   }
 
@@ -3336,9 +3359,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               debe —contexto—, la cuota dice cuánto se le pide —la acción—. Con
               los dos del mismo color se leían como dos cifras intercambiables,
               y en la calle, a pulso, se cobra la que se lee primero. */}
-          {client.nextPaymentValorCuota > 0 && (
+          {/* TOPADA CONTRA EL SALDO, igual que la que propone el diálogo.
+              Esta cifra dice "cuánto se le pide": si dijera $1.000 sobre un
+              saldo de $800, el cobrador pediría de más y el formulario lo
+              rebotaría después. Las dos salen de `montoAProponer` para que no
+              puedan discrepar. */}
+          {montoAProponer(client.nextPaymentValorCuota, client.saldo) > 0 && (
             <span className="block text-[11px] md:text-sm font-bold text-success tabular-nums leading-tight">
-              ${Math.round(client.nextPaymentValorCuota).toLocaleString()}
+              ${Math.round(montoAProponer(client.nextPaymentValorCuota, client.saldo)).toLocaleString()}
             </span>
           )}
           {/* La multa sí se queda en la lista: es plata que
@@ -4471,7 +4499,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                     const n = Number.parseInt(value)
                     setNumCuotas(n)
                     if (!isPartialPayment && selectedClient) {
-                      setPaymentAmount((selectedClient.nextPaymentCuota * n).toString())
+                      setPaymentAmount(
+                        montoAProponer(selectedClient.nextPaymentCuota, selectedClient.saldo, n).toString(),
+                      )
                     }
                   }}
                   disabled={isPartialPayment}
