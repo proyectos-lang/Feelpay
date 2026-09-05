@@ -56,6 +56,8 @@ import {
   type Gestion,
   cuotasConDecimal,
   fmtMoneda,
+  mostrarMonto,
+  leerMonto,
 } from "@/lib/gestion-core"
 import { fmtFecha } from "@/lib/colombia-date"
 import { getRutaUmbrales, excedeUmbral, MENSAJE_REVISION, type RutaUmbrales } from "@/lib/ruta-umbrales"
@@ -86,37 +88,6 @@ const CASILLA_INFO = "h-7 md:h-10 text-xs md:text-sm font-bold casilla-info"
 
 /** La misma casilla, pero la que SE ESCRIBE: más oscura, para que el número que se teclea resalte. */
 const CASILLA_ESCRIBIBLE = "casilla-escribible"
-
-/**
- * EL MONTO, ESCRITO COMO PLATA: "$ 19.500".
- *
- * `paymentAmount` sigue guardando el número crudo —"19500" o "19500.75"—
- * porque medio módulo lo lee con `Number.parseFloat`. Lo único que cambia es
- * lo que se ve y lo que se acepta al teclear.
- *
- * SE ACEPTA LA COMA COMO DECIMAL, y no es un detalle de estilo: en Ecuador las
- * cuotas llevan centavos (el script 087 no redondea nada por debajo de $1.000),
- * así que un campo que solo tragara dígitos dejaría a esa ruta sin poder cobrar
- * $19,50. El punto es SIEMPRE separador de miles, como en el resto de la app.
- */
-function mostrarMonto(crudo: string): string {
-  if (!crudo) return ""
-  const [ent, dec] = crudo.split(".")
-  const n = Number(ent || "0")
-  const miles = Number.isFinite(n) ? n.toLocaleString("es-CO") : ent
-  return dec !== undefined ? `$ ${miles},${dec}` : `$ ${miles}`
-}
-
-function leerMonto(texto: string): string {
-  const soloValidos = texto.replace(/[^0-9,]/g, "")
-  if (!soloValidos) return ""
-  const partes = soloValidos.split(",")
-  // Se quitan los ceros de adelante para que no quede "0019500", pero un "0"
-  // solo tiene que sobrevivir: es lo que se ve mientras se borra el campo.
-  const enteros = partes[0].replace(/^0+(?=[0-9])/, "")
-  if (partes.length === 1) return enteros
-  return `${enteros || "0"}.${partes.slice(1).join("").slice(0, 2)}`
-}
 
 /**
  * LO QUE SE PROPONE COBRAR, TOPADO CONTRA EL SALDO.

@@ -56,9 +56,22 @@ input[type="number"] {
   /* El borde estaba en 0.90: sobre tarjeta blanca es prácticamente invisible
      con luz directa, y es lo único que separa un cliente del siguiente. */
   --border:             oklch(0.86 0.022 230);   /* borde visible al sol */
-  --input:              oklch(0.98 0.008 230);   /* blanco azulado */
+  /* LA CASILLA TIENE QUE VERSE A CONTRALUZ.
+     El texto de adentro nunca fue el problema: el navy sobre este fondo da
+     14:1, de sobra. Lo que no se veía era LA CASILLA. Medido contra el blanco
+     de la tarjeta que la rodea:
+
+       fondo   L 0.98 → 1.06:1     el mismo blanco, no hay casilla
+       borde   L 0.88 → 1.43:1     un hilo invisible al sol
+
+     Con el teléfono al sol eso es una tarjeta blanca lisa: el cobrador no ve
+     dónde empieza el campo ni cuántos campos hay, y termina adivinando dónde
+     tocar. El fondo baja a 0.95 y el borde a 0.64, que da 3.34:1 — el mínimo
+     que pide WCAG para que se distinga la FORMA de un control, no su texto.
+     El texto adentro queda en 14.04:1, prácticamente igual que antes. */
+  --input:              oklch(0.95 0.012 235);   /* se despega del blanco */
   --input-foreground:   oklch(0.25 0.10 260);    /* Navy texto */
-  --input-border:       oklch(0.88 0.02 230);    /* borde input azulado */
+  --input-border:       oklch(0.64 0.045 240);   /* 3.34:1 · borde que se ve */
   --ring:               oklch(0.52 0.13 245);    /* Azul Medio #2870BC */
 
   /* ── Brand (OPAD) ────────────────────────────────────────────────────────── */
@@ -309,6 +322,21 @@ input[type="number"] {
     color: var(--input-foreground) !important;
     border: 1px solid var(--input-border) !important;
     box-shadow: none !important;
+    /* EL NÚMERO QUE SE TECLEA, MÁS GRUESO.
+       Lo que se escribe en una casilla salía en peso normal —el del navegador—
+       mientras que todo lo demás de la app ya va en semibold o bold. Al sol el
+       trazo fino es lo primero que se pierde, y justo ahí es donde va la plata.
+       600 lo engrosa sin que parezca un título.
+       Van con `!important` como sus vecinas de arriba: esta regla vive en
+       `@layer base`, y una capa base PIERDE contra cualquier utilidad de
+       Tailwind puesta en el input. Sin el `!important` el navegador seguía
+       reportando peso 400 —lo comprobé midiendo el input ya pintado— y el
+       cambio no se veía en ninguna parte. */
+    font-weight: 600 !important;
+    /* Dígitos de ancho fijo: al escribir un monto las cifras dejan de bailar
+       y los grupos de miles quedan alineados, que es lo que deja contar
+       "trescientos dos mil quinientos" de un vistazo en vez de leerlo. */
+    font-variant-numeric: tabular-nums !important;
   }
 
   /* Input focus · ring sutil del brand */
@@ -326,9 +354,13 @@ input[type="number"] {
     outline: none !important;
   }
 
+  /* El placeholder estaba en 0.65: 2.79:1 sobre el fondo nuevo, por debajo
+     del 4.5:1 que necesita un texto para leerse. Es el que dice qué va en
+     cada casilla, así que al sol se perdía justo la pista. En 0.52 da 4.74:1
+     y sigue siendo claramente más tenue que lo que se escribe (14:1). */
   input::placeholder,
   textarea::placeholder {
-    color: oklch(0.65 0.04 245);
+    color: oklch(0.52 0.04 245);
   }
 
   /* ── LAS CASILLAS DEL FORMULARIO DE PAGO ─────────────────────────────────

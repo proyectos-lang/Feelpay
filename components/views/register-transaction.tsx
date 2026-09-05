@@ -17,6 +17,9 @@ import { enviarOEncolar } from "@/lib/offline-queue"
 import { guardarCache, leerCache } from "@/lib/offline-cache"
 import { todayColombia, fmtFecha } from "@/lib/colombia-date"
 import { conceptosElegiblesAMano } from "@/lib/movimientos"
+// El molde de moneda, el mismo del modulo de pagos: se teclea y se ve
+// "$ 302.500" en vez de "302500", que a contraluz hay que leer cifra por cifra.
+import { mostrarMonto, leerMonto } from "@/lib/gestion-core"
 import { getRutaItemUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre, type ItemUmbral } from "@/lib/ruta-umbrales"
 import {
   Dialog,
@@ -749,13 +752,14 @@ export function RegisterTransaction({
                   </Label>
                   <Input
                     id="incomeAmount"
-                    placeholder="0.00"
-                    type="number"
-                    step="0.01"
-                    value={incomeAmount}
+                    placeholder="$ 0"
+                    type="text"
+                    inputMode="decimal"
+                    value={mostrarMonto(incomeAmount)}
                     onChange={(e) => {
-                      setIncomeAmount(e.target.value)
-                      const valor = parseFloat(e.target.value)
+                      const crudo = leerMonto(e.target.value)
+                      setIncomeAmount(crudo)
+                      const valor = parseFloat(crudo)
                       setShowIncomeWarning(incomeTope != null && valor > incomeTope)
                     }}
                     className="h-7 md:h-10 text-[12px] md:text-sm"
@@ -898,13 +902,14 @@ export function RegisterTransaction({
                   </Label>
                   <Input
                     id="expenseAmount"
-                    placeholder="0.00"
-                    type="number"
-                    step="0.01"
-                    value={expenseAmount}
+                    placeholder="$ 0"
+                    type="text"
+                    inputMode="decimal"
+                    value={mostrarMonto(expenseAmount)}
                     onChange={(e) => {
-                      setExpenseAmount(e.target.value)
-                      const valor = parseFloat(e.target.value)
+                      const crudo = leerMonto(e.target.value)
+                      setExpenseAmount(crudo)
+                      const valor = parseFloat(crudo)
                       setShowExpenseWarning(expenseTope != null && valor > expenseTope)
                     }}
                     className="h-7 md:h-10 text-[12px] md:text-sm"
@@ -1046,13 +1051,14 @@ export function RegisterTransaction({
                   </Label>
                   <Input
                     id="withdrawalAmount"
-                    placeholder="0.00"
-                    type="number"
-                    step="0.01"
-                    value={withdrawalAmount}
+                    placeholder="$ 0"
+                    type="text"
+                    inputMode="decimal"
+                    value={mostrarMonto(withdrawalAmount)}
                     onChange={(e) => {
-                      setWithdrawalAmount(e.target.value)
-                      const valor = parseFloat(e.target.value)
+                      const crudo = leerMonto(e.target.value)
+                      setWithdrawalAmount(crudo)
+                      const valor = parseFloat(crudo)
                       setShowWithdrawalWarning(withdrawalTope != null && valor > withdrawalTope)
                     }}
                     className="h-7 md:h-10 text-[12px] md:text-sm"

@@ -522,3 +522,41 @@ export function cuotasConDecimal(
   const n = Number.isFinite(tope) && tope > 0 ? Math.min(crudo, tope) : crudo
   return (Math.max(0, n)).toFixed(1)
 }
+
+/**
+ * EL MONTO, ESCRITO COMO PLATA: "$ 19.500".
+ *
+ * Vivía dentro del módulo de pagos, que fue donde se necesitó primero. Se
+ * mudó acá porque el dueño lo pidió para toda la app: gastos, ingresos,
+ * retiros y ventas también se teclean a contraluz, y un `302500` sin puntos
+ * hay que leerlo cifra por cifra para saber si son trescientos mil o tres
+ * millones.
+ *
+ * El estado sigue guardando el número CRUDO —"19500" o "19500.75"— porque es
+ * lo que leen los `Number.parseFloat` de media app. Lo único que cambia es lo
+ * que se ve y lo que se acepta al teclear.
+ *
+ * SE ACEPTA LA COMA COMO DECIMAL, y no es un detalle de estilo: en Ecuador las
+ * cuotas llevan centavos (el script 087 no redondea nada por debajo de $1.000),
+ * así que un campo que solo tragara dígitos dejaría a esa ruta sin poder cobrar
+ * $19,50. El punto es SIEMPRE separador de miles, como en el resto de la app.
+ */
+export function mostrarMonto(crudo: string): string {
+  if (!crudo) return ""
+  const [ent, dec] = crudo.split(".")
+  const n = Number(ent || "0")
+  const miles = Number.isFinite(n) ? n.toLocaleString("es-CO") : ent
+  return dec !== undefined ? `$ ${miles},${dec}` : `$ ${miles}`
+}
+
+/** El camino de vuelta: de "$ 19.500,75" al crudo "19500.75" que se guarda. */
+export function leerMonto(texto: string): string {
+  const soloValidos = texto.replace(/[^0-9,]/g, "")
+  if (!soloValidos) return ""
+  const partes = soloValidos.split(",")
+  // Se quitan los ceros de adelante para que no quede "0019500", pero un "0"
+  // solo tiene que sobrevivir: es lo que se ve mientras se borra el campo.
+  const enteros = partes[0].replace(/^0+(?=[0-9])/, "")
+  if (partes.length === 1) return enteros
+  return `${enteros || "0"}.${partes.slice(1).join("").slice(0, 2)}`
+}
