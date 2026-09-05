@@ -417,6 +417,60 @@ input[type="number"] {
     cursor: default;
   }
 
+  /* ── LAS CASILLAS SE TIÑEN DEL COLOR DE SU PESTAÑA ───────────────────────
+     En Gasto / Ingreso / Retiro cada pestaña ya tiene su color (naranja, azul
+     y verde). Los campos de adentro salían todos del mismo gris, así que con
+     la pantalla llena no había ninguna señal de en cuál de las tres se está
+     escribiendo — y las tres son idénticas salvo por el título. Un gasto
+     metido como ingreso mueve la caja en el sentido contrario.
+
+     Ahora cada casilla lleva el tinte de su pestaña. El fondo es apenas un
+     velo (1.2:1 contra la tarjeta) porque es el BORDE el que dibuja el
+     recuadro: a L 0.62 da entre 3.4:1 y 3.7:1, por encima del 3:1 que pide
+     WCAG para la forma de un control, que fue justo lo que se arregló para
+     que se vieran al sol. El texto adentro queda sobre 13:1.
+
+     LOS MISMOS `:not()` DE SIEMPRE. La regla base de arriba pesa (0,2,1)
+     porque `:not()` cuenta lo que lleva dentro; una clase suelta pesa (0,1,1)
+     y pierde aunque lleve `!important` y vaya después. Es la misma razón por
+     la que las `casilla-*` del cobro los repiten. */
+
+  .campo-ingreso input:not([type="checkbox"]):not([type="radio"]),
+  .campo-ingreso textarea,
+  .campo-ingreso [role="combobox"],
+  .campo-ingreso [data-slot="select-trigger"],
+  .campo-ingreso button[role="combobox"] {
+    background-color: oklch(0.93 0.045 236.8) !important;
+    border-color: oklch(0.62 0.115 236.8) !important;
+  }
+
+  .campo-gasto input:not([type="checkbox"]):not([type="radio"]),
+  .campo-gasto textarea,
+  .campo-gasto [role="combobox"],
+  .campo-gasto [data-slot="select-trigger"],
+  .campo-gasto button[role="combobox"] {
+    background-color: oklch(0.93 0.045 75.2) !important;
+    border-color: oklch(0.62 0.115 75.2) !important;
+  }
+
+  .campo-retiro input:not([type="checkbox"]):not([type="radio"]),
+  .campo-retiro textarea,
+  .campo-retiro [role="combobox"],
+  .campo-retiro [data-slot="select-trigger"],
+  .campo-retiro button[role="combobox"] {
+    background-color: oklch(0.93 0.045 156.7) !important;
+    border-color: oklch(0.62 0.115 156.7) !important;
+  }
+
+  /* El campo de solo lectura —la fecha, el límite— se tiñe igual pero se deja
+     ver como lo que es: `bg-muted` lo pintaba gris y ahí se perdía el color de
+     la pestaña. Sigue sin poder tocarse; lo dice el cursor, no el color. */
+  .campo-ingreso input[readonly],
+  .campo-gasto input[readonly],
+  .campo-retiro input[readonly] {
+    opacity: 1 !important;
+  }
+
   /* SelectContent, DropdownContent, PopoverContent · sin sombra */
   [data-radix-popper-content-wrapper],
   [data-radix-select-viewport],

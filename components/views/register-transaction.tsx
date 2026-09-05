@@ -709,7 +709,7 @@ export function RegisterTransaction({
           </div>
         )}
 
-        <TabsContent value="income" className="mt-3 md:mt-6">
+        <TabsContent value="income" className="mt-3 md:mt-6 campo-ingreso">
           <Card>
             <CardHeader className="p-2 md:p-6">
               <CardTitle className="text-xs md:text-base">Información del Ingreso</CardTitle>
@@ -740,7 +740,7 @@ export function RegisterTransaction({
                     id="incomeLimite"
                     value={`$${incomeTope.toLocaleString("es-CO")}`}
                     readOnly
-                    className="h-7 md:h-10 text-[12px] md:text-sm bg-muted cursor-not-allowed"
+                    className="h-7 md:h-10 text-[12px] md:text-sm cursor-not-allowed"
                   />
                 </div>
               )}
@@ -779,7 +779,7 @@ export function RegisterTransaction({
                     type="date"
                     value={currentDate}
                     readOnly
-                    className="h-7 md:h-10 text-[12px] md:text-sm bg-muted cursor-not-allowed"
+                    className="h-7 md:h-10 text-[12px] md:text-sm cursor-not-allowed"
                   />
                 </div>
               </div>
@@ -858,7 +858,7 @@ export function RegisterTransaction({
           </Card>
         </TabsContent>
 
-        <TabsContent value="expense" className="mt-3 md:mt-6">
+        <TabsContent value="expense" className="mt-3 md:mt-6 campo-gasto">
           <Card>
             <CardHeader className="p-2 md:p-6">
               <CardTitle className="text-xs md:text-base">Información del Gasto</CardTitle>
@@ -890,7 +890,7 @@ export function RegisterTransaction({
                     id="expenseLimite"
                     value={`$${expenseTope.toLocaleString("es-CO")}`}
                     readOnly
-                    className="h-7 md:h-10 text-[12px] md:text-sm bg-muted cursor-not-allowed"
+                    className="h-7 md:h-10 text-[12px] md:text-sm cursor-not-allowed"
                   />
                 </div>
               )}
@@ -929,7 +929,7 @@ export function RegisterTransaction({
                     type="date"
                     value={currentDate}
                     readOnly
-                    className="h-7 md:h-10 text-[12px] md:text-sm bg-muted cursor-not-allowed"
+                    className="h-7 md:h-10 text-[12px] md:text-sm cursor-not-allowed"
                   />
                 </div>
               </div>
@@ -1008,7 +1008,7 @@ export function RegisterTransaction({
           </Card>
         </TabsContent>
 
-        <TabsContent value="withdrawal" className="mt-3 md:mt-6">
+        <TabsContent value="withdrawal" className="mt-3 md:mt-6 campo-retiro">
           <Card>
             <CardHeader className="p-2 md:p-6">
               <CardTitle className="text-xs md:text-base">Información del Retiro</CardTitle>
@@ -1039,7 +1039,7 @@ export function RegisterTransaction({
                     id="withdrawalLimite"
                     value={`$${withdrawalTope.toLocaleString("es-CO")}`}
                     readOnly
-                    className="h-7 md:h-10 text-[12px] md:text-sm bg-muted cursor-not-allowed"
+                    className="h-7 md:h-10 text-[12px] md:text-sm cursor-not-allowed"
                   />
                 </div>
               )}
@@ -1078,7 +1078,7 @@ export function RegisterTransaction({
                     type="date"
                     value={currentDate}
                     readOnly
-                    className="h-7 md:h-10 text-[12px] md:text-sm bg-muted cursor-not-allowed"
+                    className="h-7 md:h-10 text-[12px] md:text-sm cursor-not-allowed"
                   />
                 </div>
               </div>
