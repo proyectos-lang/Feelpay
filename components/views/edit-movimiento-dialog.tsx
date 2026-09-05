@@ -20,7 +20,7 @@ import { Loader2, Save, AlertTriangle } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
 import { editTransaction } from "@/lib/actions/edit-transaction"
-import { fmtMoneda, fmtFechaHora } from "@/lib/gestion-core"
+import { fmtMoneda, fmtFechaHora, mostrarMonto, leerMonto } from "@/lib/gestion-core"
 import { todayColombia } from "@/lib/colombia-date"
 import {
   getUsuarioSesion, movimientoAbierto, TABLA_CATALOGO, conceptosElegiblesAMano,
@@ -173,11 +173,11 @@ export function EditMovimientoDialog({ movimiento, open, onOpenChange, comoAseso
           <div className="space-y-1">
             <Label className="text-xs">Valor</Label>
             <Input
-              type="number"
-              min="0"
+              type="text"
               inputMode="decimal"
-              value={fValor}
-              onChange={(e) => setFValor(e.target.value)}
+              value={mostrarMonto(fValor)}
+              onChange={(e) => setFValor(leerMonto(e.target.value))}
+              placeholder="$ 0"
               className="h-9 text-sm"
             />
             {cambioValor && yaContabaEnCaja && (

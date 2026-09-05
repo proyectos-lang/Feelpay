@@ -546,6 +546,16 @@ export function mostrarMonto(crudo: string): string {
   const [ent, dec] = crudo.split(".")
   const n = Number(ent || "0")
   const miles = Number.isFinite(n) ? n.toLocaleString("es-CO") : ent
+  // El ",00" de un `toFixed(2)` no se muestra: varios campos derivados llegan
+  // así —"650000.00"— y en pesos colombianos esos dos ceros son ruido en la
+  // cifra que hay que leer de un vistazo.
+  //
+  // SOLO se descarta "00", los DOS dígitos completos. Descartar cualquier cero
+  // rompía el tecleo: escribiendo "19,05" se pasa por "19,0", y ahí un
+  // `Number(dec) === 0` se comía la coma y dejaba "$ 19" — no se podían
+  // escribir centavos que empiecen en cero. Con "19,0" a medias `dec` es "0",
+  // no "00", así que la coma sobrevive hasta que el número esté completo.
+  if (dec === "00") return `$ ${miles}`
   return dec !== undefined ? `$ ${miles},${dec}` : `$ ${miles}`
 }
 

@@ -46,7 +46,7 @@ import { Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { getSupabaseSafe, callRpcAtomic } from "@/lib/api-helper"
 import { enviarOEncolar } from "@/lib/offline-queue"
-import { nuevaGestionId, todayColombia, ahoraColombiaISO } from "@/lib/gestion-core"
+import { nuevaGestionId, todayColombia, ahoraColombiaISO, mostrarMonto, leerMonto } from "@/lib/gestion-core"
 import type { Frecuencia, TipoAmortizacion } from "@/lib/loan-schedule"
 
 interface EditSaleDialogProps {
@@ -329,10 +329,9 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved, clientId }: 
             <Label htmlFor="edit-valor" className="text-xs">Valor del préstamo</Label>
             <Input
               id="edit-valor"
-              type="number"
-              step="0.01"
-              value={valor}
-              onChange={(e) => setValor(e.target.value)}
+              type="text"
+              value={mostrarMonto(valor)}
+              onChange={(e) => setValor(leerMonto(e.target.value))}
               className="h-9"
             />
           </div>
@@ -462,11 +461,9 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved, clientId }: 
                   <Label htmlFor="edit-abono" className="text-xs">Valor del pago adelantado</Label>
                   <Input
                     id="edit-abono"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={valorAbono}
-                    onChange={(e) => setValorAbono(e.target.value)}
+                    type="text"
+                    value={mostrarMonto(valorAbono)}
+                    onChange={(e) => setValorAbono(leerMonto(e.target.value))}
                     className="h-9"
                     placeholder="Ej: 20000"
                   />

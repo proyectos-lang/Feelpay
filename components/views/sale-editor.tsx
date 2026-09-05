@@ -87,6 +87,8 @@ import {
   todayColombia,
   apodoSiAporta,
   type Gestion,
+  mostrarMonto,
+  leerMonto,
 } from "@/lib/gestion-core"
 import {
   buildPaymentSchedule,
@@ -1432,12 +1434,10 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
                   <Label htmlFor="se-valor" className="text-xs">Valor del préstamo</Label>
                   <Input
                     id="se-valor"
-                    type="number"
+                    type="text"
                     inputMode="decimal"
-                    min={0}
-                    step="1"
-                    value={fValor}
-                    onChange={(e) => setFValor(e.target.value)}
+                    value={mostrarMonto(fValor)}
+                    onChange={(e) => setFValor(leerMonto(e.target.value))}
                     className="h-9"
                   />
                 </div>
@@ -1949,12 +1949,10 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
               <Label htmlFor="se-c-valor" className="text-xs">Valor de la cuota</Label>
               <Input
                 id="se-c-valor"
-                type="number"
+                type="text"
                 inputMode="decimal"
-                min={0}
-                step="1"
-                value={cValor}
-                onChange={(e) => setCValor(e.target.value)}
+                value={mostrarMonto(cValor)}
+                onChange={(e) => setCValor(leerMonto(e.target.value))}
                 className="h-9"
               />
             </div>
@@ -1963,12 +1961,10 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
                 <Label htmlFor="se-c-capital" className="text-xs">Capital</Label>
                 <Input
                   id="se-c-capital"
-                  type="number"
+                  type="text"
                   inputMode="decimal"
-                  min={0}
-                  step="1"
-                  value={cCapital}
-                  onChange={(e) => setCCapital(e.target.value)}
+                  value={mostrarMonto(cCapital)}
+                  onChange={(e) => setCCapital(leerMonto(e.target.value))}
                   className="h-9"
                   placeholder="Sin cambio"
                 />
@@ -1977,12 +1973,10 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
                 <Label htmlFor="se-c-interes" className="text-xs">Interés</Label>
                 <Input
                   id="se-c-interes"
-                  type="number"
+                  type="text"
                   inputMode="decimal"
-                  min={0}
-                  step="1"
-                  value={cInteres}
-                  onChange={(e) => setCInteres(e.target.value)}
+                  value={mostrarMonto(cInteres)}
+                  onChange={(e) => setCInteres(leerMonto(e.target.value))}
                   className="h-9"
                   placeholder="Sin cambio"
                 />
@@ -2086,12 +2080,10 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
               <Label htmlFor="se-n-valor" className="text-xs">Valor de la cuota</Label>
               <Input
                 id="se-n-valor"
-                type="number"
+                type="text"
                 inputMode="decimal"
-                min={0}
-                step="1"
-                value={cValor}
-                onChange={(e) => setCValor(e.target.value)}
+                value={mostrarMonto(cValor)}
+                onChange={(e) => setCValor(leerMonto(e.target.value))}
                 className="h-9"
               />
             </div>
@@ -2100,12 +2092,10 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
                 <Label htmlFor="se-n-capital" className="text-xs">Capital</Label>
                 <Input
                   id="se-n-capital"
-                  type="number"
+                  type="text"
                   inputMode="decimal"
-                  min={0}
-                  step="1"
-                  value={cCapital}
-                  onChange={(e) => setCCapital(e.target.value)}
+                  value={mostrarMonto(cCapital)}
+                  onChange={(e) => setCCapital(leerMonto(e.target.value))}
                   className="h-9"
                   placeholder="Igual al valor"
                 />
@@ -2114,12 +2104,10 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
                 <Label htmlFor="se-n-interes" className="text-xs">Interés</Label>
                 <Input
                   id="se-n-interes"
-                  type="number"
+                  type="text"
                   inputMode="decimal"
-                  min={0}
-                  step="1"
-                  value={cInteres}
-                  onChange={(e) => setCInteres(e.target.value)}
+                  value={mostrarMonto(cInteres)}
+                  onChange={(e) => setCInteres(leerMonto(e.target.value))}
                   className="h-9"
                   placeholder="0"
                 />
@@ -2209,12 +2197,10 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
               <Label htmlFor="se-g-monto" className="text-xs">Monto corregido</Label>
               <Input
                 id="se-g-monto"
-                type="number"
+                type="text"
                 inputMode="decimal"
-                min={0}
-                step="1"
-                value={gMonto}
-                onChange={(e) => setGMonto(e.target.value)}
+                value={mostrarMonto(gMonto)}
+                onChange={(e) => setGMonto(leerMonto(e.target.value))}
                 className="h-9"
                 disabled={gestionCorrigiendo?.tipo === "no_pago"}
               />

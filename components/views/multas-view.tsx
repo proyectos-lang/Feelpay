@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
 import { Loader2, AlertTriangle, XCircle, CheckCircle2, Settings2, Save } from "lucide-react"
+import { mostrarMonto, leerMonto } from "@/lib/gestion-core"
 
 interface Multa {
   id: string
@@ -211,12 +212,12 @@ function ConfiguracionMultasTab() {
 
               {fTipoValor === "fijo" ? (
                 <Input
-                  type="number"
-                  min={0}
+                  type="text"
+                  inputMode="decimal"
                   disabled={!fHabilitada}
-                  value={fValor}
-                  onChange={(e) => setFValor(e.target.value)}
-                  placeholder="Valor de la multa en $ (ej. 10000)"
+                  value={mostrarMonto(fValor)}
+                  onChange={(e) => setFValor(leerMonto(e.target.value))}
+                  placeholder="Valor de la multa (ej. $ 10.000)"
                   className="h-9 text-sm"
                 />
               ) : (

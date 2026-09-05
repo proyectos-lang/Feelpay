@@ -22,6 +22,8 @@ import { todayColombia } from "@/lib/colombia-date"
 import {
   fmtFecha, fmtMoneda, sumarDias, ayerColombia,
   AMORTIZACIONES, etiquetaAmortizacion,
+  mostrarMonto,
+  leerMonto,
 } from "@/lib/gestion-core"
 import {
   buildPaymentSchedule, redondearCuota,
@@ -2655,10 +2657,10 @@ export function NewLoan({
                             className="h-7 flex-1 min-w-0 text-[11px] md:text-sm"
                           />
                           <Input
-                            type="number" inputMode="decimal" min="0" placeholder="Monto"
-                            value={p.monto}
+                            type="text" inputMode="decimal" placeholder="$ 0"
+                            value={mostrarMonto(p.monto)}
                             onChange={(e) => setPagosManuales((prev) => prev.map(
-                              (x) => (x.id === p.id ? { ...x, monto: e.target.value } : x),
+                              (x) => (x.id === p.id ? { ...x, monto: leerMonto(e.target.value) } : x),
                             ))}
                             className="h-7 w-28 shrink-0 text-right text-[11px] md:text-sm"
                           />
@@ -2803,13 +2805,14 @@ export function NewLoan({
               </Label>
               <Input
                 id="amount"
-                placeholder="0.00"
-                type="number"
-                step="0.01"
-                value={valor}
+                placeholder="$ 0"
+                type="text"
+                inputMode="decimal"
+                value={mostrarMonto(valor)}
                 onChange={(e) => {
-                  setValor(e.target.value)
-                  if (e.target.value) clearFieldError("amount")
+                  const crudo = leerMonto(e.target.value)
+                  setValor(crudo)
+                  if (crudo) clearFieldError("amount")
                 }}
                 className={`h-8 md:h-10 text-[11px] md:text-sm ${errCls("amount")}`}
               />
@@ -2843,9 +2846,9 @@ export function NewLoan({
               </Label>
               <Input
                 id="saldo"
-                type="number"
-                step="0.01"
-                value={valorAPagar}
+                type="text"
+                inputMode="decimal"
+                value={mostrarMonto(valorAPagar)}
                 readOnly
                 className="h-8 md:h-10 text-[11px] md:text-sm bg-muted font-semibold text-primary"
               />
@@ -2951,10 +2954,10 @@ export function NewLoan({
               </Label>
               <Input
                 id="valorCuota"
-                placeholder="0.00"
-                type="number"
-                step="0.01"
-                value={valorCuota}
+                placeholder="$ 0"
+                type="text"
+                inputMode="decimal"
+                value={mostrarMonto(valorCuota)}
                 readOnly
                 className="h-8 md:h-10 text-[11px] md:text-sm bg-muted"
               />
@@ -3065,11 +3068,11 @@ export function NewLoan({
                     </Label>
                     <Input
                       id="valorPago"
-                      type="number"
-                      placeholder="0.00"
-                      step="0.01"
-                      value={valorPago}
-                      onChange={(e) => setValorPago(e.target.value)}
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="$ 0"
+                      value={mostrarMonto(valorPago)}
+                      onChange={(e) => setValorPago(leerMonto(e.target.value))}
                       readOnly={!otroValor}
                       className="h-7 md:h-10 text-[10px] md:text-sm"
                     />

@@ -43,7 +43,7 @@ import { Loader2, Plus, ShieldCheck } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
 import { saveTransaction } from "@/lib/actions/save-transaction"
-import { fmtMoneda } from "@/lib/gestion-core"
+import { fmtMoneda, mostrarMonto, leerMonto } from "@/lib/gestion-core"
 import { todayColombia } from "@/lib/colombia-date"
 import {
   getUsuarioSesion, TIPOS_MOVIMIENTO, TABLA_CATALOGO, conceptosElegiblesAMano,
@@ -259,11 +259,11 @@ export function NuevoMovimientoDialog({ open, onOpenChange, rutaActual, rutas, o
           <div className="space-y-1">
             <Label className="text-xs">Valor</Label>
             <Input
-              type="number"
-              inputMode="numeric"
-              value={valor}
-              onChange={(e) => setValor(e.target.value)}
-              placeholder="0"
+              type="text"
+              inputMode="decimal"
+              value={mostrarMonto(valor)}
+              onChange={(e) => setValor(leerMonto(e.target.value))}
+              placeholder="$ 0"
               className="h-9 text-sm"
             />
             {Number.isFinite(valorNum) && valorNum > 0 && (
