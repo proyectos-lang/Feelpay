@@ -24,9 +24,18 @@ interface ViewExpensesIncomeProps {
   /** Ruta activa. Sin esto la pantalla mostraba los movimientos de TODAS
    *  las rutas: no hay RLS, el filtro tiene que ponerlo la consulta. */
   currentRutaId: number
+  /**
+   * El día que se está trabajando. Viene con fecha solo mientras la ruta
+   * descongelada termina de cerrar un día anterior; si no, es hoy.
+   *
+   * Sirve para dos cosas: el filtro de fechas abre en ESE día —si no, el
+   * gasto que se acaba de registrar no aparecía en la lista— y las
+   * correcciones se permiten sobre ese día en vez de sobre hoy.
+   */
+  fechaJornada?: string | null
 }
 
-export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
+export function ViewExpensesIncome({ currentRutaId, fechaJornada }: ViewExpensesIncomeProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [filteredTransactions, setFilteredTransactions] = useState<Transaction[]>([])
   const [loading, setLoading] = useState(true)
@@ -34,9 +43,17 @@ export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
   const [filterType, setFilterType] = useState("all")
   const [filterAdminStatus, setFilterAdminStatus] = useState("all")
   const [filterSecreStatus, setFilterSecreStatus] = useState("all")
-  const todayCol = todayColombia()
+  // El día de trabajo, que es el de la jornada atrasada si hay una abierta.
+  const todayCol = fechaJornada ?? todayColombia()
   const [startDate, setStartDate] = useState(todayCol)
   const [endDate, setEndDate] = useState(todayCol)
+
+  // Si el día cambia con la pantalla montada —al descongelarse la ruta— el
+  // filtro se mueve con él. Sin esto se quedaría en el día en que se abrió.
+  useEffect(() => {
+    setStartDate(todayCol)
+    setEndDate(todayCol)
+  }, [todayCol])
   // Corregir un movimiento mal registrado. El asesor solo alcanza los suyos,
   // de hoy y sin resolver — `puedeEditarComoAsesor` es quien lo decide, y el
   // servidor lo vuelve a validar por si la pantalla está vieja.
@@ -359,8 +376,8 @@ export function ViewExpensesIncome({ currentRutaId }: ViewExpensesIncomeProps) {
                 </TableHeader>
                 <TableBody>
                   {filteredTransactions.map((transaction) => {
-                    const permiso = puedeEditarComoAsesor(transaction, usuarioId)
-                    const permisoBorrar = puedeEliminar(transaction, usuarioId, { comoAsesor: true })
+                    const permiso = puedeEditarComoAsesor(transaction, usuarioId, todayCol)
+                    const permisoBorrar = puedeEliminar(transaction, usuarioId, { comoAsesor: true, dia: todayCol })
                     return (
                     <TableRow key={transaction.id}>
                       <TableCell className="text-[9px] md:text-sm">

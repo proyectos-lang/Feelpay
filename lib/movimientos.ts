@@ -138,12 +138,22 @@ export interface PermisoEdicion {
  * Tres condiciones, y el orden importa para que el mensaje sea el útil: si es
  * de otro Y de ayer, lo primero que hay que decirle es que no es suyo.
  */
-export function puedeEditarComoAsesor(m: Movimiento, userId: number | null): PermisoEdicion {
+export function puedeEditarComoAsesor(
+  m: Movimiento,
+  userId: number | null,
+  /**
+   * El día que el asesor está trabajando. Casi siempre hoy, pero cuando la
+   * ruta se descongeló para cerrar un día anterior es ESE día: los
+   * movimientos que registra son de ayer, y no poder corregirlos lo dejaría
+   * con un error escrito en piedra en la caja que justamente está cuadrando.
+   */
+  dia: string = todayColombia(),
+): PermisoEdicion {
   if (userId === null || m.adminid !== userId) {
     return { puede: false, motivo: "Solo puedes editar los movimientos que registraste tú" }
   }
-  if (tsToColombiaDate(m.fechahorasol) !== todayColombia()) {
-    return { puede: false, motivo: "Solo puedes editar los movimientos de hoy" }
+  if (tsToColombiaDate(m.fechahorasol) !== dia) {
+    return { puede: false, motivo: "Solo puedes editar los movimientos del día que estás cerrando" }
   }
   if (!movimientoAbierto(m)) {
     return { puede: false, motivo: "Ya fue aprobado o rechazado: pídele el cambio a secretaría" }
@@ -165,13 +175,14 @@ export function puedeEditarComoAsesor(m: Movimiento, userId: number | null): Per
 export function puedeEliminar(
   m: Movimiento,
   userId: number | null,
-  opts: { comoAsesor: boolean },
+  /** `dia`: igual que en editar, el día de trabajo. Por omisión, hoy. */
+  opts: { comoAsesor: boolean; dia?: string },
 ): PermisoEdicion {
   if (opts.comoAsesor && (userId === null || m.adminid !== userId)) {
     return { puede: false, motivo: "Solo puedes eliminar los movimientos que registraste tú" }
   }
-  if (tsToColombiaDate(m.fechahorasol) !== todayColombia()) {
-    return { puede: false, motivo: "Solo se pueden eliminar los movimientos de hoy" }
+  if (tsToColombiaDate(m.fechahorasol) !== (opts.dia ?? todayColombia())) {
+    return { puede: false, motivo: "Solo se pueden eliminar los movimientos del día que estás cerrando" }
   }
   if (!movimientoAbierto(m)) {
     return { puede: false, motivo: "Ya fue aprobado o rechazado: corrígelo en vez de borrarlo" }

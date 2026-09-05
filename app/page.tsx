@@ -1320,9 +1320,18 @@ export default function Page() {
           />
         )
       case "register-transaction":
-        return <RegisterTransaction onViewChange={handleViewChange} currentRutaId={rutaId} />
+        return (
+          <RegisterTransaction
+            onViewChange={handleViewChange}
+            currentRutaId={rutaId}
+            // Mientras se cierra un día atrasado, los gastos, ingresos y
+            // retiros son de ESE día. Es la misma fecha que ya reciben pagos,
+            // ventas, resumen y cierre.
+            fechaJornada={jornadaAtrasadaAbierta}
+          />
+        )
       case "view-expenses-income":
-        return <ViewExpensesIncome currentRutaId={rutaId} />
+        return <ViewExpensesIncome currentRutaId={rutaId} fechaJornada={jornadaAtrasadaAbierta} />
       case "movements":
         return <Movements />
       case "manage-users":

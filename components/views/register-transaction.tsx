@@ -15,7 +15,7 @@ import { getResumenDia } from "@/lib/resumen-dia"
 import { getSessionIdentity } from "@/lib/api-helper"
 import { enviarOEncolar } from "@/lib/offline-queue"
 import { guardarCache, leerCache } from "@/lib/offline-cache"
-import { todayColombia } from "@/lib/colombia-date"
+import { todayColombia, fmtFecha } from "@/lib/colombia-date"
 import { conceptosElegiblesAMano } from "@/lib/movimientos"
 import { getRutaItemUmbrales, excedeUmbral, MENSAJE_REVISION, getSolicitanteNombre, type ItemUmbral } from "@/lib/ruta-umbrales"
 import {
@@ -41,9 +41,25 @@ type PendingTransaction = {
   limite?: number
 }
 
+/**
+ * El instante que se guarda como `fechahorasol`.
+ *
+ * Es el MISMO criterio del diálogo de secretaría (`nuevo-movimiento-dialog`):
+ * los informes agrupan por `(fechahorasol AT TIME ZONE 'America/Bogota')::date`,
+ * así que lo único que importa es caer en el día correcto de Colombia. Para un
+ * día pasado se usa el MEDIODÍA —a las 12:00 −05:00 ninguna zona lo empuja al
+ * día vecino— y para hoy la hora real, que así el movimiento queda en su lugar
+ * dentro de la lista en vez de aparecer siempre a las 12.
+ */
+function instanteDelDia(fecha: string): string {
+  if (fecha === todayColombia()) return new Date().toISOString()
+  return new Date(`${fecha}T12:00:00-05:00`).toISOString()
+}
+
 export function RegisterTransaction({
   onViewChange,
   currentRutaId,
+  fechaJornada,
 }: {
   onViewChange?: (view: string) => void
   // ID de la ruta activa de la sesion. Se inyecta desde `app/page.tsx`
@@ -51,6 +67,18 @@ export function RegisterTransaction({
   // ingreso/gasto/retiro registrado, garantizando que cada movimiento quede
   // contabilizado en la ruta correcta del recolector logueado.
   currentRutaId?: number
+  /**
+   * EL DÍA AL QUE SE LE ESTÁN REGISTRANDO LOS MOVIMIENTOS.
+   *
+   * Normalmente no viene y todo es de hoy. Viene con fecha cuando la ruta se
+   * descongeló y está terminando de cerrar un día anterior: mientras dure eso,
+   * el gasto que se registre acá es de ESE día, no del de hoy.
+   *
+   * Sin esto, el gasto del día que se está cerrando caía en el día de hoy, y
+   * el cierre de ayer quedaba sin él. Pasó en producción: el gasto 305 de la
+   * ruta 151 quedó en el 5 de septiembre mientras se cerraba el 4.
+   */
+  fechaJornada?: string | null
 }) {
   const [activeTab, setActiveTab] = useState("income")
   const [incomePhoto, setIncomePhoto] = useState<string | null>(null)
@@ -71,7 +99,15 @@ export function RegisterTransaction({
   const [expenseLimite, setExpenseLimite] = useState<number | null>(null)
   const [withdrawalLimite, setWithdrawalLimite] = useState<number | null>(null)
 
-  const [currentDate] = useState(() => new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }))
+  /**
+   * EL DÍA DE TRABAJO. Es el de la jornada atrasada si se está cerrando una, y
+   * si no el de hoy. Es la fecha que se muestra en las tres pestañas y la que
+   * se le manda al servidor, para que lo que se ve y lo que se guarda no
+   * puedan discrepar.
+   */
+  const diaDeTrabajo = fechaJornada ?? todayColombia()
+  const esDiaAtrasado = diaDeTrabajo !== todayColombia()
+  const currentDate = diaDeTrabajo
 
   // Form values
   const [incomeAmount, setIncomeAmount] = useState<string>("")
@@ -183,7 +219,7 @@ export function RegisterTransaction({
         // —un domingo— devolvia null y ESTE AVISO SE APAGABA: justo el dia en
         // que el cobrador tiene toda la semana recaudada encima, el control de
         // "no retires mas de lo que tienes" dejaba de funcionar.
-        const { fila } = await getResumenDia(createClient(), ruta, todayColombia())
+        const { fila } = await getResumenDia(createClient(), ruta, diaDeTrabajo)
         if (!cancelado) setEfectivo(fila.efectivo)
       } catch (err) {
         console.error("[v0] No se pudo leer el efectivo de la ruta:", err)
@@ -191,7 +227,10 @@ export function RegisterTransaction({
     }
     cargar()
     return () => { cancelado = true }
-  }, [ruta])
+    // `diaDeTrabajo` va en las dependencias: al descongelarse la ruta el día
+    // cambia sin que se desmonte la pantalla, y sin esto el aviso de "no hay
+    // efectivo" seguiría comparando contra la caja del día equivocado.
+  }, [ruta, diaDeTrabajo])
 
   useEffect(() => {
     const fetchItems = async () => {
@@ -359,6 +398,9 @@ export function RegisterTransaction({
           tipo: "Ingreso",
           ruta,
           adminid,
+          // El día al que pertenece el movimiento. Sin esto el servidor le
+          // pone la hora en que llegó, que en una jornada atrasada es otro día.
+          fechaCaptura: instanteDelDia(diaDeTrabajo),
           requiresApproval: requiresApproval || false,
         },
       })
@@ -423,6 +465,9 @@ export function RegisterTransaction({
           tipo: "Gasto",
           ruta,
           adminid,
+          // El día al que pertenece el movimiento. Sin esto el servidor le
+          // pone la hora en que llegó, que en una jornada atrasada es otro día.
+          fechaCaptura: instanteDelDia(diaDeTrabajo),
           requiresApproval: requiresApproval || false,
         },
       })
@@ -487,6 +532,9 @@ export function RegisterTransaction({
           tipo: "Retiro",
           ruta,
           adminid,
+          // El día al que pertenece el movimiento. Sin esto el servidor le
+          // pone la hora en que llegó, que en una jornada atrasada es otro día.
+          fechaCaptura: instanteDelDia(diaDeTrabajo),
           requiresApproval: requiresApproval || false,
         },
       })
@@ -628,6 +676,21 @@ export function RegisterTransaction({
             Retiros
           </TabsTrigger>
         </TabsList>
+
+        {/* EL DÍA QUE SE ESTÁ CERRANDO, dicho con todas las letras.
+            La pantalla se ve igual que siempre, así que sin este aviso el
+            cobrador no tiene cómo saber que lo que registre no es de hoy. Es
+            el mismo aviso del resumen y del cierre, para que las tres
+            pantallas de la jornada atrasada se reconozcan entre sí. */}
+        {esDiaAtrasado && (
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1.5">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <p className="text-[11px] leading-snug text-foreground">
+              <span className="font-bold">Esto queda registrado el {fmtFecha(diaDeTrabajo)}</span>,
+              el día que estás cerrando — no hoy.
+            </p>
+          </div>
+        )}
 
         {/* Efectivo disponible. Solo se muestra al sacar plata (gasto o
             retiro): al registrar un ingreso no aporta y solo hace ruido. */}
