@@ -45,7 +45,7 @@
 --
 -- LA MULTA VA CON LA MISMA REGLA
 -- -------------------------------
--- `debe_generar_multa` contaba las fallas con el mismo `pp.fecha_pago < hoy`.
+-- `evaluar_multa_prestamo` contaba las fallas con el mismo `pp.fecha_pago < hoy`.
 -- Si se cambiaba solo la vista, un cliente podia verse "Al dia" en la ruta y
 -- recibir multa por esa misma cuota. Se mueven las dos juntas: una sola
 -- definicion de "vencido" en todo el sistema.
@@ -143,6 +143,13 @@ SELECT l.id  AS loan_id,
 --
 -- El ancla se busca por lo que HACE (el corte de las cuotas pendientes) y no
 -- por un texto literal con espacios, que es como se rompio el script 090.
+--
+-- OJO CON EL NOMBRE: la funcion es `evaluar_multa_prestamo`, no
+-- `debe_generar_multa`. La primera version de este script traia el segundo
+-- nombre —escrito de memoria— y abortaba diciendo "corra antes el script 047"
+-- cuando el 047 estaba corrido hace rato. El nombre sale del propio 047:
+--   evaluar_multa_prestamo(p_loan_id uuid)   <- la que decide y la que se parchea
+--   generar_multas_ruta(p_ruta_id bigint)    <- la que recorre la ruta y llama a la otra
 DO $$
 DECLARE
   v_src  text;
@@ -150,10 +157,10 @@ DECLARE
 BEGIN
   SELECT pg_get_functiondef(p.oid) INTO v_src
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname = 'public' AND p.proname = 'debe_generar_multa';
+   WHERE n.nspname = 'public' AND p.proname = 'evaluar_multa_prestamo';
 
   IF v_src IS NULL THEN
-    RAISE EXCEPTION 'No existe public.debe_generar_multa: corra antes el script 047';
+    RAISE EXCEPTION 'No existe public.evaluar_multa_prestamo: corra antes el script 047';
   END IF;
 
   -- La linea a cambiar es la del conteo de cuotas pendientes vencidas.
@@ -163,11 +170,11 @@ BEGIN
              'g');
 
   IF v_new = v_src THEN
-    RAISE EXCEPTION 'No se encontro el corte de cuotas vencidas en debe_generar_multa: revise a mano antes de seguir';
+    RAISE EXCEPTION 'No se encontro el corte de cuotas vencidas en evaluar_multa_prestamo: revise a mano antes de seguir';
   END IF;
 
   EXECUTE v_new;
-  RAISE NOTICE 'debe_generar_multa: el corte de cuotas vencidas ahora lleva un dia de gracia';
+  RAISE NOTICE 'evaluar_multa_prestamo: el corte de cuotas vencidas ahora lleva un dia de gracia';
 END $$;
 
 
@@ -184,7 +191,7 @@ SELECT COUNT(*)                                AS creditos_con_mora,
 -- Tiene que devolver `true`.
 SELECT pg_get_functiondef(p.oid) LIKE '%fecha_pago < (v_hoy - 1)%' AS multa_con_gracia
   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
- WHERE n.nspname = 'public' AND p.proname = 'debe_generar_multa';
+ WHERE n.nspname = 'public' AND p.proname = 'evaluar_multa_prestamo';
 
 
 -- -- PASO 6) Quien sigue en mora, y desde cuando (SOLO LECTURA) --------------
