@@ -3619,9 +3619,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                   const yellowCount = preFilteredClients.filter(c => c.mora > 4 && c.mora <= 8).length
                   const redCount = preFilteredClients.filter(c => c.mora > 8).length
                   const items = [
-                    { id: "green" as const, bg: "bg-green-500", ring: "ring-green-400", count: greenCount, label: "0-4 días de mora" },
-                    { id: "yellow" as const, bg: "bg-yellow-500", ring: "ring-yellow-400", count: yellowCount, label: "5-8 días de mora" },
-                    { id: "red" as const, bg: "bg-red-500", ring: "ring-red-400", count: redCount, label: "Más de 8 días de mora" },
+                    // SON CUOTAS, NO DIAS. El numero que se filtra es
+                    // `cuotas_mora`, que cuenta CUOTAS vencidas sin cubrir; el
+                    // resto de la app ya lo dice asi ("Mora: 3", "3 cuotas").
+                    // Estos tres rotulos eran los ultimos que quedaban
+                    // hablando de dias, y en una ruta semanal 4 cuotas son
+                    // casi un mes: llamarlas "4 dias" es otra cifra.
+                    { id: "green" as const, bg: "bg-green-500", ring: "ring-green-400", count: greenCount, label: "0-4 cuotas de mora" },
+                    { id: "yellow" as const, bg: "bg-yellow-500", ring: "ring-yellow-400", count: yellowCount, label: "5-8 cuotas de mora" },
+                    { id: "red" as const, bg: "bg-red-500", ring: "ring-red-400", count: redCount, label: "Más de 8 cuotas de mora" },
                   ]
                   return (
                     <div className="flex items-center gap-1.5 ml-1">
