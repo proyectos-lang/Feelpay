@@ -118,19 +118,25 @@ export function CierreCaja({
    * lista cliente por cliente, que es exactamente lo que se reportó.
    */
   useEffect(() => {
-    // EN UN CIERRE ATRASADO ESTA PREGUNTA NO APLICA.
+    // EN UN CIERRE ATRASADO SE PREGUNTA POR EL DIA QUE SE ESTA CERRANDO.
     //
-    // `clientesSinGestionarHoy` responde por HOY: quien tiene saldo hoy y a
-    // quien le falta el evento de hoy. Contra una jornada de ayer daria la
-    // respuesta de otro dia, y ademas serviria para bloquear algo que ya no
-    // se puede arreglar: nadie puede volver a ayer a visitar al que no se
-    // visito. El dia ya paso; lo que falta es cuadrar la caja y seguir.
-    if (esAtrasado) { setLoadingPagos(false); return }
+    // Antes esta pregunta se saltaba entera cuando el cierre era atrasado,
+    // porque la funcion solo sabia contestar por HOY y contra una jornada de
+    // ayer habria dado la respuesta de otro dia. El efecto secundario fue que
+    // se perdio el bloqueo: con la ruta descongelada se podia cerrar dejando
+    // clientes sin visitar, que es justo lo que este cierre tiene que impedir.
+    //
+    // Ahora la funcion recibe el dia (`fecha`), asi que la respuesta es la del
+    // dia correcto y el requisito vuelve a correr en los dos casos.
+    //
+    // Y SI SE PUEDE ARREGLAR: con la ruta descongelada el cobrador termina de
+    // registrar los pagos y no pagos que le faltaron de ese dia — para eso se
+    // descongela. Cerrar sin eso deja el dia incompleto para siempre.
     let vigente = true
     const fetchPendientes = async () => {
       try {
         setLoadingPagos(true)
-        const r = await clientesSinGestionarHoy(createClient(), { rutaId })
+        const r = await clientesSinGestionarHoy(createClient(), { rutaId, fecha: fechaCierre })
         if (!vigente) return
         setPagosPendientes(r.sinGestionar.length)
         setNombresPendientes(r.sinGestionar)
@@ -149,7 +155,10 @@ export function CierreCaja({
 
     fetchPendientes()
     return () => { vigente = false }
-  }, [rutaId, esAtrasado])
+    // `fechaCierre` va en las dependencias porque ahora es lo que se consulta:
+    // al descongelarse la ruta el dia cambia sin desmontar la pantalla, y sin
+    // esto se quedaria mostrando los pendientes del dia anterior.
+  }, [rutaId, fechaCierre])
 
   // Operaciones capturadas sin conexion que aun no llegan al servidor. El
   // cierre suma TODO el dia, asi que con pendientes en cola los totales
@@ -161,14 +170,17 @@ export function CierreCaja({
     return suscribirCola(leer)
   }, [])
 
-  // En un cierre atrasado el requisito de "todos gestionados" no corre (ver
-  // arriba). La COLA si: una operacion capturada sin conexion puede ser
-  // justamente de ese dia, y cerrar antes de que llegue dejaria los totales
-  // cortos para siempre.
-  const pagosCumple = esAtrasado || pagosPendientes === 0
+  // EL REQUISITO DE "TODOS GESTIONADOS" CORRE SIEMPRE, tambien en el cierre
+  // atrasado. Llevaba un `esAtrasado ||` que lo apagaba, y con eso se podia
+  // cerrar dejando clientes sin visitar.
+  //
+  // La COLA tambien: una operacion capturada sin conexion puede ser justo de
+  // ese dia, y cerrar antes de que llegue dejaria los totales cortos para
+  // siempre.
+  const pagosCumple = pagosPendientes === 0
   const operacionesCumple = operacionesPendientes.length === 0
   const colaCumple = sinSincronizar === 0
-  const puedesCerrar = pagosCumple && operacionesCumple && colaCumple && (esAtrasado || !loadingPagos)
+  const puedesCerrar = pagosCumple && operacionesCumple && colaCumple && !loadingPagos
 
   // ── Datos reales del cierre ────────────────────────────────────────────
   // Fuentes: resumen_diario_v2 (misma vista que Resumen del Día — los números

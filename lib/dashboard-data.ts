@@ -386,7 +386,21 @@ export type FrecuenciaKey = "diario" | "semanal" | "quincenal" | "mensual"
 
 export async function clientesSinGestionarHoy(
   supabase: SupabaseClient,
-  args: { rutaId: number; userId?: number | string | null; rol?: string | null },
+  args: {
+    rutaId: number
+    userId?: number | string | null
+    rol?: string | null
+    /**
+     * EL DIA QUE SE ESTA PREGUNTANDO. Por omision, hoy.
+     *
+     * Viene con fecha cuando se esta cerrando una jornada atrasada: ahi la
+     * pregunta no es "quien falta hoy" sino "quien quedo sin visitar ESE dia".
+     * Sin esto la funcion contestaba siempre por hoy, y el cierre atrasado
+     * tenia que saltarse el requisito entero para no dar la respuesta de otro
+     * dia — que es como se perdio el bloqueo por clientes pendientes.
+     */
+    fecha?: string | null
+  },
 ): Promise<{
   total: number
   sinGestionar: string[]
@@ -396,7 +410,8 @@ export async function clientesSinGestionarHoy(
   porFrecuencia: Record<FrecuenciaKey, { pagos: number; total: number }>
 }> {
   const datos = await loadDashboardPagos(supabase, args)
-  const hoy = todayColombia()
+  // `hoy` es el dia que se pregunta, que casi siempre es hoy de verdad.
+  const hoy = args.fecha ?? todayColombia()
 
   // A QUIÉN LE TOCABA HOY.
   //
