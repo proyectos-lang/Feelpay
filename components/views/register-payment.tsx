@@ -3695,7 +3695,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               // no son tarea de hoy, y contarlos dejaba el avance en "41 de 42"
               // para siempre. Es el mismo criterio que usa el cierre de caja
               // (`clientesSinGestionarHoy`), para que los dos no discrepen.
-              const total = gestionados + sinGestionar.filter((c) => !c.nextPaymentEsFuturo).length
+              // Y tampoco el NO DIARIO al que hoy no le toca: un semanal de
+              // martes no es tarea del sabado. Es la misma condicion que usa
+              // el cierre; sin ella la barra pedia gente que el cierre no
+              // exigia y nunca llegaba a "X de X".
+              const total =
+                gestionados +
+                sinGestionar.filter(
+                  (c) =>
+                    !c.nextPaymentEsFuturo &&
+                    (c.frecuenciaPago === "daily" || c.nextPaymentFecha === diaDeTrabajo),
+                ).length
               if (total === 0) return null
               const recaudado = managedToday.reduce((s, m) => s + (m.valorAbonado || 0), 0)
               const pct = Math.round((gestionados / total) * 100)

@@ -444,8 +444,43 @@ export async function clientesSinGestionarHoy(
   //
   // Sigue apareciendo en la lista de pagos —se le puede cobrar por adelantado
   // si el cliente quiere— pero no cuenta como tarea del día.
+  //
+  // Y NO CUENTA EL SEMANAL AL QUE HOY NO LE TOCA. La condicion era
+  // `fecha_pago <= hoy`, o sea "tiene alguna cuota ya vencida". Para un
+  // credito diario da lo mismo —le toca todos los dias— pero para uno semanal
+  // significaba que UNA cuota atrasada lo volvia tarea de TODOS los dias
+  // siguientes, y el cierre se bloqueaba cada dia hasta que pagara.
+  //
+  // Es lo que se reporto: cerrando el sabado 05/09 en la 196 aparecian REBECA
+  // GISELE y TEGLIA DIEGO OSCAR, los dos semanales de MARTES. El sabado no
+  // habia nada que cobrarles.
+  //
+  // Medido en la cartera: 11 creditos no diarios, 5 de ellos arrastrando una
+  // cuota vencida en 3 rutas. Esos 5 bloqueaban el cierre todos los dias.
+  //
+  // LA REGLA: el DIARIO cuenta como siempre (le toca todos los dias); el NO
+  // diario cuenta solo el dia en que le cae una cuota.
+  //
+  // Se probo pedir que la cuota cayera exactamente ese dia PARA TODOS, y esta
+  // mal: los domingos no se generan cuotas, asi que el denominador de una ruta
+  // diaria se iba a CERO y el cierre dejaba de exigir nada. Medido en la 190:
+  // 48 clientes el domingo pasaban a 0. Con esta regla se queda en 47.
+  //
+  // OJO: esto NO saca a nadie de la lista de cobro. La ruta se pasa todos los
+  // dias y el cliente sigue ahi para cobrarle si se puede; lo que cambia es
+  // que no es obligatorio gestionarlo para poder cerrar. Que siga debiendo lo
+  // dice la mora, que es donde tiene que decirse.
+  const esNoDiario = new Set(
+    datos.loans.filter((l) => (l.frecuencia_pago ?? "daily") !== "daily").map((l) => l.id),
+  )
+  const cuotaEseDia = new Set(
+    datos.allPaymentPlans.filter((p) => p.fecha_pago === hoy).map((p) => p.loan_id),
+  )
   const tieneAlgoQueCobrar = new Set(
-    datos.allPaymentPlans.filter((p) => p.fecha_pago <= hoy).map((p) => p.loan_id),
+    datos.allPaymentPlans
+      .filter((p) => p.fecha_pago <= hoy)
+      .map((p) => p.loan_id)
+      .filter((id) => !esNoDiario.has(id) || cuotaEseDia.has(id)),
   )
 
   // QUIEN TENIA ALGO QUE HACER HOY.
