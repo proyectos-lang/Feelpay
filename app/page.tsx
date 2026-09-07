@@ -1300,7 +1300,16 @@ export default function Page() {
       case "documentos":
         return <DocumentosView currentUser={currentUser!} />
       case "mi-perfil":
-        return <MiPerfil currentUser={currentUser!} onUserUpdate={handleUserUpdate} />
+        return (
+          <MiPerfil
+            currentUser={currentUser!}
+            onUserUpdate={handleUserUpdate}
+            // La unidad con la que se entro: el logo es de ella, no de la
+            // persona, y sin esto la tarjeta del logo no se puede mostrar.
+            rutaId={rutaId}
+            rutaNombre={selectedRuta?.nombre ?? null}
+          />
+        )
       case "daily-route":
         return <DailyRoute />
       case "configure-route":

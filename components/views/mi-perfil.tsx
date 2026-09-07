@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
-import { Camera, KeyRound, Loader2, ShieldAlert, User as UserIcon } from "lucide-react"
+import { Camera, KeyRound, Loader2, ShieldAlert, User as UserIcon, Upload } from "lucide-react"
 import { cambiarPin, pinSigueEnDefault, requierePin } from "@/lib/pin-lock"
 import type { AuthenticatedUser } from "./login-view"
 
@@ -20,11 +20,99 @@ const UNSUPPORTED_IMAGE_TYPES = ["image/heic", "image/heif"]
 interface MiPerfilProps {
   currentUser: AuthenticatedUser
   onUserUpdate: (user: AuthenticatedUser) => void
+  /**
+   * La unidad con la que se entro. Sirve para el LOGO, que es de la unidad y
+   * no de la persona. Si no viene (0) la tarjeta del logo no se muestra: sin
+   * saber a que unidad pertenece no hay donde guardarlo.
+   */
+  rutaId?: number
+  rutaNombre?: string | null
 }
 
-export function MiPerfil({ currentUser, onUserUpdate }: MiPerfilProps) {
+export function MiPerfil({ currentUser, onUserUpdate, rutaId, rutaNombre }: MiPerfilProps) {
   const { toast } = useToast()
   const [uploading, setUploading] = useState(false)
+
+  // ── EL LOGO DE LA UNIDAD ────────────────────────────────────────────────
+  // Es OTRA imagen que la foto de arriba. La foto es de la PERSONA que entra
+  // y sale en el menu; el logo es de la UNIDAD y sale en el encabezado del
+  // recibo que se le entrega al cliente. Viven en columnas distintas
+  // (`usuarios.foto_url` y `ruta_config_umbrales.logo_url`) y ninguna pisa a
+  // la otra.
+  //
+  // Tambien se puede poner desde Usuarios y Rutas, pero ese modulo es solo de
+  // secretaria: la unidad que entra con su propio usuario no lo ve, y era
+  // justo quien queria cambiar su logo.
+  const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  const [subiendoLogo, setSubiendoLogo] = useState(false)
+  const [cargandoLogo, setCargandoLogo] = useState(true)
+
+  useEffect(() => {
+    if (!rutaId) { setCargandoLogo(false); return }
+    let vigente = true
+    ;(async () => {
+      try {
+        const { data } = await createClient()
+          .from("ruta_config_umbrales")
+          .select("logo_url")
+          .eq("ruta_id", rutaId)
+          .maybeSingle()
+        if (vigente) setLogoUrl((data as { logo_url: string | null } | null)?.logo_url ?? null)
+      } catch (err) {
+        console.error("[v0] No se pudo leer el logo de la unidad:", err)
+      } finally {
+        if (vigente) setCargandoLogo(false)
+      }
+    })()
+    return () => { vigente = false }
+  }, [rutaId])
+
+  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (!file || !rutaId) return
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Archivo invalido", description: "Selecciona una imagen.", variant: "destructive" })
+      return
+    }
+    if (UNSUPPORTED_IMAGE_TYPES.includes(file.type.toLowerCase())) {
+      toast({
+        title: "Formato no compatible",
+        description: "Las imagenes HEIC/HEIF no se ven en el recibo. Usa JPG o PNG.",
+        variant: "destructive",
+      })
+      return
+    }
+    setSubiendoLogo(true)
+    try {
+      const fd = new FormData()
+      fd.append("file", file)
+      fd.append("folder", `logos/${rutaId}`)
+      const res = await fetch("/api/upload-photo", { method: "POST", body: fd })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? "Error al subir la imagen")
+
+      // Upsert y no update: una unidad puede no tener fila de configuracion
+      // todavia (hay 10 rutas y 7 filas), y un update sobre nada no falla
+      // pero tampoco guarda.
+      const { error } = await createClient()
+        .from("ruta_config_umbrales")
+        .upsert({ ruta_id: rutaId, logo_url: json.url }, { onConflict: "ruta_id" })
+      if (error) throw error
+
+      setLogoUrl(json.url)
+      toast({ title: "Logo actualizado", description: "Ya sale en los recibos de esta unidad." })
+    } catch (err) {
+      console.error("[v0] Error subiendo el logo de la unidad:", err)
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "No se pudo subir el logo",
+        variant: "destructive",
+      })
+    } finally {
+      setSubiendoLogo(false)
+    }
+  }
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -118,6 +206,58 @@ export function MiPerfil({ currentUser, onUserUpdate }: MiPerfilProps) {
       {/* A quien nunca se le pide el PIN no se le ofrece cambiarlo, y sobre
           todo no se le avisa que "sigue en 0000": seria pedirle que arregle
           una cerradura que su puerta no tiene. */}
+      {/* ── EL LOGO DE LA UNIDAD ─────────────────────────────────────────
+          Va DEBAJO de la foto y con su propio titulo, porque la confusion
+          entre las dos es justo lo que hay que evitar: arriba la persona,
+          aca la unidad. Solo aparece si se sabe con que unidad se entro. */}
+      {rutaId ? (
+        <div className="rounded-xl border bg-card p-4 space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold leading-tight">Logo de la unidad</h3>
+            <p className="text-[11px] text-muted-foreground">
+              Sale en el encabezado de los recibos{rutaNombre ? ` de ${rutaNombre}` : ""}. Es distinto
+              de tu foto de perfil: esta es la marca de la unidad, no tuya.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="h-16 w-16 shrink-0 rounded-lg border bg-white grid place-items-center overflow-hidden">
+              {cargandoLogo ? (
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              ) : logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={logoUrl} alt="Logo de la unidad" className="h-full w-full object-contain" />
+              ) : (
+                <span className="text-[10px] text-muted-foreground text-center leading-tight px-1">
+                  Sin logo
+                </span>
+              )}
+            </div>
+            <div className="flex-1 min-w-0 space-y-1.5">
+              <label
+                htmlFor="unidad-logo-input"
+                className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer hover:bg-accent transition-colors"
+              >
+                {subiendoLogo
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <Upload className="h-3.5 w-3.5" />}
+                {subiendoLogo ? "Subiendo..." : logoUrl ? "Cambiar logo" : "Subir logo"}
+              </label>
+              <input
+                id="unidad-logo-input"
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={subiendoLogo}
+                onChange={handleLogoChange}
+              />
+              <p className="text-[10px] text-muted-foreground">
+                {logoUrl ? "Se guarda al subirlo." : "Sin logo propio se usa el de la app."}
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {requierePin(currentUser.rol) && <CambiarPinCard userId={currentUser.id} />}
     </div>
   )
