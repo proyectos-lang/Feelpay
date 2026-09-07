@@ -1157,6 +1157,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       // eventos de hoy y ayer. Sin RLS: cada consulta filtra por ruta.
       const dashboard = await loadDashboardPagos(supabase, {
         rutaId: currentRutaId,
+        // El dia que se esta cerrando, para que sus eventos entren en la
+        // ventana de datos. Cerrando el 5 un dia 7, "desde ayer" los dejaba
+        // fuera y el gestionado se devolvia solo a Pendientes.
+        desde: diaDeTrabajo,
       })
       if (fetchDataTokenRef.current !== myToken) return
 

@@ -172,6 +172,17 @@ export async function loadDashboardPagos(
     rutaId: number
     userId?: number | string | null
     rol?: string | null
+    /**
+     * DESDE QUE DIA SE TRAEN LOS EVENTOS. Por omision, ayer.
+     *
+     * Viene con fecha cuando se esta cerrando una jornada atrasada de hace
+     * mas de un dia. Sin esto la ventana era siempre "ayer en adelante", y
+     * cerrando el 5 un martes 7 las gestiones del 5 quedaban FUERA: el
+     * no pago se guardaba bien en el servidor, pero al refrescar la lista no
+     * venia en los datos y el cliente volvia a Pendientes. La barra avanzaba
+     * y se devolvia sola.
+     */
+    desde?: string | null
   },
 ): Promise<DashboardPagosResult> {
   // Sin conexion servimos lo ultimo que se trajo del servidor HOY para esta
@@ -197,7 +208,12 @@ export async function loadDashboardPagos(
   //
   // Se traen desde AYER porque el flujo "ayer no se gestiono" necesita saber
   // que paso ese dia para ofrecer la gestion retro.
-  const desde = ayerColombia()
+  //
+  // Cerrando una jornada mas vieja, la ventana tiene que llegar hasta ESE dia
+  // o sus eventos no entran en los datos y la pantalla no puede mostrarlos.
+  // Se toma el MENOR de los dos: nunca se acorta la ventana, solo se alarga.
+  const ayer = ayerColombia()
+  const desde = args.desde && args.desde < ayer ? args.desde : ayer
 
   const [loansRes, gesRes] = await Promise.all([
     todasLasFilas<LoanWithClient>((d, h) =>
@@ -409,7 +425,10 @@ export async function clientesSinGestionarHoy(
   /** Lo mismo, partido por frecuencia de pago del crédito. */
   porFrecuencia: Record<FrecuenciaKey, { pagos: number; total: number }>
 }> {
-  const datos = await loadDashboardPagos(supabase, args)
+  // `desde` se deriva de `fecha`: preguntando por un dia viejo hay que traer
+  // sus eventos, o la respuesta seria "no gestiono a nadie" simplemente
+  // porque sus gestiones quedaron fuera de la ventana de datos.
+  const datos = await loadDashboardPagos(supabase, { ...args, desde: args.fecha ?? null })
   // `hoy` es el dia que se pregunta, que casi siempre es hoy de verdad.
   const hoy = args.fecha ?? todayColombia()
 
