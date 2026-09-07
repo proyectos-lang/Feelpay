@@ -329,10 +329,25 @@ async function enviarItem(item: ItemCola): Promise<AtomicRpcResult> {
   if (item.tipo === "transaccion") {
     // Las transacciones (gasto/ingreso/retiro) pasan por un server action.
     const { saveTransaction } = await import("@/lib/actions/save-transaction")
+    // EL `fechaCaptura` DEL PAYLOAD MANDA SOBRE `capturadoEn`.
+    //
+    // `capturadoEn` es el instante en que el item entro a la cola, y sirve
+    // para lo que fue puesto: un gasto capturado a las 3pm sin senal que se
+    // sincroniza a las 6pm tiene que quedar a las 3pm, no a las 6.
+    //
+    // Pero se estaba escribiendo DESPUES del spread, asi que pisaba tambien
+    // el `fechaCaptura` que la pantalla manda a proposito cuando se esta
+    // cerrando una jornada atrasada. Resultado: el gasto del dia que se
+    // cierra caia igual en el dia de hoy, aunque la pantalla dijera —bien—
+    // "esto queda registrado el 05/09". Pasa online tambien: todo movimiento
+    // entra por esta cola.
+    //
+    // Ahora `capturadoEn` es el RESPALDO, no el que pisa.
+    const payloadTx = item.payload as unknown as Parameters<typeof saveTransaction>[0]
     const res = await saveTransaction({
-      ...(item.payload as unknown as Parameters<typeof saveTransaction>[0]),
+      ...payloadTx,
       idempotencyKey: item.id,
-      fechaCaptura: item.capturadoEn,
+      fechaCaptura: payloadTx.fechaCaptura ?? item.capturadoEn,
     })
     if (!res.success && res.error !== "limit_exceeded") {
       throw new Error(res.error ?? "No se pudo guardar el movimiento")
