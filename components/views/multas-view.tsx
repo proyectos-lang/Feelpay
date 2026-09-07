@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
-import { Loader2, AlertTriangle, XCircle, CheckCircle2, Settings2, Save } from "lucide-react"
+import { Loader2, AlertTriangle, XCircle, CheckCircle2, Settings2, Save, Upload } from "lucide-react"
 import { mostrarMonto, leerMonto } from "@/lib/gestion-core"
 
 interface Multa {
@@ -64,12 +64,68 @@ function ConfiguracionMultasTab() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
+  /**
+   * SUBIR EL LOGO DESDE EL TELEFONO.
+   *
+   * El campo solo aceptaba una direccion pegada a mano, y por eso ninguna de
+   * las 7 rutas tenia logo: para llenarlo habia que subir la imagen a otro
+   * lado primero y copiar el enlace. Ahora se elige el archivo y la direccion
+   * se llena sola.
+   *
+   * Va al mismo `/api/upload-photo` que usan las fotos de gasto y de perfil
+   * —una sola puerta para subir imagenes— en la carpeta `logos/<ruta>`.
+   *
+   * NO guarda por su cuenta: deja la direccion en el campo y el usuario le da
+   * a Guardar como con todo lo demas. Asi se puede ver la vista previa antes
+   * de dejarlo fijo, y arrepentirse sin haber escrito nada.
+   */
+  const handleSubirLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (!file) return
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Archivo invalido", description: "Selecciona una imagen.", variant: "destructive" })
+      return
+    }
+    // HEIC/HEIF no lo pinta el navegador: el logo saldria en blanco en el
+    // recibo y nadie sabria por que. Es la misma guarda de `mi-perfil`.
+    if (/heic|heif/i.test(file.type)) {
+      toast({
+        title: "Formato no compatible",
+        description: "Las imagenes HEIC/HEIF no se ven en el recibo. Usa JPG o PNG.",
+        variant: "destructive",
+      })
+      return
+    }
+    setSubiendoLogo(true)
+    try {
+      const fd = new FormData()
+      fd.append("file", file)
+      fd.append("folder", `logos/${selectedRutaId ?? "sin-ruta"}`)
+      const res = await fetch("/api/upload-photo", { method: "POST", body: fd })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? "No se pudo subir la imagen")
+      setFLogoUrl(json.url)
+      toast({ title: "Logo cargado", description: "Dale a Guardar para dejarlo en la ruta." })
+    } catch (err) {
+      console.error("[v0] Error subiendo el logo de la ruta:", err)
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "No se pudo subir el logo",
+        variant: "destructive",
+      })
+    } finally {
+      setSubiendoLogo(false)
+    }
+  }
+
   const [fHabilitada, setFHabilitada] = useState(false)
   const [fCuotas, setFCuotas] = useState("")
   const [fTipoValor, setFTipoValor] = useState<"fijo" | "cuotas">("fijo")
   const [fValor, setFValor] = useState("")
   const [fCantidadCuotas, setFCantidadCuotas] = useState("")
   const [fLogoUrl, setFLogoUrl] = useState("")
+  const [subiendoLogo, setSubiendoLogo] = useState(false)
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
@@ -243,14 +299,41 @@ function ConfiguracionMultasTab() {
                 porque esta es la pantalla de configuración por ruta. */}
             <div className="space-y-1.5 pt-3 border-t">
               <Label className="text-sm">Logo de la ruta (opcional)</Label>
-              <Input
-                value={fLogoUrl}
-                onChange={(e) => setFLogoUrl(e.target.value)}
-                placeholder="https://... (dirección de la imagen)"
-                className="h-9 text-sm"
-              />
+              {/* SE ELIGE EL ARCHIVO, no se pega una direccion.
+                  El campo de texto se queda —sirve para pegar un enlace que
+                  ya se tenga, o para borrarlo— pero el camino normal es el
+                  boton: subir a mano obligaba a publicar la imagen en otro
+                  lado primero, y por eso ninguna ruta tenia logo. */}
+              <div className="flex items-center gap-2">
+                <Input
+                  value={fLogoUrl}
+                  onChange={(e) => setFLogoUrl(e.target.value)}
+                  placeholder="Sin logo — se usa el de la app"
+                  className="h-9 text-sm flex-1 min-w-0"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-9 shrink-0 gap-1.5 text-xs"
+                  disabled={subiendoLogo}
+                  onClick={() => document.getElementById("logo-ruta-file")?.click()}
+                >
+                  {subiendoLogo
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <Upload className="h-3.5 w-3.5" />}
+                  {subiendoLogo ? "Subiendo..." : "Subir"}
+                </Button>
+                <input
+                  id="logo-ruta-file"
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleSubirLogo}
+                />
+              </div>
               <p className="text-[11px] text-muted-foreground">
-                Aparece en el recibo de pago de esta ruta. Si se deja vacío se usa el logo de la app.
+                Aparece en el encabezado del recibo de pago de esta ruta. Si se deja vacío se usa el logo de la app.
               </p>
               {fLogoUrl.trim() && (
                 <div className="flex items-center gap-2 pt-1">
