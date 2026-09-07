@@ -40,8 +40,14 @@ import { todayColombia } from "@/lib/colombia-date"
 
 const PREFIJO = "aplazados"
 
-function clave(rutaId: number): string {
-  return `${PREFIJO}_${rutaId}_${todayColombia()}`
+/**
+ * `dia` es el dia de trabajo, que casi siempre es hoy. Viene con fecha cuando
+ * se esta cerrando una jornada atrasada: los aplazados de ESE dia van en su
+ * propia llave, o el cobrador aplazaria contra el dia equivocado y no volveria
+ * a encontrar lo que aplazo.
+ */
+function clave(rutaId: number, dia?: string | null): string {
+  return `${PREFIJO}_${rutaId}_${dia || todayColombia()}`
 }
 
 /**
@@ -56,11 +62,11 @@ function clave(rutaId: number): string {
  * Un teléfono que aplazó clientes esta mañana tiene ese formato en disco, y
  * descartarlo le devolvería los clientes a la ruta a media jornada.
  */
-export function leerAplazados(rutaId: number): Map<string, string> {
+export function leerAplazados(rutaId: number, dia?: string | null): Map<string, string> {
   const m = new Map<string, string>()
   if (typeof window === "undefined") return m
   try {
-    const raw = localStorage.getItem(clave(rutaId))
+    const raw = localStorage.getItem(clave(rutaId, dia))
     if (!raw) return m
     const dato = JSON.parse(raw) as unknown
     if (Array.isArray(dato)) {
@@ -77,12 +83,12 @@ export function leerAplazados(rutaId: number): Map<string, string> {
   return m
 }
 
-function guardar(rutaId: number, m: Map<string, string>): void {
+function guardar(rutaId: number, m: Map<string, string>, dia?: string | null): void {
   if (typeof window === "undefined") return
   try {
-    if (m.size === 0) localStorage.removeItem(clave(rutaId))
-    else localStorage.setItem(clave(rutaId), JSON.stringify(Object.fromEntries(m)))
-    limpiarViejos()
+    if (m.size === 0) localStorage.removeItem(clave(rutaId, dia))
+    else localStorage.setItem(clave(rutaId, dia), JSON.stringify(Object.fromEntries(m)))
+    limpiarViejos(dia)
   } catch (err) {
     console.warn("[v0] No se pudieron guardar los aplazados:", err)
   }
@@ -117,17 +123,17 @@ export function horaDeAplazado(valor: string | undefined | null): string {
   })
 }
 
-export function aplazar(rutaId: number, loanId: string): Map<string, string> {
-  const m = leerAplazados(rutaId)
+export function aplazar(rutaId: number, loanId: string, dia?: string | null): Map<string, string> {
+  const m = leerAplazados(rutaId, dia)
   m.set(loanId, instanteAhora())
-  guardar(rutaId, m)
+  guardar(rutaId, m, dia)
   return m
 }
 
-export function quitarAplazado(rutaId: number, loanId: string): Map<string, string> {
-  const m = leerAplazados(rutaId)
+export function quitarAplazado(rutaId: number, loanId: string, dia?: string | null): Map<string, string> {
+  const m = leerAplazados(rutaId, dia)
   m.delete(loanId)
-  guardar(rutaId, m)
+  guardar(rutaId, m, dia)
   return m
 }
 
@@ -139,8 +145,11 @@ export function quitarAplazado(rutaId: number, loanId: string): Map<string, stri
  * trescientos días llena la cuota y hace fallar escrituras que sí importan.
  * Se limpia al guardar, que es cuando ya se está tocando el almacenamiento.
  */
-function limpiarViejos(): void {
+function limpiarViejos(dia?: string | null): void {
   const hoy = todayColombia()
+  // El dia que se esta trabajando NO se barre aunque no sea hoy: cerrando una
+  // jornada vieja, sus aplazados son los que se estan usando ahora mismo.
+  const enUso = dia || hoy
   try {
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const k = localStorage.key(i)
@@ -148,7 +157,7 @@ function limpiarViejos(): void {
       // Se borra por FECHA, no por "toda llave que no sea la mía". Una
       // secretaría que mira dos rutas el mismo día tiene una marca por cada
       // una, y guardar la de una borraría la de la otra.
-      if (!k.endsWith(`_${hoy}`)) localStorage.removeItem(k)
+      if (!k.endsWith(`_${hoy}`) && !k.endsWith(`_${enUso}`)) localStorage.removeItem(k)
     }
   } catch {
     /* modo privado */

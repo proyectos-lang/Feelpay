@@ -423,7 +423,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   // `loanId → hora`. La hora se muestra en la tarjeta de Gestionados, donde
   // todas las demás la llevan.
   const [aplazados, setAplazados] = useState<Map<string, string>>(new Map())
-  useEffect(() => { setAplazados(leerAplazados(currentRutaId)) }, [currentRutaId])
+  // Los aplazados son del DIA DE TRABAJO: cerrando una jornada vieja, los que
+  // se dejaron "para despues" ese dia son los que valen, no los de hoy.
+  useEffect(() => { setAplazados(leerAplazados(currentRutaId, diaDeTrabajo)) }, [currentRutaId, diaDeTrabajo])
 
   /**
    * DE GESTIONADO A PENDIENTE.
@@ -440,11 +442,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
    */
   const gestionadoAPendiente = async (m: ManagedClient) => {
     await handleDeleteManagedPayment(m)
-    setAplazados(new Map(aplazar(currentRutaId, m.loanId)))
+    setAplazados(new Map(aplazar(currentRutaId, m.loanId, diaDeTrabajo)))
   }
 
   const marcarAplazado = (client: DisplayClient) => {
-    setAplazados(new Map(aplazar(currentRutaId, client.loanId)))
+    setAplazados(new Map(aplazar(currentRutaId, client.loanId, diaDeTrabajo)))
     toast({
       title: "Queda pendiente",
       description: `${client.nombre} pasó a la pestaña Pendientes para volver a visitarlo.`,
@@ -452,7 +454,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   }
 
   const devolverALaRuta = (client: DisplayClient) => {
-    setAplazados(new Map(quitarAplazado(currentRutaId, client.loanId)))
+    setAplazados(new Map(quitarAplazado(currentRutaId, client.loanId, diaDeTrabajo)))
     toast({ title: "Vuelve a la ruta", description: `${client.nombre} salió de Pendientes.` })
   }
   // Conteo de ventas registradas HOY en la ruta. Lo recibimos via callback
@@ -947,7 +949,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     const resueltos = [...aplazados.keys()].filter((id) => !vivos.has(id))
     if (resueltos.length === 0) return
     let m = aplazados
-    for (const id of resueltos) m = quitarAplazado(currentRutaId, id)
+    for (const id of resueltos) m = quitarAplazado(currentRutaId, id, diaDeTrabajo)
     setAplazados(new Map(m))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clients, managedToday, currentRutaId])
