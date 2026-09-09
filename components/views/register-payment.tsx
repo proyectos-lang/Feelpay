@@ -4443,7 +4443,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             className={`w-full shrink-0 p-2 md:p-6 ${activeTab === "ventas" ? "" : "hidden"}`}
             aria-hidden={activeTab !== "ventas"}
           >
-            <SalesTodayList currentRutaId={currentRutaId} onCountChange={setSalesTodayCount} />
+            <SalesTodayList
+              currentRutaId={currentRutaId}
+              onCountChange={setSalesTodayCount}
+              // El dia que se esta cerrando: sin esto la pestana buscaba las
+              // ventas de HOY y las de ese dia no aparecian.
+              fechaJornada={esDiaAtrasado ? diaDeTrabajo : null}
+            />
           </div>{/* fin Panel 2: Ventas */}
 
           </div>{/* fin flex deslizable */}

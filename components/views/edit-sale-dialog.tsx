@@ -50,6 +50,15 @@ import { nuevaGestionId, todayColombia, ahoraColombiaISO, mostrarMonto, leerMont
 import type { Frecuencia, TipoAmortizacion } from "@/lib/loan-schedule"
 
 interface EditSaleDialogProps {
+  /**
+   * EL DIA DE TRABAJO. Por omision, hoy.
+   *
+   * Los eventos que escribe este dialogo —la reversa del abono viejo y el
+   * abono nuevo— son PLATA, y tienen que caer en el dia que se esta cerrando.
+   * Es lo mismo que ya hacen pagos, gastos y ventas: sin esto, corregir el
+   * abono de una venta de ayer movia la caja de HOY.
+   */
+  fechaJornada?: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Datos del loan a editar. */
@@ -69,8 +78,10 @@ interface EditSaleDialogProps {
   onSaved?: () => void
 }
 
-export function EditSaleDialog({ open, onOpenChange, sale, onSaved, clientId }: EditSaleDialogProps) {
+export function EditSaleDialog({ open, onOpenChange, sale, onSaved, clientId, fechaJornada }: EditSaleDialogProps) {
   const { toast } = useToast()
+  // El dia al que se le aplican los eventos de esta correccion.
+  const diaDeTrabajo = fechaJornada || todayColombia()
   const [saving, setSaving] = useState(false)
 
   // Estado local del formulario. Se sincroniza con `sale` cada vez que
@@ -252,7 +263,7 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved, clientId }: 
               loan_id: sale.id,
               client_id: clientId,
               referencia_gestion_id: idViejo,
-              fecha_gestion: todayColombia(),
+              fecha_gestion: diaDeTrabajo,
               fecha_hora: ahoraColombiaISO(),
               cliente_nombre: sale.clientName ?? "",
               observacion: "Abono de venta corregido desde Ventas del día",
@@ -272,7 +283,7 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaved, clientId }: 
               loan_id: sale.id,
               client_id: clientId,
               monto: abonoNuevo,
-              fecha_gestion: todayColombia(),
+              fecha_gestion: diaDeTrabajo,
               fecha_hora: ahoraColombiaISO(),
               cliente_nombre: sale.clientName ?? "",
               observacion: "Pago adelantado marcado desde Ventas del día",

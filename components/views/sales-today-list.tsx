@@ -27,6 +27,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react"
+import { fmtFecha } from "@/lib/colombia-date"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Loader2, RefreshCcw, ShoppingCart, User, Pencil } from "lucide-react"
@@ -72,6 +73,16 @@ interface SalesTodayListProps {
    *  en el badge del tab "Ventas del día", igual que Pendientes y
    *  Gestionados. */
   onCountChange?: (count: number) => void
+  /**
+   * EL DIA DE TRABAJO. Por omision, hoy.
+   *
+   * Viene con fecha cuando la ruta se descongelo y esta cerrando un dia
+   * anterior. Sin esto la lista buscaba siempre las ventas de HOY, asi que
+   * las de ESE dia no aparecian y no habia nada que editar — que es lo que se
+   * reporto: "no me deja editar una venta". No es que el boton estuviera
+   * bloqueado; es que la venta no salia en la lista.
+   */
+  fechaJornada?: string | null
 }
 
 /**
@@ -79,8 +90,10 @@ interface SalesTodayListProps {
  * con offset -05:00. Usamos string-building en vez de `Date` UTC para
  * evitar drift por daylight saving o por la zona del cliente.
  */
-function getColombiaDayBounds(): { startISO: string; endISO: string } {
-  const ymd = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" })
+function getColombiaDayBounds(dia?: string | null): { startISO: string; endISO: string } {
+  // `dia` es el dia de trabajo: viene con fecha cuando la ruta esta cerrando
+  // una jornada atrasada, y si no, es hoy.
+  const ymd = dia || new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" })
   return {
     startISO: `${ymd}T00:00:00-05:00`,
     endISO: `${ymd}T23:59:59-05:00`,
@@ -106,7 +119,7 @@ function frecuenciaLabel(freq: string): string {
   }
 }
 
-export function SalesTodayList({ currentRutaId, onCountChange }: SalesTodayListProps) {
+export function SalesTodayList({ currentRutaId, onCountChange, fechaJornada }: SalesTodayListProps) {
   const [sales, setSales] = useState<SaleRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -122,7 +135,7 @@ export function SalesTodayList({ currentRutaId, onCountChange }: SalesTodayListP
 
       // SELECT directo sobre `loans` filtrado por ruta y rango de fecha
       // del dia en zona Colombia. (RLS eliminado.)
-      const { startISO, endISO } = getColombiaDayBounds()
+      const { startISO, endISO } = getColombiaDayBounds(fechaJornada)
       const { data, error: queryError } = await supabase
         .from("loans")
         .select(
@@ -155,7 +168,10 @@ export function SalesTodayList({ currentRutaId, onCountChange }: SalesTodayListP
     } finally {
       setLoading(false)
     }
-  }, [currentRutaId, onCountChange])
+    // `fechaJornada` va en las dependencias: al descongelarse la ruta el dia
+    // cambia sin que se desmonte la pantalla, y sin esto la lista se quedaria
+    // buscando las ventas del dia anterior.
+  }, [currentRutaId, onCountChange, fechaJornada])
 
   useEffect(() => {
     void fetchSales()
@@ -170,7 +186,9 @@ export function SalesTodayList({ currentRutaId, onCountChange }: SalesTodayListP
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <ShoppingCart className="h-4 w-4 text-primary" />
-          <h3 className="text-sm md:text-base font-semibold">Ventas de hoy</h3>
+          <h3 className="text-sm md:text-base font-semibold">
+            {fechaJornada ? `Ventas del ${fmtFecha(fechaJornada)}` : "Ventas de hoy"}
+          </h3>
           <Badge variant="secondary" className="text-[11px]">
             {sales.length}
           </Badge>
@@ -192,7 +210,9 @@ export function SalesTodayList({ currentRutaId, onCountChange }: SalesTodayListP
         <Card className="bg-primary/5 border-primary/20">
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
-              <span className="text-[12px] md:text-sm text-muted-foreground">Total prestado hoy</span>
+              <span className="text-[12px] md:text-sm text-muted-foreground">
+                {fechaJornada ? "Total prestado ese día" : "Total prestado hoy"}
+              </span>
               <span className="text-base md:text-lg font-bold text-primary">{formatCurrency(totalDia)}</span>
             </div>
           </CardContent>
@@ -220,7 +240,9 @@ export function SalesTodayList({ currentRutaId, onCountChange }: SalesTodayListP
       {!loading && !error && sales.length === 0 && (
         <Card>
           <CardContent className="p-6 text-center text-sm text-muted-foreground">
-            No se han registrado ventas el día de hoy en esta ruta.
+            {fechaJornada
+              ? `No se registraron ventas el ${fmtFecha(fechaJornada)} en esta ruta.`
+              : "No se han registrado ventas el día de hoy en esta ruta."}
           </CardContent>
         </Card>
       )}
@@ -311,6 +333,9 @@ export function SalesTodayList({ currentRutaId, onCountChange }: SalesTodayListP
             : null
         }
         onSaved={() => void fetchSales()}
+        // El dia que se esta cerrando: la correccion del abono es plata y
+        // tiene que caer en ese dia, no en el de hoy.
+        fechaJornada={fechaJornada}
       />
     </div>
   )
