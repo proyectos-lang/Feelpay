@@ -472,6 +472,8 @@ type RutaConfigRow = {
   amortizaciones_habilitadas: string[] | null
   amortizacion_default: string | null
   cedula_obligatoria: boolean
+  /** ¿Puede esta unidad venderle otra vez a quien ya tiene un credito? */
+  multiples_prestamos: boolean
   /** Logo propio de la unidad: va en el encabezado de sus recibos. */
   logo_url: string | null
 }
@@ -534,6 +536,7 @@ function RutasTab() {
   const [fGeocercaRadio, setFGeocercaRadio] = useState("100")
   // Encendida por defecto: es como se comportó siempre la app.
   const [fCedulaObligatoria, setFCedulaObligatoria] = useState(true)
+  const [fMultiplesPrestamos, setFMultiplesPrestamos] = useState(false)
   const [fLogoUrl, setFLogoUrl] = useState("")
   const [subiendoLogo, setSubiendoLogo] = useState(false)
   // Métodos de interés que usa la unidad, y cuál llega preseleccionado en la
@@ -593,6 +596,7 @@ function RutasTab() {
     setFGeocercaHab(c?.geocerca_habilitada ?? false)
     setFGeocercaRadio(c?.geocerca_radio_metros?.toString() ?? "100")
     setFCedulaObligatoria(c?.cedula_obligatoria ?? true)
+    setFMultiplesPrestamos(c?.multiples_prestamos ?? false)
     setFLogoUrl(c?.logo_url ?? "")
     const amort = c?.amortizaciones_habilitadas
     setFAmortizaciones(amort && amort.length > 0 ? amort : AMORTIZACIONES_DEFAULT)
@@ -779,6 +783,7 @@ function RutasTab() {
         abono_umbral_cuotas: fAbonoUmbralCuotas ? Number.parseInt(fAbonoUmbralCuotas, 10) : null,
         geocerca_habilitada: fGeocercaHab,
         cedula_obligatoria: fCedulaObligatoria,
+        multiples_prestamos: fMultiplesPrestamos,
         // El logo propio de la unidad. Vacio = se usa el de la app.
         logo_url: fLogoUrl.trim() || null,
         // La columna es NOT NULL: si el campo queda vacio se guarda el
@@ -1293,6 +1298,32 @@ function RutasTab() {
               <p className="text-[11px] text-muted-foreground">
                 Va en el encabezado de los recibos de esta unidad. Si se deja vacío se usa el
                 logo de la app. No tiene nada que ver con la foto de perfil del usuario.
+              </p>
+            </div>
+
+            {/* ── Varios prestamos al mismo cliente ─────────────────────── */}
+            {/* El interruptor dice lo que PERMITE, no lo que prohibe, porque
+                aca lo que se enciende es un permiso: la regla de siempre —un
+                credito a la vez— es lo que rige con el apagado. */}
+            <div className="space-y-1.5 border-t pt-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm">Permitir varios préstamos al mismo cliente</Label>
+                <Switch checked={fMultiplesPrestamos} onCheckedChange={setFMultiplesPrestamos} />
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                {fMultiplesPrestamos ? (
+                  <>
+                    Al vender, el buscador muestra también a quien ya tiene un crédito activo, y se
+                    le puede registrar uno nuevo sin cancelar el anterior. Los dos corren en
+                    paralelo: cada uno con su cronograma, su saldo y su cuota, y los dos salen en la
+                    lista de cobro.
+                  </>
+                ) : (
+                  <>
+                    Como hasta hoy: al vender solo aparecen los clientes sin crédito activo. Para
+                    darle otro hay que cancelar el que tiene o hacer una renovación.
+                  </>
+                )}
               </p>
             </div>
 

@@ -50,6 +50,13 @@ export interface RutaUmbrales {
   // vale `true`. Una restricción que se afloja sola cuando algo sale mal no
   // protege nada.
   cedula_obligatoria: boolean
+  /**
+   * ¿Esta unidad puede darle una venta nueva a quien YA tiene un credito?
+   *
+   * Arranca en false: es la restriccion que rige hoy en la practica, asi que
+   * la bandera que la levanta empieza apagada. Ver scripts/105.
+   */
+  multiples_prestamos: boolean
 }
 
 const DEFAULT_UMBRALES: RutaUmbrales = {
@@ -64,6 +71,7 @@ const DEFAULT_UMBRALES: RutaUmbrales = {
   amortizaciones_habilitadas: ["aleman", "americano"],
   amortizacion_default: null,
   cedula_obligatoria: true,
+  multiples_prestamos: false,
 }
 
 // Cache local de los umbrales por ruta.
@@ -111,7 +119,7 @@ function guardarCache(rutaId: number, u: RutaUmbrales): void {
 // reintenta sin ella. El reintento desaparece solo en cuanto el script corra.
 const COLUMNAS_BASE =
   "venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral_cuotas, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas, logo_url, geocerca_habilitada, geocerca_radio_metros, amortizaciones_habilitadas, amortizacion_default"
-const COLUMNAS = `${COLUMNAS_BASE}, cedula_obligatoria`
+const COLUMNAS = `${COLUMNAS_BASE}, cedula_obligatoria, multiples_prestamos`
 
 // Si la ruta no tiene fila configurada, no hay revisión (falla abierta hacia
 // "sin revisión" para no bloquear la operación normal si algo sale mal).
@@ -123,7 +131,7 @@ export async function getRutaUmbrales(rutaId: number): Promise<RutaUmbrales> {
 
     let { data, error } = await pedir(COLUMNAS)
     if (error?.code === "42703") {
-      console.warn("[v0] `cedula_obligatoria` no existe todavía — corre scripts/080. Se pide sin ella.")
+      console.warn("[v0] Falta `cedula_obligatoria` (scripts/080) o `multiples_prestamos` (scripts/105) — se piden sin ellas.")
       ;({ data, error } = await pedir(COLUMNAS_BASE))
     }
     if (error) return leerCache(rutaId) ?? DEFAULT_UMBRALES
@@ -143,6 +151,10 @@ export async function getRutaUmbrales(rutaId: number): Promise<RutaUmbrales> {
       // La cédula dejaría de pedirse en todas las rutas por un script que
       // falta correr.
       cedula_obligatoria: fila.cedula_obligatoria ?? DEFAULT_UMBRALES.cedula_obligatoria,
+      // Igual de explicito y por la misma razon, pero al reves: si la columna
+      // no vino, NO se concede el permiso. Uno que se otorga solo cuando algo
+      // falla no es un permiso.
+      multiples_prestamos: fila.multiples_prestamos ?? DEFAULT_UMBRALES.multiples_prestamos,
     }
     guardarCache(rutaId, umbrales)
     return umbrales

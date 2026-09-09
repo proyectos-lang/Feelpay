@@ -197,6 +197,7 @@ export function NewLoan({
   // el filtro para garantizar que aparezca sin importar tiene_prestamo_activo.
   const [soloSinPrestamo, setSoloSinPrestamo] = useState(!preSelectedClientId)
 
+
   // Contador que obliga a releer la lista de clientes.
   //
   // La lista se traia una sola vez por combinacion de busqueda/ruta/filtro, y
@@ -478,6 +479,16 @@ export function NewLoan({
   const [cedulaObligatoria, setCedulaObligatoria] = useState(true)
 
   /**
+   * ¿Esta unidad permite venderle otra vez a quien ya tiene un credito?
+   *
+   * Arranca en `false` y `getRutaUmbrales` tambien falla cerrada: mientras la
+   * respuesta no llegue —o si no llega nunca— el formulario se comporta como
+   * siempre, mostrando solo a los clientes sin credito activo. Un permiso que
+   * se concede solo porque una consulta tardo no es un permiso.
+   */
+  const [multiplesPrestamos, setMultiplesPrestamos] = useState(false)
+
+  /**
    * Cuándo el documento y el nombre están bajo llave.
    *
    * Sin foto y con la cédula exigida, los llena SOLO el escaneo. Con la foto
@@ -496,10 +507,22 @@ export function NewLoan({
         setAmortizacionesRuta(u.amortizaciones_habilitadas)
         setAmortizacionDefaultRuta(u.amortizacion_default ?? "")
         setCedulaObligatoria(u.cedula_obligatoria)
+        setMultiplesPrestamos(u.multiples_prestamos)
       })
       .catch((err) => console.error("[v0] NewLoan umbrales error:", err))
     return () => { cancelado = true }
   }, [rutaId])
+  /**
+   * CON EL PERMISO PUESTO, EL FILTRO SE APAGA SOLO.
+   *
+   * `soloSinPrestamo` arranca marcado, asi que sin esto el vendedor de una
+   * ruta que YA tiene el permiso seguiria sin ver a esos clientes hasta que se
+   * acordara de destildar una casilla. La configuracion de la unidad es la que
+   * manda; la casilla queda como un filtro de busqueda, no como la regla.
+   */
+  useEffect(() => {
+    if (multiplesPrestamos) setSoloSinPrestamo(false)
+  }, [multiplesPrestamos])
 
   const amortizacionesDisponibles = useMemo(
     () => AMORTIZACIONES.filter((a) => amortizacionesRuta.includes(a.valor)),
@@ -2273,6 +2296,15 @@ export function NewLoan({
                   </Label>
                 </div>
               </div>
+              {/* Se dice en palabras qué puede hacer la unidad. Sin esto, un
+                  vendedor que ve en la lista a alguien que ya tiene crédito no
+                  sabe si es un error o algo permitido. */}
+              {multiplesPrestamos && (
+                <p className="text-[9px] md:text-xs text-muted-foreground">
+                  Esta unidad permite varios préstamos al mismo cliente: el nuevo corre en paralelo
+                  con el que ya tiene.
+                </p>
+              )}
               {/* Combobox (Popover + Command) y no un Select.
                   El Select de Radix esta pensado para elegir con el teclado:
                   se queda con las pulsaciones para su propia busqueda y
