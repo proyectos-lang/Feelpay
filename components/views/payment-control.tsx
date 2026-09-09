@@ -42,7 +42,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/hooks/use-toast"
 import { getSupabaseSafe, callRpcAtomic } from "@/lib/api-helper"
-import { todayColombia, etiquetaMora, etiquetaAmortizacion, apodoSiAporta } from "@/lib/gestion-core"
+import { todayColombia, etiquetaMora, etiquetaAmortizacion, apodoSiAporta, mostrarMonto, leerMonto } from "@/lib/gestion-core"
 import {
   Search,
   ChevronLeft,
@@ -809,18 +809,18 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
                           <td className="px-3 py-2 text-right tabular-nums">
                             {isEditing ? (
                               <Input
-                                type="number"
-                                inputMode="numeric"
-                                min={0}
-                                step="1"
-                                value={editBuffer.valor_cuota === undefined ? "" : String(editBuffer.valor_cuota)}
-                                onChange={(e) =>
+                                type="text"
+                                inputMode="decimal"
+                                value={editBuffer.valor_cuota === undefined ? "" : mostrarMonto(String(editBuffer.valor_cuota))}
+                                onChange={(e) => {
+                                  const crudo = leerMonto(e.target.value)
                                   setEditBuffer((b) => ({
                                     ...b,
-                                    valor_cuota: e.target.value === "" ? 0 : Number(e.target.value),
+                                    valor_cuota: crudo === "" ? 0 : Number(crudo),
                                   }))
-                                }
+                                }}
                                 className="h-8 w-28 text-right"
+                                placeholder="$ 0"
                               />
                             ) : (
                               fmtCOP(row.valor_cuota)
@@ -851,20 +851,23 @@ export function PaymentControl({ currentRutaId }: PaymentControlProps) {
 
                           <td className="px-3 py-2 text-right tabular-nums">
                             {isEditing ? (
+                              // El monto va con separador de miles, como el
+                              // resto de la plata de la app. Ojo: acá el estado
+                              // guarda un NUMERO, no el texto crudo — por eso
+                              // se convierte en los dos sentidos.
                               <Input
-                                type="number"
-                                inputMode="numeric"
-                                min={0}
-                                step="1"
-                                value={editBuffer.monto_pagado == null ? "" : String(editBuffer.monto_pagado)}
-                                onChange={(e) =>
+                                type="text"
+                                inputMode="decimal"
+                                value={editBuffer.monto_pagado == null ? "" : mostrarMonto(String(editBuffer.monto_pagado))}
+                                onChange={(e) => {
+                                  const crudo = leerMonto(e.target.value)
                                   setEditBuffer((b) => ({
                                     ...b,
-                                    monto_pagado: e.target.value === "" ? null : Number(e.target.value),
+                                    monto_pagado: crudo === "" ? null : Number(crudo),
                                   }))
-                                }
+                                }}
                                 className="h-8 w-28 text-right"
-                                placeholder="0"
+                                placeholder="$ 0"
                               />
                             ) : (
                               // Lo que la CASCADA dejo en esta cuota, no lo que

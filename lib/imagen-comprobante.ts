@@ -18,7 +18,29 @@
 
 export interface SeccionComprobante {
   titulo: string
-  filas: { label: string; valor: string }[]
+  filas: {
+    label: string
+    valor: string
+    /** Se pinta mas grande, como en pantalla. */
+    destacado?: boolean
+    /** Solo en formato `tabla`: las celdas del medio y de la derecha. */
+    celdas?: string[]
+  }[]
+  /** Solo en formato `tabla`: los titulos de las columnas. */
+  columnas?: string[]
+  /**
+   * COMO SE ACOMODAN LAS FILAS.
+   *
+   * `lista`  (por defecto) — etiqueta a la izquierda, valor a la derecha, un
+   *          renglon completo por dato. Es lo del cierre de caja.
+   * `rejilla` — dos columnas, con la etiqueta ENCIMA del valor. Es como se ve
+   *          el extracto en la app, y por eso el que se comparte lo usa: el
+   *          cliente recibe lo mismo que el cobrador le acaba de mostrar en
+   *          la pantalla, no otra cosa con los mismos numeros.
+   * `tabla`  — cuatro columnas con encabezado, como el historial de pagos de
+   *          la app: Fecha, Cuota, Pagado, Saldo.
+   */
+  formato?: "lista" | "rejilla" | "tabla"
 }
 
 export interface OpcionesComprobante {
@@ -78,13 +100,22 @@ export async function renderComprobanteImagen(
   const ALTO_SECCION = 24
   const ALTO_LOGO = logoImg ? 64 : 0
 
-  const totalFilas = opts.secciones.reduce((s, x) => s + x.filas.length, 0)
+  // Una fila de REJILLA lleva la etiqueta encima del valor, asi que es mas
+  // alta; pero entran DOS datos por renglon, y por eso ocupa menos.
+  const ALTO_FILA_REJILLA = 30
+  const altoDeSeccion = (x: SeccionComprobante) =>
+    x.formato === "rejilla"
+      ? Math.ceil(x.filas.length / 2) * ALTO_FILA_REJILLA
+      : x.formato === "tabla"
+        ? (x.filas.length + 1) * ALTO_FILA   // +1 por el encabezado
+        : x.filas.length * ALTO_FILA
+
   // El alto se calcula ANTES de crear el canvas: con el canvas ya creado no
   // se puede redimensionar sin perder lo dibujado.
   const H =
     PAD + ALTO_LOGO + 26 + (opts.subtitulo ? 18 : 0) + (opts.meta ? 16 : 0) + 12 +
     opts.secciones.length * ALTO_SECCION +
-    totalFilas * ALTO_FILA +
+    opts.secciones.reduce((s, x) => s + altoDeSeccion(x), 0) +
     (opts.pie ? 26 : 0) + PAD
 
   const canvas = document.createElement("canvas")
@@ -162,9 +193,71 @@ export async function renderComprobanteImagen(
     ctx.fillStyle = "#0f766e"
     ctx.fillText(sec.titulo.toUpperCase(), PAD, y)
     y += 6
-    for (const f of sec.filas) {
+    if (sec.formato === "rejilla") {
+      // DOS COLUMNAS, la etiqueta encima del valor — igual que en la app.
+      const COL = (W - PAD * 2) / 2
+      for (let i = 0; i < sec.filas.length; i += 2) {
+        y += ALTO_FILA_REJILLA
+        for (const [col, f] of [sec.filas[i], sec.filas[i + 1]].entries()) {
+          if (!f) continue
+          const x = PAD + col * COL
+          ctx.textAlign = "left"
+          ctx.font = "10px Helvetica, Arial, sans-serif"
+          ctx.fillStyle = "#666666"
+          ctx.fillText(f.label, x, y - 13, COL - 6)
+          // El destacado va mas grande, como el Saldo y el Estado en pantalla.
+          ctx.font = `bold ${f.destacado ? 15 : 12}px Helvetica, Arial, sans-serif`
+          ctx.fillStyle = "#000000"
+          ctx.fillText(f.valor, x, y, COL - 6)
+        }
+      }
+    } else if (sec.formato === "tabla") {
+      // CUATRO COLUMNAS CON ENCABEZADO, como el historial de pagos de la app.
+      // Antes las tres cifras iban pegadas dentro de un solo texto a la
+      // derecha —"Cta 7   $18.000   $333.000"— y sin titulos: habia que
+      // adivinar cual era cual. Con las columnas fijas quedan alineadas de
+      // arriba abajo y se comparan de un vistazo, igual que en pantalla.
+      const X_FECHA = PAD
+      const X_CUOTA = PAD + 84
+      const X_PAGADO = W - PAD - 74
+      const X_SALDO = W - PAD
+      const cols = sec.columnas ?? []
+
       y += ALTO_FILA
-      parLabelValor(f.label, f.valor, y)
+      ctx.font = "bold 10px Helvetica, Arial, sans-serif"
+      ctx.fillStyle = "#666666"
+      ctx.textAlign = "left"
+      if (cols[0]) ctx.fillText(cols[0], X_FECHA, y)
+      ctx.textAlign = "center"
+      if (cols[1]) ctx.fillText(cols[1], X_CUOTA, y)
+      ctx.textAlign = "right"
+      if (cols[2]) ctx.fillText(cols[2], X_PAGADO, y)
+      if (cols[3]) ctx.fillText(cols[3], X_SALDO, y)
+      ctx.textAlign = "left"
+
+      for (const f of sec.filas) {
+        y += ALTO_FILA
+        const c = f.celdas ?? []
+        ctx.font = "11px Helvetica, Arial, sans-serif"
+        ctx.fillStyle = "#444444"
+        ctx.textAlign = "left"
+        ctx.fillText(f.label, X_FECHA, y)
+        ctx.textAlign = "center"
+        ctx.fillText(c[0] ?? "", X_CUOTA, y)
+        ctx.font = "bold 11px Helvetica, Arial, sans-serif"
+        ctx.fillStyle = "#000000"
+        ctx.textAlign = "right"
+        ctx.fillText(c[1] ?? "", X_PAGADO, y)
+        ctx.font = "11px Helvetica, Arial, sans-serif"
+        ctx.fillStyle = "#444444"
+        ctx.fillText(c[2] ?? "", X_SALDO, y)
+        ctx.textAlign = "left"
+      }
+    } else {
+      for (const f of sec.filas) {
+        y += ALTO_FILA
+        parLabelValor(f.label, f.valor, y)
+      }
     }
     y += 4
     linea(y, "#eeeeee")

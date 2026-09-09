@@ -55,6 +55,7 @@ import {
   apodoSiAporta,
   type Gestion,
   cuotasConDecimal,
+  faltaParaCerrarCuota,
   fmtMoneda,
   mostrarMonto,
   leerMonto,
@@ -2299,40 +2300,69 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: true,
     })
 
-    const secciones: SeccionComprobante[] = [
+    // LOS MISMOS DATOS, EN EL MISMO ORDEN Y CON LA MISMA FORMA QUE EN PANTALLA.
+    //
+    // Antes esta lista era otra: sin Frecuencia, sin Multa, sin Último pago, y
+    // en una sola columna. El cliente recibia algo que no se parecia a lo que
+    // el cobrador le acababa de mostrar, aunque los numeros fueran los mismos.
+    // Ahora es la rejilla de dos columnas del diálogo, dato por dato.
+    const filasCredito: { label: string; valor: string; destacado?: boolean }[] = [
+      { label: "Fecha de venta", valor: fechaCorta(c.fechaVenta) },
       {
-        titulo: "El crédito",
-        filas: [
-          { label: "Fecha de venta", valor: fechaCorta(c.fechaVenta) },
-          { label: "Valor prestado", valor: money(c.valorVenta) },
-          { label: "Interés", valor: `${c.tasaInteres ?? 0}%` },
-          { label: "Total a pagar", valor: money(c.totalAPagar) },
-          { label: "Valor de cuota", valor: money(c.valorCuota) },
-          { label: "Cuotas", valor: `${cuotasConDecimal(c.abonado, c.valorCuota, c.cuotasTotales)}/${c.cuotasTotales}` },
-          { label: "Abonado", valor: money(c.abonado) },
-          { label: "Saldo", valor: money(c.saldo) },
-          { label: "Estado", valor: c.mora > 0 ? `Mora: ${etiquetaMora(c.mora)}` : "Al día" },
-        ],
+        label: "Frecuencia",
+        valor: `${frecuenciaLabel(c.frecuenciaPago)}${
+          c.frecuenciaPago !== "daily" && c.diaSemana
+            ? ` · ${c.diaSemana.charAt(0).toUpperCase()}${c.diaSemana.slice(1)}`
+            : ""
+        }`,
+      },
+      { label: "Valor prestado", valor: money(c.valorVenta) },
+      { label: "Interés", valor: `${c.tasaInteres ?? 0}%` },
+      { label: "Total a pagar", valor: money(c.totalAPagar) },
+      { label: "Valor de cuota", valor: money(c.valorCuota) },
+      { label: "Cuotas", valor: `${cuotasConDecimal(c.abonado, c.valorCuota, c.cuotasTotales)}/${c.cuotasTotales}` },
+      { label: "Abonado", valor: money(c.abonado) },
+      // Saldo y Estado van destacados, que es como se ven en la app: son las
+      // dos cosas por las que se abre el extracto.
+      { label: "Saldo", valor: money(c.saldo), destacado: true },
+      {
+        label: "Estado",
+        valor: c.mora > 0 ? `Mora: ${etiquetaMora(c.mora)}` : "Al día",
+        destacado: true,
       },
     ]
+    // Igual que en pantalla: si no hay multa, no hay renglón que diga "$0".
+    if (c.multaPendiente) {
+      filasCredito.push({ label: "Multa pendiente", valor: money(c.multaPendiente.valor) })
+    }
+    if (c.ultimoPagoFecha) {
+      filasCredito.push({
+        label: "Último pago",
+        valor: `${fechaCorta(c.ultimoPagoFecha)}${c.ultimoPago > 0 ? `  ${money(c.ultimoPago)}` : ""}`,
+      })
+    }
+
+    const secciones: SeccionComprobante[] = [
+      { titulo: "El crédito", filas: filasCredito, formato: "rejilla" },
+    ]
     if (movs.length > 0) {
+      // LAS MISMAS CUATRO COLUMNAS DEL HISTORIAL DE PAGOS: Fecha, Cuota,
+      // Pagado y Saldo. Antes las tres cifras iban pegadas en un solo texto a
+      // la derecha y sin titulos —"Cta 7   $18.000   $333.000"— y habia que
+      // adivinar cual era cual. Un no pago dice $0, no una raya, igual que en
+      // pantalla.
       secciones.push({
         titulo: `Movimientos (${movs.length})`,
-        // LA CUOTA YA NO VA PEGADA A LA FECHA.
-        //
-        // Iban las dos en la etiqueta separadas por un punto —"01/09/2026 ·
-        // Cuota 11"— y a 300pt de ancho eso es una sola parrafada que hay que
-        // leer entera para encontrar el número. Ahora la fecha manda el
-        // renglón y la cuota va con las cifras, donde se compara con las de
-        // arriba y abajo.
-        //
-        // Y a la derecha, lo mismo que en pantalla: lo que pagó y con cuánto
-        // quedó. Un no pago dice $0, no una raya.
+        formato: "tabla",
+        columnas: ["Fecha", "Cuota", "Pagado", "Saldo"],
         filas: movs.map((m) => ({
           label: fechaCorta(m.fecha),
-          valor: `${
-            m.numeroCuota !== null ? `Cta ${m.numeroCuota}` : ETIQUETA_MOVIMIENTO[m.tipo]
-          }   ${money(m.pagado)}${m.saldoDespues !== null ? `   ${money(m.saldoDespues)}` : ""}`,
+          valor: "",
+          celdas: [
+            m.numeroCuota !== null ? String(m.numeroCuota) : ETIQUETA_MOVIMIENTO[m.tipo],
+            money(m.pagado),
+            m.saldoDespues !== null ? money(m.saldoDespues) : "—",
+          ],
         })),
       })
     }
@@ -2472,6 +2502,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       // numero que no sabe leer. El X/Y sigue siendo sobre las cuotas BASE del
       // plan, que es lo que el cliente pacto.
       ["Cuotas:", `${cuotasConDecimal(totalPagadoAhora, client.valorCuota, cuotasTotales)} / ${cuotasTotales}`],
+      // LO QUE FALTA PARA CERRAR LA CUOTA EN CURSO.
+      //
+      // El renglon de arriba dice "0.9 / 25": el cliente ve que le falta un
+      // pedazo, pero no CUANTO, que es lo que necesita para saber con que
+      // llegar la proxima vez. Solo aparece si de verdad falta algo: cuando la
+      // cuota cierra exacta no tiene sentido un renglon que diga "$0".
+      ...(faltaParaCerrarCuota(totalPagadoAhora, client.valorCuota) > 0
+        ? ([["Falta para cerrar cuota:", fmt(faltaParaCerrarCuota(totalPagadoAhora, client.valorCuota))]] as [string, string][])
+        : []),
       ["Frecuencia:", frecuenciaLabel(client.frecuenciaPago)],
       // Antes esta fila decía "Fallas" pero imprimía la mora, que es otra
       // cosa (cuotas vencidas sin cubrir, no visitas incumplidas).
@@ -4170,13 +4209,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                             entero de cada tarjeta. Quien las necesita las tiene
                             todas juntas en el extracto, a un toque del ojo de
                             al lado. */}
-                        <div className="flex items-center gap-1.5 shrink-0">
-                            {/* EL LÁPIZ ENCIMA DE LOS TRES PUNTOS.
-                                Apilados ocupan una columna de 36px en vez de
-                                dos, y ese ancho se lo lleva el nombre del
-                                cliente. Es la misma forma que tiene la fila de
-                                Pendientes con el ojo y los tres puntos. */}
-                            <div className="flex flex-col gap-0.5">
+                        {/* LA MISMA FORMA QUE EN PENDIENTES.
+                            Alla el boton que gestiona es grande y va a la
+                            izquierda, y a la derecha el ojo encima de los tres
+                            puntos. Acá el que gestiona es el LÁPIZ —es la
+                            accion de la fila, corregir lo que se registró— así
+                            que ocupa ese lugar y ese tamaño. Antes iba apilado
+                            con los tres puntos y del mismo tamaño que ellos:
+                            las dos pestañas se veian distintas sin que la
+                            diferencia significara nada. */}
+                        <div className="flex items-center justify-end gap-1.5 shrink-0">
                             {/* AL APLAZADO NO SE LE CORRIGE NADA: se le cobra.
                                 No hay gestión detrás suyo —ni pago ni no pago—
                                 así que un lápiz que abre "corregir esta
@@ -4206,10 +4248,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                   variant="outline"
                                   title="Corregir esta gestión"
                                   aria-label="Corregir esta gestión"
-                                  className="h-9 w-9 border-info/40 text-info hover:text-info hover:bg-info-light"
+                                  className="h-10 w-10 shrink-0 rounded-full border-info/40 text-info hover:text-info hover:bg-info-light"
                                   disabled={savingManaged}
                                 >
-                                  <Pencil className="h-[18px] w-[18px]" />
+                                  <Pencil className="h-5 w-5" />
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="w-52">
@@ -4286,10 +4328,25 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               </>
                             )}
 
+                            {/* EL OJO ENCIMA DE LOS TRES PUNTOS, igual que en
+                                Pendientes: apilados ocupan una columna en vez
+                                de dos, y ese ancho se lo lleva el nombre. */}
+                            <div className="flex shrink-0 flex-col gap-0.5">
+                            <Button
+                              size="icon"
+                              variant="outline"
+                              className="h-[26px] w-[26px] rounded-full bg-transparent p-0"
+                              onClick={() => setExtractoClient(m)}
+                              title="Ver el extracto del cliente"
+                              aria-label="Ver el extracto del cliente"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </Button>
+
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
-                                <Button size="icon" variant="outline" className="h-9 w-9" aria-label="Más opciones">
-                                  <MoreVertical className="h-[18px] w-[18px]" />
+                                <Button size="icon" variant="outline" className="h-[26px] w-[26px] rounded-full bg-transparent p-0" aria-label="Más opciones">
+                                  <MoreVertical className="h-3.5 w-3.5" />
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="w-48">
@@ -4327,31 +4384,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                                 )}
                               </DropdownMenuContent>
                             </DropdownMenu>
-                            </div>{/* fin de la columna lápiz + tres puntos */}
-
-                            {/* EL OJO, AHORA A LA DERECHA.
-                                Se invirtió con el lápiz por pedido del dueño.
-                                Sigue siendo el mismo extracto del módulo de
-                                pagos: mismo icono, mismo diálogo, misma
-                                información: dos fichas distintas del mismo
-                                cliente según por qué pestaña se entre serían
-                                dos verdades.
-
-                                El bloque se movió de sitio en el JSX en vez de
-                                voltear la fila con `flex-row-reverse`: así el
-                                orden en que se recorre con el teclado y el que
-                                lee un lector de pantalla siguen siendo el que
-                                se ve. Volteando por CSS quedarían al revés. */}
-                            <Button
-                              size="icon"
-                              variant="outline"
-                              className="h-9 w-9"
-                              onClick={() => setExtractoClient(m)}
-                              title="Ver el extracto del cliente"
-                              aria-label="Ver el extracto del cliente"
-                            >
-                              <Eye className="h-[18px] w-[18px]" />
-                            </Button>
+                            </div>{/* fin de la columna ojo + tres puntos */}
                           </div>{/* fin de los botones */}
                         </div>{/* fin de la fila texto + botones */}
                       </div>
@@ -5289,10 +5322,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 {editingManaged?.gestionTipo === "pago" ? "Nuevo monto abonado" : "Monto que pagó"}
               </label>
               <Input
-                type="number"
-                step="0.01"
-                value={editMonto}
-                onChange={(e) => setEditMonto(e.target.value)}
+                type="text"
+                inputMode="decimal"
+                value={mostrarMonto(editMonto)}
+                onChange={(e) => setEditMonto(leerMonto(e.target.value))}
+                placeholder="$ 0"
                 className="h-9 text-sm"
                 autoFocus
               />

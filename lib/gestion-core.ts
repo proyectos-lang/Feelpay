@@ -524,6 +524,30 @@ export function cuotasConDecimal(
 }
 
 /**
+ * LO QUE FALTA PARA CERRAR LA CUOTA EN CURSO.
+ *
+ * `cuotasConDecimal` dice "0.9 / 25": el cliente ve que le falta un pedazo de
+ * cuota, pero no CUANTO en plata, que es lo que necesita para saber con que
+ * llegar. Esto devuelve ese excedente.
+ *
+ *   cuota 18.000, pagado 16.200  ->  lleva 0,9  ->  faltan 1.800
+ *   cuota 18.000, pagado 117.000 ->  lleva 6,5  ->  faltan 9.000
+ *
+ * Devuelve 0 cuando la cuota cierra exacta: ahi no falta nada y el recibo no
+ * tiene por que decir "faltan $0".
+ */
+export function faltaParaCerrarCuota(
+  pagado: number | null | undefined,
+  valorCuota: number | null | undefined,
+): number {
+  const cuota = Number(valorCuota) || 0
+  if (cuota <= 0) return 0
+  const p = Math.max(0, Number(pagado) || 0)
+  const resto = p % cuota
+  return resto === 0 ? 0 : Math.round(cuota - resto)
+}
+
+/**
  * EL MONTO, ESCRITO COMO PLATA: "$ 19.500".
  *
  * Vivía dentro del módulo de pagos, que fue donde se necesitó primero. Se

@@ -73,18 +73,28 @@ export function Header({
   const pais = isGerencia ? "" : (selectedRuta?.pais ?? "")
 
   const formatDateTime = (date: Date) => {
+    // FORMATO CORTO, PERO CON EL DIA DE LA SEMANA.
+    //
+    // Era "miércoles, 9 de septiembre de 2026, 07:01:22" — 44 caracteres que
+    // en un telefono empujaban todo lo demas fuera del encabezado. Ahora es
+    // "mié 09/09/26 · 07:01", que cabe y dice lo mismo: el dia de la semana
+    // (que el cobrador usa para saber a quien le toca), la fecha y la hora.
+    // Los segundos se van: nadie los mira y cambiaban el ancho cada segundo.
     const options: Intl.DateTimeFormatOptions = {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
+      weekday: "short",
+      year: "2-digit",
+      month: "2-digit",
+      day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
-      second: "2-digit",
       hour12: false,
     }
 
-    return date.toLocaleDateString("es-CO", options)
+    // `es-CO` devuelve "mié, 09/09/26, 07:01"; se cambia la ultima coma por un
+    // punto medio para que se vea que la hora es otra cosa que la fecha.
+    return date
+      .toLocaleDateString("es-CO", options)
+      .replace(/,([^,]*)$/, " ·$1")
   }
 
   const formattedDateTime = formatDateTime(currentDateTime)
@@ -160,10 +170,15 @@ export function Header({
         <div className="flex md:hidden text-[9px] text-muted-foreground mr-1 flex-col items-end">
           {nombreruta ? (
             <div className="flex items-center gap-1">
+              {/* EN EL TELEFONO SOLO LA UNIDAD Y LA CIUDAD.
+                  Iban tambien el numero de ruta y el pais: cuatro datos en
+                  una linea de 10px que se cortaba antes de terminar. El pais
+                  es el mismo todo el dia para quien esta cobrando, y el
+                  numero ya va en el nombre de la unidad. Lo que queda es lo
+                  que cambia y lo que se necesita: que unidad y que ciudad. */}
               <span className="font-semibold text-primary text-[10px]">
-                Ruta: {ruta} - {nombreruta}
+                {nombreruta}
                 {ciudad ? ` - ${ciudad}` : ""}
-                {pais ? ` - ${pais}` : ""}
               </span>
               {onChangeRuta && (
                 <button

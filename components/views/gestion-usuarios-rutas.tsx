@@ -14,7 +14,7 @@ import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/
 import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info, MessageSquare, BarChart2, Gauge, Upload } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { ALL_MODULES, MODULE_GROUPS, getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
-import { AMORTIZACIONES } from "@/lib/gestion-core"
+import { AMORTIZACIONES, mostrarMonto, leerMonto } from "@/lib/gestion-core"
 import { verPines } from "@/lib/pin-lock"
 import { getUsuarioSesion, conceptosElegiblesAMano } from "@/lib/movimientos"
 import type { ModuleDefinition } from "@/lib/modules-catalog"
@@ -1084,11 +1084,12 @@ function RutasTab() {
                   <Switch checked={fVentaNuevaHab} onCheckedChange={setFVentaNuevaHab} />
                 </div>
                 <Input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   disabled={!fVentaNuevaHab}
-                  value={fVentaNuevaUmbral}
-                  onChange={(e) => setFVentaNuevaUmbral(e.target.value)}
-                  placeholder="Umbral en $ (ej. 1000000)"
+                  value={mostrarMonto(fVentaNuevaUmbral)}
+                  onChange={(e) => setFVentaNuevaUmbral(leerMonto(e.target.value))}
+                  placeholder="Umbral (ej. $ 1.000.000)"
                   className="h-9 text-sm"
                 />
               </div>
@@ -1098,11 +1099,12 @@ function RutasTab() {
                   <Switch checked={fVentaRenovacionHab} onCheckedChange={setFVentaRenovacionHab} />
                 </div>
                 <Input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   disabled={!fVentaRenovacionHab}
-                  value={fVentaRenovacionUmbral}
-                  onChange={(e) => setFVentaRenovacionUmbral(e.target.value)}
-                  placeholder="Umbral en $ (ej. 1000000)"
+                  value={mostrarMonto(fVentaRenovacionUmbral)}
+                  onChange={(e) => setFVentaRenovacionUmbral(leerMonto(e.target.value))}
+                  placeholder="Umbral (ej. $ 1.000.000)"
                   className="h-9 text-sm"
                 />
               </div>
@@ -1195,9 +1197,10 @@ function RutasTab() {
                                     </div>
                                     {pide && (
                                       <Input
-                                        type="number"
-                                        value={umbralTexto}
-                                        onChange={(e) => setItemUmbralValue(key, e.target.value)}
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={mostrarMonto(umbralTexto)}
+                                        onChange={(e) => setItemUmbralValue(key, leerMonto(e.target.value))}
                                         placeholder="Umbral en $"
                                         className="h-8 text-xs"
                                       />

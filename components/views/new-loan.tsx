@@ -2569,10 +2569,10 @@ export function NewLoan({
                               </td>
                               <td className="px-2 py-1 text-right">
                                 <Input
-                                  type="number" inputMode="decimal" min="0" disabled={!pago}
-                                  value={pago ? m.monto : "0"}
+                                  type="text" inputMode="decimal" disabled={!pago}
+                                  value={mostrarMonto(pago ? m.monto : "0")}
                                   onChange={(e) => setMarcasHomologacion((p) => ({
-                                    ...p, [c.numero_cuota]: { tipo: "pago", monto: e.target.value },
+                                    ...p, [c.numero_cuota]: { tipo: "pago", monto: leerMonto(e.target.value) },
                                   }))}
                                   className="h-7 w-24 ml-auto text-right text-[11px] md:text-sm"
                                 />
