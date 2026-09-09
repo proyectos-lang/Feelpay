@@ -4476,8 +4476,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               </div>
               <div className="space-y-1 md:space-y-1.5">
                 <Label className="text-xs font-bold md:text-sm">Nuevo Saldo</Label>
-                <div className="h-7 md:h-10 flex items-center px-3 rounded-md border bg-green-100 dark:bg-green-950/40 border-green-400 dark:border-green-800">
-                  <span className="text-xs md:text-sm font-bold text-green-900 dark:text-green-300">
+                {/* El verde tambien pasa al borde y al texto: el relleno
+                    completaba el semaforo (cian, navy, ambar, verde) en una
+                    pantalla de telefono. */}
+                {/* El verde del token da 2.96:1 sobre el campo claro: como
+                    relleno se leia (era letra oscura sobre verde palido) pero
+                    como TEXTO no llega. Se usa uno mas oscuro, 5.8:1. */}
+                <div className="h-7 md:h-10 flex items-center px-3 rounded-md border bg-input"
+                     style={{ borderColor: "oklch(0.45 0.13 165)" }}>
+                  <span className="text-xs md:text-sm font-bold" style={{ color: "oklch(0.45 0.13 165)" }}>
                     ${Math.max(0, selectedClient.saldo - (Number.parseFloat(paymentAmount) || 0)).toLocaleString("es-CO")}
                   </span>
                 </div>
@@ -4757,7 +4764,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               <div className={`text-xs md:text-sm font-semibold px-2 py-1 rounded h-7 md:h-10 flex items-center justify-center ${
                 noPaymentClient?.mora === 0 ? "bg-green-500/60" : (noPaymentClient?.mora ?? 0) < 10 ? "bg-yellow-500/60" : "bg-red-500/60"
               }`}>
-                {noPaymentClient?.mora} {noPaymentClient?.mora === 1 ? "dia" : "dias"}
+                {noPaymentClient?.mora} {noPaymentClient?.mora === 1 ? "cuota" : "cuotas"}
               </div>
             </div>
 
@@ -4809,6 +4816,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
                 Registrar No Pago
               </Button>
+              {/* EL SALDO, junto al boton. Antes de dejar a alguien en no pago
+                  el cobrador suele preguntar cuanto debe: tenerlo aca evita
+                  cerrar el dialogo, buscar el extracto y volver. */}
+              <div className="flex flex-col justify-center leading-tight px-1">
+                <span className="text-[10px] md:text-xs text-muted-foreground">Saldo</span>
+                <span className="text-xs md:text-base font-bold tabular-nums text-foreground">
+                  {fmtMoneda(noPaymentClient?.saldo)}
+                </span>
+              </div>
             </div>
             <Button variant="outline" onClick={() => { setNoPaymentClient(null); setNoPaymentPhoto(null) }} className="h-8 md:h-10 text-xs md:text-base">
               Cancelar
@@ -5188,8 +5204,12 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                         <td className={`px-1 py-1.5 text-center text-[10px] md:text-xs truncate ${
                           esNoPago ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
                         }`}>
+                          {/* SIN LA PALABRA "No pago": el $0 de la columna
+                              de al lado ya lo dice, y el rojo de la fila lo
+                              confirma. Repetirlo solo alargaba la celda del
+                              numero de cuota, que es angosta. */}
                           {m.numeroCuota !== null
-                            ? `${m.numeroCuota}${esNoPago ? " · No pago" : ""}`
+                            ? m.numeroCuota
                             : ETIQUETA_MOVIMIENTO[m.tipo]}
                         </td>
                         <td className={`px-1 py-1.5 text-right text-[10px] md:text-xs font-semibold tabular-nums ${
