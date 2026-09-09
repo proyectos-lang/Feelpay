@@ -1227,7 +1227,21 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         // vence justamente hoy y el cliente TIENE que aparecer en la lista.
         // Sin esta excepcion, la casilla no serviria de nada: el plan
         // arrancaria hoy pero el cobrador no veria al cliente.
-        if (loan.fecha_creacion) {
+        //
+        // OJO CON EL CIERRE ATRASADO. Esta regla mira el dia de trabajo, que
+        // cerrando una jornada vieja es ESE dia y no hoy. Una venta hecha el 8
+        // con primera cuota el 9, mirada mientras se cierra el 8, caia en
+        // "venta de hoy sin cobro hoy" y el cliente DESAPARECIA de la lista:
+        // ni en Ruta ni en Pendientes ni en Gestionados. Paso en la ruta 1 con
+        // alberto mecanico cagua.
+        //
+        // Cerrando un dia pasado no hay nada que esconder: ese dia ya termino
+        // y lo que se esta haciendo es completar lo que falto. Si al cliente
+        // no le tocaba pagar, se vera con su "Prox. pago" y no sera tarea del
+        // dia —de eso se encarga el conteo del cierre—, pero TIENE que estar
+        // visible: si no, no hay como gestionarlo ni como saber por que no
+        // aparece.
+        if (loan.fecha_creacion && !esDiaAtrasado) {
           const fechaCreacionColombia = new Intl.DateTimeFormat("en-CA", {
             timeZone: "America/Bogota",
             year: "numeric", month: "2-digit", day: "2-digit",
