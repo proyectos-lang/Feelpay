@@ -180,6 +180,8 @@ type DisplayClient = {
   // del plan — es decir, resolverla agota el plan de pagos. Inmune a la
   // numeracion y alineado con lo que evalua registrar_pago_atomico.
   esUltimaCuotaPendiente: boolean
+  /** El plan se agoto y todavia debe: hay que completarle el cronograma. */
+  cronogramaAgotado: boolean
   mora: number
   ultimoPago: number
   ultimoPagoFecha: string
@@ -1317,6 +1319,23 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         const sinCubrirRestantes = paymentPlan.filter(sinCubrir).length
         const esUltimaCuotaPendiente = !!targetEntry && sinCubrirRestantes === 1
 
+        /**
+         * EL CRONOGRAMA SE ACABO Y EL CLIENTE TODAVIA DEBE.
+         *
+         * `esUltimaCuotaPendiente` avisa cuando queda UNA cuota; esto avisa
+         * cuando ya no queda NINGUNA y el saldo sigue vivo. Es el caso que se
+         * escapaba: el plan se agota, nadie lo nota, y el cliente sigue
+         * pagando todos los dias sin figurar en la meta —porque la meta suma
+         * las cuotas que vencen ese dia y el no tiene ninguna—.
+         *
+         * Medido en la ruta 151: tres clientes asi, $52.000 que el cobrador
+         * recauda y que nunca estuvieron en el objetivo.
+         */
+        const cronogramaAgotado =
+          paymentPlan.length > 0 &&
+          sinCubrirRestantes === 0 &&
+          (fin?.saldo_hoy ?? saldoMap.get(loan.id) ?? 0) > 0
+
         // Mora en CUOTAS vencidas sin cubrir, derivada del cronograma intacto.
         const mora = moraMap.get(loan.id) ?? 0
 
@@ -1375,6 +1394,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           cuotasTotales: cuotasTotales,
           cuotasExtra: cuotasExtra,
           esUltimaCuotaPendiente,
+          cronogramaAgotado,
           mora,
           ultimoPago: Number(ultimoEvento?.monto) || 0,
           ultimoPagoFecha: fechaUltimoPagoMap.get(loan.id) ?? ultimoEvento?.fecha_gestion ?? "",
@@ -3110,6 +3130,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         nextPaymentCapital: m.nextPaymentCapital,
         nextPaymentValorCuota: m.nextPaymentValorCuota,
         nextPaymentEsFuturo: false,
+        // Vuelve a la ruta desde Gestionados: su cronograma no cambio al
+        // deshacer la gestion, asi que la bandera se recalcula en el proximo
+        // refresco. Falso mientras tanto es el lado seguro: no avisa de mas.
+        cronogramaAgotado: false,
         nextPaymentFecha: m.nextPaymentFecha,
         valorPrestamo: m.valorPrestamo,
         multaPendiente: m.multaPendiente,
@@ -4447,6 +4471,23 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                   </p>
                 </div>
               )}
+            {/* EL CRONOGRAMA SE ACABO Y TODAVIA DEBE.
+                No bloquea el cobro —la plata entra igual y se aplica al
+                saldo— pero avisa, porque mientras el plan este agotado el
+                cliente no suma a la meta del dia: no tiene ninguna cuota que
+                venza hoy. Quien lo resuelve es secretaria desde el Monitoreo,
+                que es donde esta el boton de completar. */}
+            {selectedClient.cronogramaAgotado && (
+              <div className="flex items-start gap-2 rounded-lg border border-warning bg-warning/10 px-3 py-2">
+                <AlertCircle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
+                <p className="text-xs md:text-sm text-foreground">
+                  <span className="font-bold">Se acabaron las cuotas y todavía debe {fmtMoneda(selectedClient.saldo)}.</span>{" "}
+                  El cobro se registra igual, pero pídele a secretaría que le complete el cronograma:
+                  mientras tanto no cuenta en la meta del día.
+                </p>
+              </div>
+            )}
+
             {/* Primera fila: Apodo, Saldo y Ultima Pago */}
             <div className="grid gap-2 md:gap-3 grid-cols-3">
               <div className="space-y-1 md:space-y-1.5">

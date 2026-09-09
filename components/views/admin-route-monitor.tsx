@@ -93,6 +93,13 @@ type MonitoreoRuta = {
    * de mover el rango de fechas hacia atrás — o sea, no enterarse.
    */
   jornada_congelada: { id: number; fecha: string } | null
+  /**
+   * Creditos de la ruta que DEBEN plata pero ya no tienen cuotas por delante:
+   * su cronograma se agoto. Mientras esten asi no suman a la meta del dia
+   * —la meta cuenta las cuotas que vencen ese dia y ellos no tienen ninguna—
+   * y el cobrador les cobra plata que nunca estuvo en el objetivo.
+   */
+  cronogramas_agotados: number
   ruta_id: number
   estado_ruta: "abierta" | "cerrada" | string | null
   aprobacion_admin: "pendiente" | "aprobado" | string | null
@@ -552,6 +559,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
               // fila sintética. Sin id no hay nada que descongelar.
               registro_id: null,
               jornada_congelada: null,
+              cronogramas_agotados: 0,
               ruta_id,
               // `null` es lo que dispara la insignia "Sin apertura".
               estado_ruta: null,
@@ -704,6 +712,56 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
         }
       } catch (e) {
         console.error("[v0] jornadas congeladas del monitoreo:", e)
+      }
+
+      // ── CRONOGRAMAS AGOTADOS ────────────────────────────────────────────
+      // Creditos que deben plata y ya no tienen ninguna cuota por delante.
+      // Se cuenta por ruta para poder avisarlo en la fila de hoy.
+      //
+      // Un fallo aca NO puede tumbar el monitoreo: es un aviso extra, no el
+      // dato principal. Si la consulta falla, el contador queda en 0 y la
+      // pantalla se ve como antes.
+      try {
+        const hoyCol = todayColombia()
+        const { data: activos } = await createClient()
+          .from("v_loan_financiero")
+          .select("loan_id, ruta, saldo")
+          .eq("loan_estado", "activo")
+          .gt("saldo", 0)
+          .limit(5000)
+
+        const porRuta = new Map<number, number>()
+        const ids = ((activos ?? []) as { loan_id: string; ruta: number }[]).map((x) => x.loan_id)
+        const rutaDe = new Map(
+          ((activos ?? []) as { loan_id: string; ruta: number }[]).map((x) => [x.loan_id, x.ruta]),
+        )
+
+        // La ultima cuota de cada credito. Se pide en lotes: un `.in()` con
+        // miles de UUID revienta la URL de PostgREST en silencio.
+        const ultima = new Map<string, string>()
+        for (let i = 0; i < ids.length; i += 120) {
+          const { data: pp } = await createClient()
+            .from("payment_plan")
+            .select("loan_id, fecha_pago")
+            .in("loan_id", ids.slice(i, i + 120))
+            .limit(100000)
+          for (const p of (pp ?? []) as { loan_id: string; fecha_pago: string }[]) {
+            const prev = ultima.get(p.loan_id)
+            if (!prev || p.fecha_pago > prev) ultima.set(p.loan_id, p.fecha_pago)
+          }
+        }
+        for (const [loanId, f] of ultima) {
+          if (f < hoyCol) {
+            const ruta = rutaDe.get(loanId)
+            if (ruta != null) porRuta.set(ruta, (porRuta.get(ruta) ?? 0) + 1)
+          }
+        }
+        for (const r of todas) {
+          if ((r.fecha ?? "") !== hoyCol) continue
+          r.cronogramas_agotados = porRuta.get(r.ruta_id) ?? 0
+        }
+      } catch (e) {
+        console.error("[v0] cronogramas agotados del monitoreo:", e)
       }
 
       // El día más reciente arriba; dentro de cada día, por número de ruta.
@@ -1395,6 +1453,25 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                           {jornada.icono && <Snowflake className="h-3 w-3" />}
                           {jornada.texto}
                         </Badge>
+                        {/* CRONOGRAMAS AGOTADOS.
+                            Creditos que deben plata y ya no tienen cuotas por
+                            delante. Mientras esten asi no suman a la meta del
+                            dia, y el cobrador les cobra plata que nunca
+                            estuvo en el objetivo. Es un aviso para
+                            secretaria: quien completa el cronograma es ella.
+                            Solo sale si hay alguno; en cero no dice nada. */}
+                        {esHoy && r.cronogramas_agotados > 0 && (
+                          <Badge
+                            variant="outline"
+                            className="gap-1 border-warning/50 bg-warning/10 text-warning"
+                            title={`${r.cronogramas_agotados} ${
+                              r.cronogramas_agotados === 1 ? "crédito tiene" : "créditos tienen"
+                            } saldo pendiente pero ya no les quedan cuotas por cobrar. Mientras estén así no cuentan en la meta del día: hay que completarles el cronograma.`}
+                          >
+                            <AlertTriangle className="h-3 w-3" />
+                            {r.cronogramas_agotados} sin cuotas
+                          </Badge>
+                        )}
                       </div>
                       {metaDe(r.ruta_id)?.ciudad && (
                         <span className="text-[10px] leading-tight text-muted-foreground">
