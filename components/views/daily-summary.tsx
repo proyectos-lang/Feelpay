@@ -449,6 +449,9 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
       abrirDetalle("Créditos cancelados hoy", ids, {
         subtitulo: `${ids.length} ${ids.length === 1 ? "crédito quedó" : "créditos quedaron"} en cero`,
         ocultarFicha: true,
+        // El valor prestado, igual que en Ventas: sin esto la tabla se quedaba
+        // con dos columnas y sin ninguna cifra.
+        mostrarValorVenta: true,
       })
     } catch (err) {
       console.error("[v0] abrirDetalleFinanciero:", err)

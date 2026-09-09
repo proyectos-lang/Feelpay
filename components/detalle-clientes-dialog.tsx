@@ -32,7 +32,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle, Search } from "lucide-react"
 import { getSupabaseSafe } from "@/lib/api-helper"
 import { getDetalleClientes, type ClienteDetalleRow } from "@/lib/detalle-clientes"
-import { fmtFecha, fmtMoneda, etiquetaMora, colorMora } from "@/lib/gestion-core"
+import { fmtFecha, fmtMoneda, etiquetaMora, colorMora, etiquetaFrecuencia } from "@/lib/gestion-core"
 
 export interface DetalleClientesDialogProps {
   open: boolean
@@ -114,7 +114,10 @@ export function DetalleClientesDialog({
     )
   }, [filas, busqueda])
 
-  const saldoTotal = visibles.reduce((s, f) => s + f.saldo, 0)
+  // En ventas y canceladas el total que importa es LO PRESTADO, que es la
+  // columna que se esta mirando. Sumar saldos ahi daria una cifra que no
+  // corresponde a ninguna columna de la tabla.
+  const saldoTotal = visibles.reduce((s, f) => s + (ocultarFicha ? f.valorVenta : f.saldo), 0)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -156,18 +159,30 @@ export function DetalleClientesDialog({
             </div>
           ) : (
             <>
-              {/* Escritorio: tabla completa */}
+              {/* Escritorio: tabla completa.
+                  EN VENTAS Y CANCELADAS SON TRES COLUMNAS: Nombre, Frecuencia
+                  y Valor. Las otras cinco —documento, %, cuotas, saldo,
+                  ultimo pago, mora— son la ficha del credito y no lo que se
+                  viene a mirar acá: al abrir el ojo de Ventas la pregunta es
+                  "que se vendio hoy y por cuanto". Con ocho columnas en un
+                  telefono ninguna se leia. */}
               <table className="hidden md:table w-full text-sm">
                 <thead className="sticky top-0 bg-background">
                   <tr className="border-b text-left text-xs text-muted-foreground">
-                    <th className="py-1.5 pr-2 font-medium">Cliente</th>
-                    {!ocultarFicha && <th className="py-1.5 px-2 font-medium">Venta</th>}
-                    {!ocultarFicha && <th className="py-1.5 px-2 font-medium text-right">%</th>}
-                    {mostrarValorVenta && <th className="py-1.5 px-2 font-medium text-right">Prestado</th>}
-                    <th className="py-1.5 px-2 font-medium text-center">Cuotas</th>
-                    <th className="py-1.5 px-2 font-medium text-right">Saldo</th>
-                    <th className="py-1.5 px-2 font-medium">Último pago</th>
-                    <th className="py-1.5 pl-2 font-medium text-right">Mora</th>
+                    <th className="py-1.5 pr-2 font-medium">Nombre</th>
+                    {ocultarFicha ? (
+                      <th className="py-1.5 px-2 font-medium text-center">Frecuencia</th>
+                    ) : (
+                      <>
+                        <th className="py-1.5 px-2 font-medium">Venta</th>
+                        <th className="py-1.5 px-2 font-medium text-right">%</th>
+                      </>
+                    )}
+                    {mostrarValorVenta && <th className="py-1.5 px-2 font-medium text-right">Valor</th>}
+                    {!ocultarFicha && <th className="py-1.5 px-2 font-medium text-center">Cuotas</th>}
+                    {!ocultarFicha && <th className="py-1.5 px-2 font-medium text-right">Saldo</th>}
+                    {!ocultarFicha && <th className="py-1.5 px-2 font-medium">Último pago</th>}
+                    {!ocultarFicha && <th className="py-1.5 pl-2 font-medium text-right">Mora</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -187,23 +202,44 @@ export function DetalleClientesDialog({
                             </Badge>
                           )}
                         </div>
-                        {!ocultarFicha && (
-                          <span className="text-[10px] text-muted-foreground">{f.documento}</span>
-                        )}
+                        {/* El apodo va debajo del nombre SOLO si dice algo
+                            distinto: en la mayoria de los clientes es el mismo
+                            texto y repetirlo es ruido. */}
+                        {ocultarFicha
+                          ? f.apodo && f.apodo !== f.nombre && (
+                              <span className="block text-[11px] text-muted-foreground">{f.nombre}</span>
+                            )
+                          : <span className="text-[10px] text-muted-foreground">{f.documento}</span>}
                       </td>
-                      {!ocultarFicha && <td className="py-1.5 px-2 text-xs">{fmtFecha(f.fechaVenta)}</td>}
-                      {!ocultarFicha && <td className="py-1.5 px-2 text-right text-xs">{f.tasaInteres}%</td>}
-                      {mostrarValorVenta && (
-                        <td className="py-1.5 px-2 text-right tabular-nums">{fmtMoneda(f.valorVenta)}</td>
+                      {ocultarFicha ? (
+                        <td className="py-1.5 px-2 text-center text-xs">
+                          {etiquetaFrecuencia(f.frecuencia).toLowerCase()}
+                        </td>
+                      ) : (
+                        <>
+                          <td className="py-1.5 px-2 text-xs">{fmtFecha(f.fechaVenta)}</td>
+                          <td className="py-1.5 px-2 text-right text-xs">{f.tasaInteres}%</td>
+                        </>
                       )}
-                      <td className="py-1.5 px-2 text-center text-xs tabular-nums">
-                        {f.cuotasCubiertas}/{f.cuotasTotales}
-                      </td>
-                      <td className="py-1.5 px-2 text-right font-semibold tabular-nums">{fmtMoneda(f.saldo)}</td>
-                      <td className="py-1.5 px-2 text-xs">{f.ultimoPago ? fmtFecha(f.ultimoPago) : "—"}</td>
-                      <td className={`py-1.5 pl-2 text-right text-xs font-medium ${TONO_MORA[colorMora(f.cuotasMora)]}`}>
-                        {f.cuotasMora > 0 ? etiquetaMora(f.cuotasMora) : "al día"}
-                      </td>
+                      {mostrarValorVenta && (
+                        <td className="py-1.5 px-2 text-right font-bold tabular-nums">{fmtMoneda(f.valorVenta)}</td>
+                      )}
+                      {!ocultarFicha && (
+                        <td className="py-1.5 px-2 text-center text-xs tabular-nums">
+                          {f.cuotasCubiertas}/{f.cuotasTotales}
+                        </td>
+                      )}
+                      {!ocultarFicha && (
+                        <td className="py-1.5 px-2 text-right font-semibold tabular-nums">{fmtMoneda(f.saldo)}</td>
+                      )}
+                      {!ocultarFicha && (
+                        <td className="py-1.5 px-2 text-xs">{f.ultimoPago ? fmtFecha(f.ultimoPago) : "—"}</td>
+                      )}
+                      {!ocultarFicha && (
+                        <td className={`py-1.5 pl-2 text-right text-xs font-medium ${TONO_MORA[colorMora(f.cuotasMora)]}`}>
+                          {f.cuotasMora > 0 ? etiquetaMora(f.cuotasMora) : "al día"}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -224,25 +260,44 @@ export function DetalleClientesDialog({
                             </Badge>
                           )}
                         </div>
-                        {!ocultarFicha && (
-                          <p className="text-[10px] text-muted-foreground">
-                            {f.documento} · venta {fmtFecha(f.fechaVenta)} · {f.tasaInteres}%
-                          </p>
+                        {ocultarFicha
+                          ? f.apodo && f.apodo !== f.nombre && (
+                              <p className="text-[11px] text-muted-foreground truncate">{f.nombre}</p>
+                            )
+                          : (
+                            <p className="text-[10px] text-muted-foreground">
+                              {f.documento} · venta {fmtFecha(f.fechaVenta)} · {f.tasaInteres}%
+                            </p>
+                          )}
+                      </div>
+                      {/* En ventas y canceladas, a la derecha va EL VALOR de
+                          la venta —que es lo que se viene a mirar— y no el
+                          saldo con su mora. */}
+                      <div className="text-right shrink-0">
+                        {ocultarFicha ? (
+                          <>
+                            <p className="text-sm font-bold tabular-nums">{fmtMoneda(f.valorVenta)}</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {etiquetaFrecuencia(f.frecuencia).toLowerCase()}
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-sm font-bold tabular-nums">{fmtMoneda(f.saldo)}</p>
+                            <p className={`text-[10px] font-medium ${TONO_MORA[colorMora(f.cuotasMora)]}`}>
+                              {f.cuotasMora > 0 ? `${etiquetaMora(f.cuotasMora)} en mora` : "al día"}
+                            </p>
+                          </>
                         )}
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-sm font-bold tabular-nums">{fmtMoneda(f.saldo)}</p>
-                        <p className={`text-[10px] font-medium ${TONO_MORA[colorMora(f.cuotasMora)]}`}>
-                          {f.cuotasMora > 0 ? `${etiquetaMora(f.cuotasMora)} en mora` : "al día"}
-                        </p>
-                      </div>
                     </div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      Cuotas {f.cuotasCubiertas}/{f.cuotasTotales}
-                      {mostrarValorVenta && ` · prestado ${fmtMoneda(f.valorVenta)}`}
-                      {" · último pago "}
-                      {f.ultimoPago ? fmtFecha(f.ultimoPago) : "—"}
-                    </p>
+                    {!ocultarFicha && (
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        Cuotas {f.cuotasCubiertas}/{f.cuotasTotales}
+                        {" · último pago "}
+                        {f.ultimoPago ? fmtFecha(f.ultimoPago) : "—"}
+                      </p>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -256,7 +311,10 @@ export function DetalleClientesDialog({
               {visibles.length} {visibles.length === 1 ? "cliente" : "clientes"}
               {busqueda && filas.length !== visibles.length && ` de ${filas.length}`}
             </span>
-            <span className="font-semibold">Saldo total {fmtMoneda(saldoTotal)}</span>
+            <span className="font-semibold">
+              {ocultarFicha ? "Valor total " : "Saldo total "}
+              {fmtMoneda(saldoTotal)}
+            </span>
           </div>
         )}
       </DialogContent>
