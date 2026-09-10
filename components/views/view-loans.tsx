@@ -22,9 +22,11 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
 import {
   Search,
   RefreshCw,
@@ -95,6 +97,42 @@ export function ViewLoans({ currentRutaId }: ViewLoansProps) {
 
   // Cual prestamo se esta cambiando de apodo (para bloquear sus botones).
   const [cambiandoApodo, setCambiandoApodo] = useState<string | null>(null)
+  // Dialogo para ponerle el segundo apodo al cliente sin salir de la lista.
+  const [apodo2Cliente, setApodo2Cliente] = useState<
+    { id: string; apodo: string; valor: string } | null
+  >(null)
+  const [guardandoApodo2, setGuardandoApodo2] = useState(false)
+
+  /**
+   * El segundo apodo se guarda en el CLIENTE: lo comparten todos sus creditos.
+   * Lo que cada prestamo elige es cual de los dos usa, y eso lo hace
+   * `cambiarApodo`. Vacio guarda NULL para que el cliente vuelva a quedar
+   * como los demas.
+   */
+  const guardarApodo2 = async () => {
+    if (!apodo2Cliente) return
+    const nuevo = apodo2Cliente.valor.trim()
+    setGuardandoApodo2(true)
+    try {
+      const { error } = await createClient()
+        .from("clients")
+        .update({ apodo_2: nuevo || null, updated_at: new Date().toISOString() })
+        .eq("id", apodo2Cliente.id)
+      if (error) throw error
+      setLoans((prev) =>
+        prev.map((l) =>
+          l.client_id === apodo2Cliente.id && l.clients
+            ? { ...l, clients: { ...l.clients, apodo_2: nuevo || null } }
+            : l,
+        ),
+      )
+      setApodo2Cliente(null)
+    } catch (err) {
+      console.error("[v0] No se pudo guardar el segundo apodo:", err)
+    } finally {
+      setGuardandoApodo2(false)
+    }
+  }
 
   // Delete confirm dialog
   const [deleteTarget, setDeleteTarget] = useState<LoanRow | null>(null)
@@ -337,6 +375,26 @@ export function ViewLoans({ currentRutaId }: ViewLoansProps) {
                                   con uno no hay nada que elegir. El que esta
                                   en uso va resaltado; tocar el otro cambia el
                                   apodo de ESTE prestamo en toda la app. */}
+                              {/* Sin segundo apodo no hay nada que elegir,
+                                  pero si algo que hacer: ponerlo. Sin este
+                                  boton no habia forma de llegar al selector
+                                  desde acá. */}
+                              {!(apodo1 && apodo2 && apodo1.toLowerCase() !== apodo2.toLowerCase()) && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setApodo2Cliente({
+                                      id: loan.client_id,
+                                      apodo: apodo1,
+                                      valor: apodo2,
+                                    })
+                                  }
+                                  title="Ponerle un segundo apodo a este cliente"
+                                  className="mt-1 rounded-full border border-dashed border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground transition-colors hover:bg-accent"
+                                >
+                                  + apodo 2
+                                </button>
+                              )}
                               {apodo1 && apodo2 && apodo1.toLowerCase() !== apodo2.toLowerCase() && (
                                 <div className="mt-1 flex flex-wrap items-center gap-1">
                                   {([1, 2] as const).map((n) => {
@@ -499,6 +557,51 @@ export function ViewLoans({ currentRutaId }: ViewLoansProps) {
               {deleting ? "Eliminando..." : "Eliminar"}
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── El segundo apodo del cliente ─────────────────────────────────── */}
+      <Dialog open={!!apodo2Cliente} onOpenChange={(o) => { if (!o) setApodo2Cliente(null) }}>
+        <DialogContent className="max-w-sm p-4">
+          <DialogHeader>
+            <DialogTitle className="text-base">Segundo apodo</DialogTitle>
+            <DialogDescription className="text-xs">
+              Es del CLIENTE, así que lo comparten todos sus créditos. Después, cada préstamo
+              elige con cuál de los dos se ve.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="space-y-1">
+              <Label className="text-xs">Apodo actual</Label>
+              <Input value={apodo2Cliente?.apodo ?? ""} readOnly className="h-9 bg-muted text-sm" />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="vl-apodo2" className="text-xs">Apodo 2</Label>
+              <Input
+                id="vl-apodo2"
+                autoFocus
+                placeholder="Otro nombre con el que se le conoce"
+                value={apodo2Cliente?.valor ?? ""}
+                onChange={(e) =>
+                  setApodo2Cliente((v) => (v ? { ...v, valor: e.target.value.toUpperCase() } : v))
+                }
+                className="h-9 text-sm uppercase"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Déjalo vacío para quitarlo. Si dice lo mismo que el apodo actual no se ofrece
+                elegir: no habría diferencia entre los dos.
+              </p>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setApodo2Cliente(null)} disabled={guardandoApodo2}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void guardarApodo2()} disabled={guardandoApodo2} className="gap-1.5">
+              {guardandoApodo2 && <Loader2 className="h-4 w-4 animate-spin" />}
+              Guardar
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

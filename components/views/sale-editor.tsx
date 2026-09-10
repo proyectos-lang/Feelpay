@@ -258,6 +258,12 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
   const [cargandoLista, setCargandoLista] = useState(true)
   // Cual prestamo se esta cambiando de apodo (para bloquear sus dos botones).
   const [cambiandoApodo, setCambiandoApodo] = useState<string | null>(null)
+  // El dialogo chico para ponerle el segundo apodo a un cliente sin salir de
+  // la lista de ventas.
+  const [apodo2Cliente, setApodo2Cliente] = useState<
+    { id: string; apodo: string; valor: string } | null
+  >(null)
+  const [guardandoApodo2, setGuardandoApodo2] = useState(false)
   const [busqueda, setBusqueda] = useState("")
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>("activos")
   // Filtro de ruta: secretaría atiende varias, y el préstamo que hay que
@@ -461,6 +467,44 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
       errorToast("No se pudo cambiar el apodo del préstamo", err)
     } finally {
       setCambiandoApodo(null)
+    }
+  }
+
+  /**
+   * GUARDAR EL SEGUNDO APODO DEL CLIENTE.
+   *
+   * Se escribe en `clients`, no en el prestamo: el apodo es del cliente y lo
+   * comparten todos sus creditos. Lo que cada prestamo elige es CUAL de los
+   * dos usa, y eso ya lo hace `cambiarApodoPrestamo`.
+   *
+   * Vacio guarda NULL —no cadena vacia— para que el cliente vuelva a quedar
+   * como los demas y el selector desaparezca solo.
+   */
+  const guardarApodo2 = async () => {
+    if (!apodo2Cliente) return
+    const nuevo = apodo2Cliente.valor.trim()
+    setGuardandoApodo2(true)
+    try {
+      const supabase = await getSupabaseSafe()
+      const { error } = await supabase
+        .from("clients")
+        .update({ apodo_2: nuevo || null, updated_at: new Date().toISOString() })
+        .eq("id", apodo2Cliente.id)
+      if (error) throw error
+      // Se actualizan TODOS los prestamos de ese cliente en memoria: el apodo
+      // es del cliente, asi que sus otras ventas tambien lo tienen.
+      setPrestamos((prev) =>
+        prev.map((p) =>
+          p.client_id === apodo2Cliente.id
+            ? { ...p, cliente: { ...p.cliente, apodo_2: nuevo || null } }
+            : p,
+        ),
+      )
+      setApodo2Cliente(null)
+    } catch (err) {
+      errorToast("No se pudo guardar el segundo apodo", err)
+    } finally {
+      setGuardandoApodo2(false)
     }
   }
 
@@ -1278,6 +1322,30 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
                               porque el renglon entero abre el prestamo, y
                               tocar el apodo debe cambiar el apodo, no navegar
                               a otra pantalla. */}
+                          {/* SIN SEGUNDO APODO NO HAY NADA QUE ELEGIR, PERO
+                              SI ALGO QUE HACER: ponerlo. Antes acá no salia
+                              nada, y desde Control Total no habia forma de
+                              llegar al selector — habia que ir a la pestana
+                              Clientes, adivinando que el apodo 2 se pone
+                              alla. Este boton lo resuelve donde se esta
+                              mirando. */}
+                          {!dosApodosDistintos(p.cliente.apodo, p.cliente.apodo_2) && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setApodo2Cliente({
+                                  id: p.client_id ?? "",
+                                  apodo: p.cliente.apodo ?? "",
+                                  valor: (p.cliente.apodo_2 ?? "").trim(),
+                                })
+                              }}
+                              title="Ponerle un segundo apodo a este cliente"
+                              className="rounded-full border border-dashed border-border px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground transition-colors hover:bg-accent"
+                            >
+                              + apodo 2
+                            </button>
+                          )}
                           {dosApodosDistintos(p.cliente.apodo, p.cliente.apodo_2) && (
                             <span className="flex items-center gap-1">
                               {([1, 2] as const).map((n) => {
@@ -1345,6 +1413,51 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
         </Card>
           </TabsContent>
         </Tabs>
+
+      {/* ── El segundo apodo del cliente ─────────────────────────────────── */}
+      <Dialog open={!!apodo2Cliente} onOpenChange={(o) => { if (!o) setApodo2Cliente(null) }}>
+        <DialogContent className="max-w-sm p-4">
+          <DialogHeader>
+            <DialogTitle className="text-base">Segundo apodo</DialogTitle>
+            <DialogDescription className="text-xs">
+              Es del CLIENTE, así que lo comparten todos sus créditos. Después, cada préstamo
+              elige con cuál de los dos se ve.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="space-y-1">
+              <Label className="text-xs">Apodo actual</Label>
+              <Input value={apodo2Cliente?.apodo ?? ""} readOnly className="h-9 text-sm bg-muted" />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="ct-apodo2" className="text-xs">Apodo 2</Label>
+              <Input
+                id="ct-apodo2"
+                autoFocus
+                placeholder="Otro nombre con el que se le conoce"
+                value={apodo2Cliente?.valor ?? ""}
+                onChange={(e) =>
+                  setApodo2Cliente((v) => (v ? { ...v, valor: e.target.value.toUpperCase() } : v))
+                }
+                className="h-9 text-sm uppercase"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Déjalo vacío para quitarlo. Si dice lo mismo que el apodo actual no se ofrece
+                elegir: no habría diferencia entre los dos.
+              </p>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setApodo2Cliente(null)} disabled={guardandoApodo2}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void guardarApodo2()} disabled={guardandoApodo2} className="gap-1.5">
+              {guardandoApodo2 && <Loader2 className="h-4 w-4 animate-spin" />}
+              Guardar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </div>
     )
   }
@@ -1420,6 +1533,7 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
             <span className="text-sm">No se pudo abrir el préstamo.</span>
           </CardContent>
         </Card>
+
       </div>
     )
   }
