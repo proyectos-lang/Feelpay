@@ -32,7 +32,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle, Search } from "lucide-react"
 import { getSupabaseSafe } from "@/lib/api-helper"
 import { getDetalleClientes, type ClienteDetalleRow } from "@/lib/detalle-clientes"
-import { fmtFecha, fmtMoneda, etiquetaMora, colorMora, etiquetaFrecuencia } from "@/lib/gestion-core"
+import { fmtFecha, fmtMonedaCien, etiquetaMora, colorMora, etiquetaFrecuencia } from "@/lib/gestion-core"
 
 export interface DetalleClientesDialogProps {
   open: boolean
@@ -222,7 +222,7 @@ export function DetalleClientesDialog({
                         </>
                       )}
                       {mostrarValorVenta && (
-                        <td className="py-1.5 px-2 text-right font-bold tabular-nums">{fmtMoneda(f.valorVenta)}</td>
+                        <td className="py-1.5 px-2 text-right font-bold tabular-nums">{fmtMonedaCien(f.valorVenta)}</td>
                       )}
                       {!ocultarFicha && (
                         <td className="py-1.5 px-2 text-center text-xs tabular-nums">
@@ -230,7 +230,7 @@ export function DetalleClientesDialog({
                         </td>
                       )}
                       {!ocultarFicha && (
-                        <td className="py-1.5 px-2 text-right font-semibold tabular-nums">{fmtMoneda(f.saldo)}</td>
+                        <td className="py-1.5 px-2 text-right font-semibold tabular-nums">{fmtMonedaCien(f.saldo)}</td>
                       )}
                       {!ocultarFicha && (
                         <td className="py-1.5 px-2 text-xs">{f.ultimoPago ? fmtFecha(f.ultimoPago) : "—"}</td>
@@ -276,14 +276,14 @@ export function DetalleClientesDialog({
                       <div className="text-right shrink-0">
                         {ocultarFicha ? (
                           <>
-                            <p className="text-sm font-bold tabular-nums">{fmtMoneda(f.valorVenta)}</p>
+                            <p className="text-sm font-bold tabular-nums">{fmtMonedaCien(f.valorVenta)}</p>
                             <p className="text-[10px] text-muted-foreground">
                               {etiquetaFrecuencia(f.frecuencia).toLowerCase()}
                             </p>
                           </>
                         ) : (
                           <>
-                            <p className="text-sm font-bold tabular-nums">{fmtMoneda(f.saldo)}</p>
+                            <p className="text-sm font-bold tabular-nums">{fmtMonedaCien(f.saldo)}</p>
                             <p className={`text-[10px] font-medium ${TONO_MORA[colorMora(f.cuotasMora)]}`}>
                               {f.cuotasMora > 0 ? `${etiquetaMora(f.cuotasMora)} en mora` : "al día"}
                             </p>
@@ -313,7 +313,7 @@ export function DetalleClientesDialog({
             </span>
             <span className="font-semibold">
               {ocultarFicha ? "Valor total " : "Saldo total "}
-              {fmtMoneda(saldoTotal)}
+              {fmtMonedaCien(saldoTotal)}
             </span>
           </div>
         )}

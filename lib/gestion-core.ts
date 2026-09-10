@@ -484,8 +484,42 @@ export function apodoSiAporta(
 
 // ── Dinero ─────────────────────────────────────────────────────────────────
 
+/**
+ * REDONDEO DE PRESENTACION: de $100 en $100.
+ *
+ * En el resumen, los informes y el cierre, la cifra se lee de un vistazo y se
+ * repite en voz alta: "recaudé un millón ciento dieciocho mil". Los ultimos
+ * dos digitos no cambian ninguna decision y llenan la pantalla de ruido en un
+ * telefono al sol.
+ *
+ * ES SOLO PARA MOSTRAR. La plata guardada no cambia: los pagos, los saldos y
+ * el cronograma siguen al peso. Esto no se usa nunca para calcular ni para
+ * escribir — solo en el ultimo paso, cuando el numero se pinta.
+ *
+ * NO SE TOCA LO QUE ESTA POR DEBAJO DE $1.000, y es la misma linea que ya
+ * separa monedas en `redondearCuota` (scripts/098): las rutas 1 y 933 trabajan
+ * en dolares y sus cifras van en unidades — una meta de $20 redondeada de 100
+ * en 100 se mostraria como $0. Bajo ese piso se muestra el valor tal cual.
+ */
+export function redondearCien(valor: number | null | undefined): number {
+  const n = Number(valor) || 0
+  if (Math.abs(n) < 1000) return Math.round(n)
+  return Math.round(n / 100) * 100
+}
+
 export function fmtMoneda(valor: number | null | undefined): string {
   return `$${Math.round(Number(valor) || 0).toLocaleString("es-CO")}`
+}
+
+/**
+ * La plata como se MUESTRA en los informes: redondeada de $100 en $100.
+ *
+ * `fmtMoneda` sigue existiendo para donde la cifra exacta importa —el recibo
+ * del cliente, el extracto, el monto que se teclea—: ahi cambiar un peso seria
+ * cambiar lo que se cobro.
+ */
+export function fmtMonedaCien(valor: number | null | undefined): string {
+  return `$${redondearCien(valor).toLocaleString("es-CO")}`
 }
 
 // ── Cuotas con decimal ─────────────────────────────────────────────────────

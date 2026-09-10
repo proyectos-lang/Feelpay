@@ -12,7 +12,7 @@ import { fmtFecha } from "@/lib/colombia-date"
 import { Button } from "@/components/ui/button"
  import { createClient } from "@/lib/supabase/client"
 import { getResumenDia } from "@/lib/resumen-dia"
-import { todayColombia, bandaCartera, etiquetaFrecuencia } from "@/lib/gestion-core"
+import { todayColombia, bandaCartera, etiquetaFrecuencia, fmtMonedaCien } from "@/lib/gestion-core"
 import { getRutaUmbrales } from "@/lib/ruta-umbrales"
 import { DetalleClientesDialog } from "@/components/detalle-clientes-dialog"
 import { PagosDelDiaDialog, type FuentePagos } from "@/components/pagos-del-dia-dialog"
@@ -699,7 +699,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
   const [compartirInforme, setCompartirInforme] = useState(false)
   const construirImagenInforme = async () => {
     const umbrales = await getRutaUmbrales(rutaId).catch(() => null)
-    const money = (n: number) => `$${Math.round(n).toLocaleString("es-CO")}`
+    const money = (n: number) => fmtMonedaCien(n)
     const ahora = new Date()
     const dia = ahora.toLocaleDateString("es-CO", { timeZone: "America/Bogota" })
     const hora = ahora.toLocaleTimeString("es-CO", {
@@ -974,7 +974,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                     <p className="text-[10px] text-muted-foreground font-medium leading-none">Caja Anterior</p>
                     <p className={`text-lg font-bold leading-none ${
                       cajaAnterior < 0 ? "text-destructive" : "text-success"
-                    }`}>${cajaAnterior.toLocaleString()}</p>
+                    }`}>{fmtMonedaCien(cajaAnterior)}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -990,7 +990,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                     <p className="text-[10px] text-muted-foreground font-medium leading-none">Efectivo</p>
                     <p className={`text-lg font-bold leading-none ${
                       efectivo < 0 ? "text-destructive" : "text-success"
-                    }`}>${efectivo.toLocaleString()}</p>
+                    }`}>{fmtMonedaCien(efectivo)}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -1046,13 +1046,13 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-xs text-muted-foreground">Recaudo</span>
                       <span className="text-xl font-bold text-foreground tabular-nums leading-tight">
-                        ${collectedAmount.toLocaleString()}
+                        {fmtMonedaCien(collectedAmount)}
                       </span>
                     </div>
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-xs text-muted-foreground">Meta</span>
                       <span className="text-sm font-semibold text-muted-foreground tabular-nums leading-tight">
-                        ${metaAmount.toLocaleString()}
+                        {fmtMonedaCien(metaAmount)}
                       </span>
                     </div>
 
@@ -1070,7 +1070,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                       </p>
                     ) : (
                       <p className="mt-0.5 text-[11px] font-bold leading-tight text-destructive">
-                        Meta no superada por ${remaining.toLocaleString()}
+                        Meta no superada por {fmtMonedaCien(remaining)}
                       </p>
                     )}
                   </div>
@@ -1175,7 +1175,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                             </span>
                           </div>
                           <p className="text-sm font-bold text-foreground leading-tight tabular-nums">
-                            ${c.valor.toLocaleString()}
+                            {fmtMonedaCien(c.valor)}
                           </p>
                         </div>
                       ))}
@@ -1243,7 +1243,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                                 desbordarse, y con shrink-0 no la comprime la
                                 barra. */}
                             <span className="text-xs font-bold text-foreground min-w-[62px] text-right tabular-nums whitespace-nowrap shrink-0">
-                              ${item.value.toLocaleString()}
+                              {fmtMonedaCien(item.value)}
                             </span>
                           </div>
                         )
@@ -1816,7 +1816,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                           )}
                         </TableCell>
                         <TableCell className="text-xs font-medium text-right">
-                          ${record.valor.toLocaleString()}
+                          {fmtMonedaCien(record.valor)}
                         </TableCell>
                       </TableRow>
                     )
@@ -1831,7 +1831,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
               <div className="flex justify-between items-center">
                 <span className="text-sm font-medium">Total:</span>
                 <span className="text-sm font-bold">
-                  ${detailRecords.reduce((sum, r) => sum + r.valor, 0).toLocaleString()}
+                  {fmtMonedaCien(detailRecords.reduce((sum, r) => sum + r.valor, 0))}
                 </span>
               </div>
             </div>
