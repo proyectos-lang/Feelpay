@@ -134,6 +134,8 @@ interface SaleEditorProps {
 interface ClienteMin {
   nombre_completo: string
   apodo: string | null
+  /** El segundo apodo del cliente. Ver scripts/107. */
+  apodo_2: string | null
   documento: string
 }
 
@@ -152,6 +154,8 @@ interface PrestamoRow {
   fecha_primer_pago: string | null
   prestamo_empleado: boolean
   tipo_venta: string | null
+  /** Con cual de los dos apodos se ve ESTE prestamo. 1 o 2. */
+  apodo_elegido: 1 | 2
   cuenta_id: number | null
   estado: string
   fecha_creacion: string | null
@@ -190,7 +194,8 @@ const COLUMNAS_LOAN =
   "id, client_id, valor, valor_a_pagar, valor_cuota, saldo, tasa_interes, " +
   "numero_cuotas, tipo_amortizacion, frecuencia_pago, dia_semana, " +
   "fecha_primer_pago, prestamo_empleado, tipo_venta, cuenta_id, estado, " +
-  "fecha_creacion, ruta, clients:clients(nombre_completo, apodo, documento)"
+  "fecha_creacion, ruta, apodo_elegido, " +
+  "clients:clients(nombre_completo, apodo, apodo_2, documento)"
 
 const COLUMNAS_FINANCIERO =
   "loan_id, total_a_pagar, total_pagado, saldo, saldo_hoy, saldo_en_mora, " +
@@ -251,6 +256,8 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
   // Buscador
   const [prestamos, setPrestamos] = useState<PrestamoRow[]>([])
   const [cargandoLista, setCargandoLista] = useState(true)
+  // Cual prestamo se esta cambiando de apodo (para bloquear sus dos botones).
+  const [cambiandoApodo, setCambiandoApodo] = useState<string | null>(null)
   const [busqueda, setBusqueda] = useState("")
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>("activos")
   // Filtro de ruta: secretaría atiende varias, y el préstamo que hay que
@@ -429,6 +436,33 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
       cancelado = true
     }
   }, [creandoVenta, ventaRuta, ventaFecha])
+
+  /**
+   * CAMBIAR CON QUE APODO SE VE ESTE PRESTAMO.
+   *
+   * Escribe `loans.apodo_elegido` y actualiza la fila en memoria, sin recargar
+   * la lista: es un dato de una sola fila y volver a pedir todo por eso hace
+   * parpadear la tabla y pierde el scroll.
+   *
+   * Se guarda el NUMERO (1 o 2) y no el texto: si manana se corrige el apodo
+   * del cliente, los prestamos que lo usan se actualizan solos. Ver
+   * scripts/107.
+   */
+  const cambiarApodoPrestamo = async (loanId: string, cual: 1 | 2) => {
+    setCambiandoApodo(loanId)
+    try {
+      const supabase = await getSupabaseSafe()
+      const { error } = await supabase.from("loans").update({ apodo_elegido: cual }).eq("id", loanId)
+      if (error) throw error
+      setPrestamos((prev) =>
+        prev.map((p) => (p.id === loanId ? { ...p, apodo_elegido: cual } : p)),
+      )
+    } catch (err) {
+      errorToast("No se pudo cambiar el apodo del préstamo", err)
+    } finally {
+      setCambiandoApodo(null)
+    }
+  }
 
   // ── Listado de préstamos de la ruta elegida ───────────────────────────────
   useEffect(() => {
@@ -1228,13 +1262,53 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
                             <span className="block font-semibold text-sm truncate">
                               {p.cliente.nombre_completo}
                             </span>
-                            {apodoSiAporta(p.cliente.nombre_completo, p.cliente.apodo) && (
+                            {/* EL APODO CON EL QUE SE VE ESTE PRESTAMO, no el
+                                del cliente a secas: cada credito guarda cual de
+                                los dos usa. */}
+                            {apodoSiAporta(p.cliente.nombre_completo, apodoDelPrestamo(p)) && (
                               <span className="block text-[11px] leading-tight text-muted-foreground truncate">
-                                {apodoSiAporta(p.cliente.nombre_completo, p.cliente.apodo)}
+                                {apodoSiAporta(p.cliente.nombre_completo, apodoDelPrestamo(p))}
                               </span>
                             )}
                           </span>
                           <span className="text-[10px] text-muted-foreground">{p.cliente.documento}</span>
+                          {/* CON QUE APODO SE VE ESTE PRESTAMO.
+                              Solo aparece cuando el cliente tiene los dos: con
+                              uno no hay nada que elegir. `stopPropagation`
+                              porque el renglon entero abre el prestamo, y
+                              tocar el apodo debe cambiar el apodo, no navegar
+                              a otra pantalla. */}
+                          {dosApodosDistintos(p.cliente.apodo, p.cliente.apodo_2) && (
+                            <span className="flex items-center gap-1">
+                              {([1, 2] as const).map((n) => {
+                                const txt = (n === 1 ? p.cliente.apodo : p.cliente.apodo_2) ?? ""
+                                const activo = p.apodo_elegido === n
+                                return (
+                                  <button
+                                    key={n}
+                                    type="button"
+                                    disabled={cambiandoApodo === p.id}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      void cambiarApodoPrestamo(p.id, n)
+                                    }}
+                                    title={
+                                      activo
+                                        ? "Este es el apodo con el que se ve el préstamo"
+                                        : `Usar "${txt}" para este préstamo`
+                                    }
+                                    className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold transition-colors disabled:opacity-50 ${
+                                      activo
+                                        ? "border-brand bg-brand/10 text-brand"
+                                        : "border-border text-muted-foreground hover:bg-accent"
+                                    }`}
+                                  >
+                                    {txt}
+                                  </button>
+                                )
+                              })}
+                            </span>
+                          )}
                           {/* Una ANULADA y una CANCELADA significan lo
                               contrario: la cancelada se pago entera, la
                               anulada nunca debio existir. Con la misma
@@ -2317,6 +2391,34 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
 
 /** Normaliza una fila de `loans` con su join de cliente. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+/**
+ * EL APODO CON EL QUE SE VE ESTE PRESTAMO.
+ *
+ * Cae al apodo 1 cuando el 2 esta vacio: un prestamo marcado con el 2 sobre un
+ * cliente que no tiene apodo 2 no puede quedarse sin nombre. Es la misma regla
+ * de la vista `v_loan_apodo` del script 107, escrita acá para no pedir una
+ * consulta mas por una cadena de texto.
+ */
+/**
+ * ¿Vale la pena ofrecer la eleccion?
+ *
+ * Solo cuando hay DOS apodos y dicen cosas distintas. Con el mismo texto en
+ * los dos —que ya pasa en la base: REBECA / REBECA— el selector mostraria dos
+ * botones identicos, o sea una pregunta cuyas dos respuestas son la misma.
+ * Se ignoran mayusculas y espacios de sobra porque los dos campos se escriben
+ * a mano, igual que hace `apodoSiAporta`.
+ */
+function dosApodosDistintos(a1: string | null, a2: string | null): boolean {
+  const x = (a1 ?? "").trim()
+  const y = (a2 ?? "").trim()
+  return !!x && !!y && x.toLowerCase() !== y.toLowerCase()
+}
+
+function apodoDelPrestamo(p: PrestamoRow): string | null {
+  const a2 = (p.cliente.apodo_2 ?? "").trim()
+  return p.apodo_elegido === 2 && a2 ? a2 : p.cliente.apodo
+}
+
 function mapPrestamo(l: any): PrestamoRow {
   const c = Array.isArray(l?.clients) ? l.clients[0] : l?.clients
   return {
@@ -2338,9 +2440,11 @@ function mapPrestamo(l: any): PrestamoRow {
     estado: l.estado ?? "",
     fecha_creacion: l.fecha_creacion ?? null,
     ruta: Number(l.ruta ?? 0),
+    apodo_elegido: Number(l.apodo_elegido ?? 1) === 2 ? 2 : 1,
     cliente: {
       nombre_completo: c?.nombre_completo ?? "",
       apodo: c?.apodo ?? null,
+      apodo_2: c?.apodo_2 ?? null,
       documento: c?.documento ?? "",
     },
   }

@@ -2170,7 +2170,8 @@ export function NewLoan({
                   respuesta. Lo elegido manda en TODA la gestion del credito
                   —lista de cobro, recibo, extracto— y se puede cambiar
                   despues desde Ver Ventas. */}
-              {apodo.trim() && apodo2.trim() && (
+              {apodo.trim() && apodo2.trim() &&
+                apodo.trim().toLowerCase() !== apodo2.trim().toLowerCase() && (
                 <div className="space-y-1 md:space-y-2">
                   <Label className="text-[11px] md:text-sm">¿Con cuál apodo se verá este préstamo?</Label>
                   <div className="flex gap-2">

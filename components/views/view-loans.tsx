@@ -337,7 +337,7 @@ export function ViewLoans({ currentRutaId }: ViewLoansProps) {
                                   con uno no hay nada que elegir. El que esta
                                   en uso va resaltado; tocar el otro cambia el
                                   apodo de ESTE prestamo en toda la app. */}
-                              {apodo1 && apodo2 && (
+                              {apodo1 && apodo2 && apodo1.toLowerCase() !== apodo2.toLowerCase() && (
                                 <div className="mt-1 flex flex-wrap items-center gap-1">
                                   {([1, 2] as const).map((n) => {
                                     const txt = n === 1 ? apodo1 : apodo2
