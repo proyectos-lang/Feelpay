@@ -275,6 +275,16 @@ export function NewLoan({
   const [documento, setDocumento] = useState("")
   const [nombreCompleto, setNombreCompleto] = useState("")
   const [apodo, setApodo] = useState("")
+  /**
+   * EL SEGUNDO APODO, y con cual de los dos se ve ESTE prestamo.
+   *
+   * Un cliente puede conocerse de dos formas —"KIOSKO" y "LA ESQUINA"— y no
+   * siempre por la misma en todos sus creditos. `apodo2` se guarda en el
+   * cliente; `apodoElegido` se guarda en el prestamo y dice cual de los dos
+   * usar. Ver scripts/107.
+   */
+  const [apodo2, setApodo2] = useState("")
+  const [apodoElegido, setApodoElegido] = useState<1 | 2>(1)
   const [sector, setSector] = useState("")
   const [procesandoCedula, setProcessandoCedula] = useState(false)
   const [pagoAdelantado, setPagoAdelantado] = useState(false)
@@ -1122,9 +1132,16 @@ export function NewLoan({
         if (!telefono.trim()) errors.add("telefono")
         if (!direccion.trim()) errors.add("direccion")
         if (!tipoComercio.trim()) errors.add("tipoComercio")
-        if (!ref1Nombre.trim()) errors.add("ref1Nombre")
-        if (!ref1Telefono.trim()) errors.add("ref1Telefono")
-        if (!ref1Direccion.trim()) errors.add("ref1Direccion")
+        // LAS REFERENCIAS YA NO SON OBLIGATORIAS.
+        //
+        // La base nunca las exigio —las tres columnas aceptan NULL— y el
+        // requisito se estaba esquivando igual: de 338 clientes solo 69 (20%)
+        // tienen la referencia llena, o sea que en la calle se escribe
+        // cualquier cosa para poder seguir. Un campo obligatorio que se llena
+        // con basura es peor que uno opcional vacio: ensucia el dato y no
+        // protege nada.
+        //
+        // Los campos siguen ahi y se guardan cuando se llenan.
       }
       if (!valor || Number.parseFloat(valor) <= 0) errors.add("amount")
       if (!dias || Number.parseInt(dias) <= 0) errors.add("dias")
@@ -1219,6 +1236,7 @@ export function NewLoan({
           documento: documento.trim().toUpperCase(),
           nombre_completo: nombreCompleto.trim().toUpperCase(),
           apodo: apodo || null,
+          apodo_2: apodo2.trim() || null,
           sector: sector || null,
           telefono: telefono || null,
           telefono2: telefono2 || null,
@@ -1240,7 +1258,10 @@ export function NewLoan({
           })
           return
         }
-        p_cliente = { is_new: false, id: selectedClient }
+        // En un cliente que ya existe tambien se puede agregar o corregir el
+        // segundo apodo desde acá: es el mismo formulario y no tiene sentido
+        // mandarlo a otra pantalla solo para eso. Vacio = no se toca.
+        p_cliente = { is_new: false, id: selectedClient, apodo_2: apodo2.trim() || null }
       }
 
       // ── Calculos de amortizacion (se preservan tal cual) ──────────────
@@ -1416,6 +1437,8 @@ export function NewLoan({
         frecuencia_pago: frecuenciaPago,
         dia_semana: diaSemana || null,
         tipo_venta: tipoVenta,
+        // Con cual de los dos apodos se ve ESTE prestamo. 1 = el de siempre.
+        apodo_elegido: apodoElegido,
         prestamo_empleado: prestamoEmpleado,
         cuenta_id: tipoVenta === "transferencia" && cuentaId ? cuentaId : null,
         fecha_primer_pago: fechaPrimerPago,
@@ -2127,7 +2150,44 @@ export function NewLoan({
                     className={`h-8 md:h-10 text-[11px] md:text-sm uppercase ${errCls("apodo")}`}
                   />
                 </div>
+                <div className="space-y-1 md:space-y-2">
+                  <Label htmlFor="apodo2" className="text-[11px] md:text-sm">
+                    Apodo 2 <span className="font-normal text-muted-foreground">(opcional)</span>
+                  </Label>
+                  <Input
+                    id="apodo2"
+                    placeholder="Otro nombre con el que se le conoce"
+                    value={apodo2}
+                    onChange={(e) => setApodo2(e.target.value.toUpperCase())}
+                    className="h-8 md:h-10 text-[11px] md:text-sm uppercase"
+                  />
+                </div>
               </div>
+
+              {/* CON CUAL DE LOS DOS SE VE ESTE PRESTAMO.
+                  Solo aparece cuando hay dos: con uno solo no hay nada que
+                  elegir y el selector seria una pregunta con una sola
+                  respuesta. Lo elegido manda en TODA la gestion del credito
+                  —lista de cobro, recibo, extracto— y se puede cambiar
+                  despues desde Ver Ventas. */}
+              {apodo.trim() && apodo2.trim() && (
+                <div className="space-y-1 md:space-y-2">
+                  <Label className="text-[11px] md:text-sm">¿Con cuál apodo se verá este préstamo?</Label>
+                  <div className="flex gap-2">
+                    {([1, 2] as const).map((n) => (
+                      <Button
+                        key={n}
+                        type="button"
+                        variant={apodoElegido === n ? "default" : "outline"}
+                        onClick={() => setApodoElegido(n)}
+                        className="h-8 md:h-10 flex-1 text-[11px] md:text-sm justify-start truncate"
+                      >
+                        {n === 1 ? apodo.trim() : apodo2.trim()}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="grid gap-2 md:gap-4 grid-cols-2 md:grid-cols-4">
                 <div className="space-y-1 md:space-y-2">
@@ -2224,12 +2284,14 @@ export function NewLoan({
               </div>
 
               <div className="pt-2 md:pt-4">
-                <h3 className="text-[10px] md:text-sm font-semibold mb-2 md:mb-3">Referencia 1</h3>
+                <h3 className="text-[10px] md:text-sm font-semibold mb-2 md:mb-3">
+                  Referencia 1 <span className="font-normal text-muted-foreground">(opcional)</span>
+                </h3>
                 <div className="space-y-2 md:space-y-4">
                   <div className="grid gap-2 md:gap-4 grid-cols-1 md:grid-cols-2">
                     <div className="space-y-1 md:space-y-2">
                       <Label htmlFor="ref1Nombre" className="text-[10px] md:text-sm">
-                        Nombre completo de la referencia <span className="text-red-500">*</span>
+                        Nombre completo de la referencia
                       </Label>
                       <Input
                         id="ref1Nombre"
@@ -2244,7 +2306,7 @@ export function NewLoan({
                     </div>
                     <div className="space-y-1 md:space-y-2">
                       <Label htmlFor="ref1Telefono" className="text-[10px] md:text-sm">
-                        Teléfono de la referencia <span className="text-red-500">*</span>
+                        Teléfono de la referencia
                       </Label>
                       <Input
                         id="ref1Telefono"
@@ -2261,7 +2323,7 @@ export function NewLoan({
                   </div>
                   <div className="space-y-1 md:space-y-2">
                     <Label htmlFor="ref1Direccion" className="text-[10px] md:text-sm">
-                      Dirección de la referencia <span className="text-red-500">*</span>
+                      Dirección de la referencia
                     </Label>
                     <Input
                       id="ref1Direccion"

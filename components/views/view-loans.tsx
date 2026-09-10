@@ -51,9 +51,12 @@ type LoanRow = {
   tipo_venta: string | null
   estado: string | null
   fecha_creacion: string | null
+  /** 1 = `clients.apodo`, 2 = `clients.apodo_2`. Ver scripts/107. */
+  apodo_elegido: number | null
   clients: {
     nombre_completo: string | null
     apodo: string | null
+    apodo_2: string | null
   } | null
 }
 
@@ -90,10 +93,44 @@ export function ViewLoans({ currentRutaId }: ViewLoansProps) {
   const [search, setSearch] = useState("")
   const [filterEstado, setFilterEstado] = useState<"todos" | "activo" | "cancelado">("todos")
 
+  // Cual prestamo se esta cambiando de apodo (para bloquear sus botones).
+  const [cambiandoApodo, setCambiandoApodo] = useState<string | null>(null)
+
   // Delete confirm dialog
   const [deleteTarget, setDeleteTarget] = useState<LoanRow | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  /**
+   * CAMBIAR CON QUE APODO SE VE ESTE PRESTAMO.
+   *
+   * Escribe `loans.apodo_elegido` y actualiza la fila en pantalla sin recargar
+   * la lista entera: es un dato de una sola fila y volver a pedir todo por eso
+   * hace parpadear la tabla.
+   *
+   * Se guarda el NUMERO (1 o 2), no el texto: si manana se corrige el apodo
+   * del cliente, los prestamos que lo usan se actualizan solos. Ver
+   * scripts/107.
+   */
+  const cambiarApodo = async (loanId: string, cual: 1 | 2) => {
+    setCambiandoApodo(loanId)
+    try {
+      const { error } = await createClient()
+        .from("loans")
+        .update({ apodo_elegido: cual })
+        .eq("id", loanId)
+      if (error) throw error
+      setLoans((prev) =>
+        prev.map((l) => (l.id === loanId ? { ...l, apodo_elegido: cual } : l)),
+      )
+    } catch (err) {
+      console.error("[v0] No se pudo cambiar el apodo del prestamo:", err)
+      // Sin fila actualizada la pantalla se queda como estaba, que es la
+      // verdad: el cambio no se guardo.
+    } finally {
+      setCambiandoApodo(null)
+    }
+  }
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
   const fetchLoans = useCallback(async () => {
@@ -107,7 +144,8 @@ export function ViewLoans({ currentRutaId }: ViewLoansProps) {
           `id, client_id, valor, saldo, valor_a_pagar, valor_cuota,
            tasa_interes, numero_cuotas, frecuencia_pago, dia_semana,
            tipo_venta, estado, fecha_creacion,
-           clients:clients(nombre_completo, apodo)`,
+           apodo_elegido,
+           clients:clients(nombre_completo, apodo, apodo_2)`,
         )
         .order("fecha_creacion", { ascending: false })
 
@@ -262,8 +300,16 @@ export function ViewLoans({ currentRutaId }: ViewLoansProps) {
                 </TableHeader>
                 <TableBody>
                   {filtered.map((loan) => {
+                    // EL APODO CON EL QUE SE VE ESTE PRESTAMO.
+                    // No es el del cliente a secas: cada credito guarda con
+                    // cual de los dos se identifica. Cae al 1 si el 2 esta
+                    // vacio — un prestamo marcado con el 2 sobre un cliente
+                    // sin apodo 2 no puede quedarse sin nombre.
+                    const apodo1 = (loan.clients?.apodo ?? "").trim()
+                    const apodo2 = (loan.clients?.apodo_2 ?? "").trim()
+                    const usa2 = loan.apodo_elegido === 2 && !!apodo2
                     const nombre =
-                      loan.clients?.apodo ||
+                      (usa2 ? apodo2 : apodo1) ||
                       loan.clients?.nombre_completo ||
                       "Sin nombre"
                     const isActivo =
@@ -281,12 +327,44 @@ export function ViewLoans({ currentRutaId }: ViewLoansProps) {
                               <span className="text-sm font-semibold leading-tight">
                                 {nombre}
                               </span>
-                              {loan.clients?.apodo &&
-                                loan.clients?.nombre_completo && (
-                                  <span className="text-[11px] text-muted-foreground leading-tight">
-                                    {loan.clients.nombre_completo}
-                                  </span>
-                                )}
+                              {loan.clients?.nombre_completo && (
+                                <span className="text-[11px] text-muted-foreground leading-tight">
+                                  {loan.clients.nombre_completo}
+                                </span>
+                              )}
+                              {/* LOS DOS APODOS, Y CUAL SE USA.
+                                  Solo aparece cuando el cliente tiene los dos:
+                                  con uno no hay nada que elegir. El que esta
+                                  en uso va resaltado; tocar el otro cambia el
+                                  apodo de ESTE prestamo en toda la app. */}
+                              {apodo1 && apodo2 && (
+                                <div className="mt-1 flex flex-wrap items-center gap-1">
+                                  {([1, 2] as const).map((n) => {
+                                    const txt = n === 1 ? apodo1 : apodo2
+                                    const activo = usa2 ? n === 2 : n === 1
+                                    return (
+                                      <button
+                                        key={n}
+                                        type="button"
+                                        disabled={cambiandoApodo === loan.id}
+                                        onClick={() => void cambiarApodo(loan.id, n)}
+                                        title={
+                                          activo
+                                            ? "Este es el apodo con el que se ve el préstamo"
+                                            : `Usar "${txt}" para este préstamo`
+                                        }
+                                        className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-50 ${
+                                          activo
+                                            ? "border-brand bg-brand/10 text-brand"
+                                            : "border-border text-muted-foreground hover:bg-accent"
+                                        }`}
+                                      >
+                                        {txt}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </TableCell>
