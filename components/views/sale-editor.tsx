@@ -114,8 +114,10 @@ import {
   Search,
   Settings2,
   Trash2,
+  Users,
 } from "lucide-react"
 import { MovimientosPanel } from "@/components/views/movimientos-panel"
+import { ClientesControl } from "@/components/views/clientes-control"
 import { NewLoan } from "@/components/views/new-loan"
 
 // ── Props ───────────────────────────────────────────────────────────────────
@@ -1078,7 +1080,7 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
             loan_id —, así que no caben dentro del detalle de una venta y viven
             como pestaña propia del buscador. */}
         <Tabs value={modoListado} onValueChange={setModoListado}>
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="ventas" className="text-[11px] md:text-sm gap-1">
               <Settings2 className="h-3.5 w-3.5" />
               <span className="truncate">Ventas</span>
@@ -1087,7 +1089,22 @@ export function SaleEditor({ currentRutaId, loanIdInicial, onBack }: SaleEditorP
               <ArrowLeftRight className="h-3.5 w-3.5" />
               <span className="truncate">Ingresos, gastos y retiros</span>
             </TabsTrigger>
+            {/* CLIENTES. Es el unico sitio de la app donde se puede CORREGIR
+                la ficha de alguien: el formulario de venta solo la escribe al
+                crear, y Ver Clientes es de solo lectura. */}
+            <TabsTrigger value="clientes" className="text-[11px] md:text-sm gap-1">
+              <Users className="h-3.5 w-3.5" />
+              <span className="truncate">Clientes</span>
+            </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="clientes" className="mt-3">
+            <ClientesControl
+              rutaFiltro={rutaFiltro}
+              onRutaChange={setRutaFiltro}
+              rutas={rutas}
+            />
+          </TabsContent>
 
           <TabsContent value="movimientos" className="mt-3">
             {/* `permiteRegistrar` solo acá, no en Auditoría 360: esa es una
