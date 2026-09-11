@@ -2960,7 +2960,20 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           loan_id: m.loanId,
           client_id: m.clientId,
           referencia_gestion_id: original.id,
-          fecha_gestion: diaDeTrabajo,
+          // LA REVERSA VA AL DIA DE LA GESTION QUE DESHACE, no al de hoy.
+          //
+          // Una reversa no es plata nueva: es la MISMA plata saliendo de donde
+          // entro. Fechandola hoy, el dia original se queda con un cobro que
+          // ya no existe y el de hoy amanece con un recaudo negativo.
+          //
+          // Paso en la ruta 151 el 11/09: se deshicieron dos pagos del 10
+          // ($65.000 y $97.500) y el resumen del dia quedo en -$136.500,
+          // mientras el 10 seguia contando $162.500 que nadie pago.
+          //
+          // `original.fecha_gestion` es el dia de negocio al que aplicaba el
+          // evento; con el respaldo de `diaDeTrabajo` si por alguna razon no
+          // viene, que es como se comportaba antes.
+          fecha_gestion: original.fecha_gestion || diaDeTrabajo,
           fecha_hora: ahoraColombiaISO(),
           cliente_nombre: m.nombre,
           observacion: queCambio,
@@ -2984,7 +2997,11 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           // Al convertir a no pago la gestión vale por UNA visita, no por las
           // cuotas que cubría el pago que se está deshaciendo.
           num_cuotas: destino === "pago" ? (original.num_cuotas ?? 1) : 1,
-          fecha_gestion: diaDeTrabajo,
+          // Y EL EVENTO NUEVO VA AL MISMO DIA que el que reemplaza. Corregir
+          // el monto de un pago de ayer no es cobrar hoy: es decir que ayer se
+          // cobro otra cifra. Con la reversa en un dia y el evento nuevo en
+          // otro, la correccion partiria la plata en dos.
+          fecha_gestion: original.fecha_gestion || diaDeTrabajo,
           fecha_hora: ahoraColombiaISO(),
           cuota_objetivo: original.cuota_objetivo,
           // El método sale del selector, no del evento original: es lo que
@@ -3077,7 +3094,20 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           loan_id: m.loanId,
           client_id: m.clientId,
           referencia_gestion_id: original.id,
-          fecha_gestion: diaDeTrabajo,
+          // LA REVERSA VA AL DIA DE LA GESTION QUE DESHACE, no al de hoy.
+          //
+          // Una reversa no es plata nueva: es la MISMA plata saliendo de donde
+          // entro. Fechandola hoy, el dia original se queda con un cobro que
+          // ya no existe y el de hoy amanece con un recaudo negativo.
+          //
+          // Paso en la ruta 151 el 11/09: se deshicieron dos pagos del 10
+          // ($65.000 y $97.500) y el resumen del dia quedo en -$136.500,
+          // mientras el 10 seguia contando $162.500 que nadie pago.
+          //
+          // `original.fecha_gestion` es el dia de negocio al que aplicaba el
+          // evento; con el respaldo de `diaDeTrabajo` si por alguna razon no
+          // viene, que es como se comportaba antes.
+          fecha_gestion: original.fecha_gestion || diaDeTrabajo,
           fecha_hora: ahoraColombiaISO(),
           cliente_nombre: m.nombre,
           observacion: "Gestión anulada desde el módulo de pagos",
