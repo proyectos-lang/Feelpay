@@ -81,6 +81,7 @@ import {
 } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { MovimientosPanel } from "@/components/views/movimientos-panel"
+import { AuditoriaCierrePanel } from "@/components/views/auditoria-cierre"
 
 // ───────────────────────────────────────────────────────────────────────────
 // El contrato de `auditoria_prestamo` (scripts/048)
@@ -777,19 +778,34 @@ export function LoanAudit({ currentRutaId, loanIdInicial, onBack }: LoanAuditPro
             caben dentro del detalle de una venta. Se filtran por ruta y
             fecha, y por eso viven como pestaña propia del buscador. */}
         <Tabs value={modo} onValueChange={setModo}>
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="prestamos" className="text-[11px] md:text-sm gap-1">
               <FileSearch className="h-3.5 w-3.5" />
               <span className="truncate">Préstamos</span>
             </TabsTrigger>
             <TabsTrigger value="movimientos" className="text-[11px] md:text-sm gap-1">
               <ArrowLeftRight className="h-3.5 w-3.5" />
-              <span className="truncate">Ingresos, gastos y retiros</span>
+              <span className="truncate">Movimientos</span>
+            </TabsTrigger>
+            <TabsTrigger value="cierre" className="text-[11px] md:text-sm gap-1">
+              <ClipboardList className="h-3.5 w-3.5" />
+              <span className="truncate">Auditoría de cierre</span>
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="movimientos" className="mt-3">
             <MovimientosPanel
+              rutaId={rutaFiltro}
+              rutas={rutas}
+              onRutaChange={setRutaFiltro}
+            />
+          </TabsContent>
+
+          {/* El cierre de un día NO cuelga de un préstamo: es la ruta entera
+              en una fecha. Por eso es pestaña propia y no una sección del
+              detalle de una venta. */}
+          <TabsContent value="cierre" className="mt-3">
+            <AuditoriaCierrePanel
               rutaId={rutaFiltro}
               rutas={rutas}
               onRutaChange={setRutaFiltro}
