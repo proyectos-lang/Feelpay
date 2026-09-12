@@ -62,7 +62,11 @@
 --   * Solo cambia `meta_pagos` del dia de hoy, y se agrega la columna
 --     `meta_atrasados` para que se vea cuanto de la meta viene del atraso.
 --
--- Corre los pasos EN ORDEN. Los pasos 1, 4 y 5 no escriben nada.
+-- OJO: el PASO 2 va con CASCADE y se lleva `vista_monitoreo_recaudos`. El
+-- PASO 4 la vuelve a crear identica — NO LO SALTE o el modulo Monitoreo de
+-- Recaudos queda en blanco.
+--
+-- Corre los pasos EN ORDEN. Los pasos 1, 5, 6 y 7 no escriben nada.
 -- ============================================================================
 
 
@@ -78,7 +82,13 @@ SELECT ruta, fecha_pago, meta_pagos
 
 -- ── PASO 2) Soltar la vista (la columna nueva va en medio) ────────────────
 -- `CREATE OR REPLACE VIEW` sabe agregar columnas al final pero no reordenar.
-DROP VIEW IF EXISTS public.resumen_diario_v2;
+--
+-- VA CON CASCADE PORQUE `vista_monitoreo_recaudos` (script 099) cuelga de
+-- esta. CASCADE se la lleva por delante, asi que el PASO 4 LA VUELVE A CREAR
+-- IDENTICA. Sin ese paso el modulo Monitoreo de Recaudos queda en blanco.
+--
+-- NO SALTE EL PASO 4.
+DROP VIEW IF EXISTS public.resumen_diario_v2 CASCADE;
 
 
 -- ── PASO 3) El resumen, con el atraso contando en la meta de hoy ──────────
@@ -318,7 +328,126 @@ SELECT b.*,
 GRANT SELECT ON public.resumen_diario_v2 TO anon, authenticated;
 
 
--- ── PASO 4) Que la historia NO se movio (SOLO LECTURA) ────────────────────
+-- ── PASO 4) Volver a crear la vista que CASCADE se llevo ─────────────────
+-- OBLIGATORIO. El CASCADE del PASO 2 borro `vista_monitoreo_recaudos`, que es
+-- la que alimenta el modulo Monitoreo de Recaudos de la secretaria. Aca se
+-- vuelve a crear IDENTICA a como estaba (script 099): no se le cambia ni una
+-- columna. Solo hereda, por debajo, la meta nueva del resumen.
+CREATE VIEW public.vista_monitoreo_recaudos AS
+SELECT
+  r.ruta                                                        AS unidad,
+  r.fecha_pago                                                  AS fecha,
+
+  -- ── Las cuatro reconstruidas ────────────────────────────────────────────
+  COALESCE(c.cartera_final, 0)                                  AS cartera_final,
+  COALESCE(c.clientes_mora_mayor_7, 0::bigint)                  AS clientes_mora_mayor_7,
+  COALESCE(c.frecuencia_no_diaria, 0::bigint)                   AS frecuencia_no_diaria,
+  COALESCE(ren.renovaciones, 0::bigint)                         AS renovaciones,
+
+  -- ── Recaudo ─────────────────────────────────────────────────────────────
+  r.valor_pago                                                  AS total_recaudo,
+  r.valor_pago - r.valor_canceladas                             AS recaudo_sin_canceladas,
+  r.valor_canceladas                                            AS valor_canceladas,
+  -- Sin meta no hay porcentaje: 0 dice "no se midió", y dividir por cero
+  -- reventaría la consulta entera.
+  CASE WHEN r.meta_pagos > 0
+       THEN round(r.valor_pago * 100.0 / r.meta_pagos)
+       ELSE 0 END                                               AS pct_recaudo,
+
+  -- ── Clientes ────────────────────────────────────────────────────────────
+  CASE WHEN COALESCE(m.cartera_activa, 0) > 0
+       THEN round(r.cantidad_pagos * 100.0 / m.cartera_activa)
+       ELSE 0 END                                               AS pct_clientes_pagos,
+  r.cantidad_pagos                                              AS pagos,
+  r.cantidad_no_pagos                                           AS no_pagos,
+  COALESCE(m.cartera_activa, 0::bigint)                         AS total_clientes,
+  r.cantidad_canceladas                                         AS clientes_cancelados,
+
+  -- ── Ventas y gastos ─────────────────────────────────────────────────────
+  r.cantidad_ventas                                             AS cantidad_ventas,
+  r.valor_ventas                                                AS valor_ventas,
+  r.cantidad_gastos                                             AS numero_gastos,
+  r.valor_gastos                                                AS valor_gastos
+
+FROM public.resumen_diario_v2 r
+
+-- `cartera_activa` sale de donde ya salía: la vista del monitoreo. No se
+-- recalcula acá para que las dos pantallas no puedan discrepar.
+LEFT JOIN public.vista_monitoreo_admin m
+       ON m.ruta_id = r.ruta AND m.fecha = r.fecha_pago
+
+-- ── LA CARTERA DE ESE DÍA, acumulando el libro hasta esa fecha ────────────
+LEFT JOIN LATERAL (
+  SELECT
+    SUM(COALESCE(l.valor_a_pagar, l.valor) - pag.pagado)        AS cartera_final,
+    COUNT(*) FILTER (WHERE venc.en_mora > 7)                    AS clientes_mora_mayor_7,
+    COUNT(*) FILTER (WHERE COALESCE(l.frecuencia_pago, 'daily') <> 'daily')
+                                                                AS frecuencia_no_diaria
+    FROM public.loans l
+    CROSS JOIN LATERAL (
+      -- Lo pagado HASTA ESE DÍA. Ver el encabezado: con el saldo de hoy, el
+      -- 15 de agosto mostraría la cartera de hoy.
+      SELECT COALESCE(SUM(CASE
+               WHEN gg.tipo IN ('pago','cancelacion','abono_venta') THEN gg.monto
+               WHEN gg.tipo = 'reversa' THEN -gg.monto ELSE 0 END), 0) AS pagado
+        FROM public.gestiones gg
+       WHERE gg.loan_id = l.id
+         AND gg.estado = 'aplicada'
+         AND gg.fecha_gestion <= r.fecha_pago
+    ) pag
+    CROSS JOIN LATERAL (
+      -- CUÁNTAS CUOTAS DEBÍA ESE DÍA. Lo vencido a esa fecha menos lo pagado
+      -- a esa fecha, dividido por el valor de la cuota. Es la misma cuenta de
+      -- `v_loan_financiero.cuotas_mora`, con la fecha movida.
+      SELECT CASE
+               WHEN COALESCE(v.total_vencido, 0) - pag.pagado > 0
+                    AND COALESCE(v.valor_ref, 0) > 0
+               THEN CEIL((v.total_vencido - pag.pagado) / v.valor_ref)
+               ELSE 0
+             END AS en_mora
+        FROM (
+          SELECT COALESCE(SUM(pp.valor_cuota) FILTER (WHERE pp.fecha_pago < r.fecha_pago), 0) AS total_vencido,
+                 COALESCE(MAX(pp.valor_cuota) FILTER (WHERE NOT pp.es_extra),
+                          MAX(pp.valor_cuota))                                                AS valor_ref
+            FROM public.payment_plan pp
+           WHERE pp.loan_id = l.id
+        ) v
+    ) venc
+   WHERE l.ruta = r.ruta
+     AND l.estado IS DISTINCT FROM 'anulado'
+     AND (l.fecha_creacion AT TIME ZONE 'America/Bogota')::date <= r.fecha_pago
+     -- Seguía debiendo ESE día. Mismo predicado del script 060.
+     AND COALESCE(l.valor_a_pagar, l.valor) - pag.pagado > 0
+) c ON true
+
+-- ── RENOVACIONES: ventas de ese día a alguien que ya tenía otro crédito ───
+LEFT JOIN LATERAL (
+  SELECT COUNT(*) AS renovaciones
+    FROM public.loans nueva
+   WHERE nueva.ruta = r.ruta
+     AND nueva.estado IS DISTINCT FROM 'anulado'
+     AND (nueva.fecha_creacion AT TIME ZONE 'America/Bogota')::date = r.fecha_pago
+     AND EXISTS (
+       SELECT 1 FROM public.loans previa
+        WHERE previa.client_id = nueva.client_id
+          AND previa.id <> nueva.id
+          AND previa.estado IS DISTINCT FROM 'anulado'
+          AND previa.fecha_creacion < nueva.fecha_creacion
+     )
+) ren ON true;
+
+-- El DROP se llevo tambien los permisos: sin esto la vista existe pero la app
+-- la ve vacia.
+GRANT SELECT ON public.vista_monitoreo_recaudos TO anon, authenticated;
+
+
+-- ── PASO 5) Que el monitoreo volvio a existir (SOLO LECTURA) ─────────────
+-- Tiene que devolver filas y 19 columnas. Si sale vacio o da error, el PASO 6
+-- no corrio y el modulo de la secretaria quedo en blanco.
+SELECT count(*) AS filas_en_el_monitoreo
+  FROM public.vista_monitoreo_recaudos;
+
+-- ── PASO 6) Que la historia NO se movio (SOLO LECTURA) ────────────────────
 -- LA COMPROBACION QUE MAS IMPORTA. Compare contra el PASO 1:
 --   * los dias ANTERIORES a hoy tienen que dar la MISMA meta que antes
 --   * solo el de HOY debe subir, y `meta_atrasados` dice cuanto
@@ -330,7 +459,7 @@ SELECT ruta, fecha_pago, meta_pagos, meta_atrasados,
  ORDER BY ruta, fecha_pago;
 
 
--- ── PASO 5) Quien esta aportando por atraso (SOLO LECTURA) ───────────────
+-- ── PASO 7) Quien esta aportando por atraso (SOLO LECTURA) ───────────────
 -- El detalle de la meta de hoy: cada cliente atrasado y la cuota que aporta.
 -- En la ruta 151 tienen que salir los 4, sumando 149.500.
 SELECT l.ruta,
