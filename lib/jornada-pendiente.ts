@@ -30,6 +30,7 @@
 
 import { getSupabaseSafe } from "@/lib/api-helper"
 import { todayColombia } from "@/lib/colombia-date"
+import { getRutaUmbrales } from "@/lib/ruta-umbrales"
 
 export interface JornadaPendiente {
   id: number
@@ -45,6 +46,23 @@ export interface JornadaPendiente {
    * habilitar a todo el mundo por accidente.
    */
   desbloqueada: boolean
+  /**
+   * CUANDO SE LE VENCE EL PERMISO, si la ruta tiene la regla encendida.
+   *
+   * `null` = sin limite: el desbloqueo no caduca (la conducta de siempre, y
+   * el defecto de todas las rutas). Ver `cierre_atrasado_minutos` en
+   * `lib/ruta-umbrales.ts` y scripts/113.
+   */
+  venceEn: Date | null
+  /**
+   * true = la ruta SI se desbloqueo, pero ya se le paso el tiempo. Vuelve a
+   * estar congelada.
+   *
+   * Se distingue de `desbloqueada: false` a proposito: el mensaje que ve el
+   * cobrador no es el mismo. "Esta congelada" y "se le vencio el tiempo" son
+   * dos situaciones distintas y la segunda necesita explicarse.
+   */
+  vencida: boolean
 }
 
 /**
@@ -112,10 +130,39 @@ export async function buscarJornadaPendiente(rutaId: number): Promise<JornadaPen
     }
     if (!data) return null
     const d = data as unknown as { id: number; fecha: string; desbloqueada_at?: string | null }
+
+    // ── EL RELOJ DEL DESBLOQUEO ─────────────────────────────────────────────
+    // Si la ruta tiene la regla encendida, el permiso caduca. Se calcula acá
+    // —y no en la pantalla— para que todos los que preguntan por la jornada
+    // vean lo mismo: si esto dijera "desbloqueada" y la pantalla decidiera
+    // aparte, el cobrador podría seguir registrando en una ruta ya vencida.
+    //
+    // Los umbrales nunca lanzan: ante cualquier error devuelven el default,
+    // que es SIN LÍMITE. Es el lado seguro — una consulta que falla no puede
+    // dejar a alguien bloqueado en la calle.
+    const desbloqueadaAt =
+      hayDesbloqueo && d.desbloqueada_at ? new Date(d.desbloqueada_at) : null
+
+    let venceEn: Date | null = null
+    if (desbloqueadaAt && !Number.isNaN(desbloqueadaAt.getTime())) {
+      const { cierre_atrasado_minutos } = await getRutaUmbrales(rutaId)
+      const minutos = Number(cierre_atrasado_minutos) || 0
+      if (minutos > 0) {
+        venceEn = new Date(desbloqueadaAt.getTime() + minutos * 60_000)
+      }
+    }
+
+    const vencida = !!venceEn && venceEn.getTime() <= Date.now()
+
     return {
       id: d.id,
       fecha: d.fecha,
-      desbloqueada: hayDesbloqueo && !!d.desbloqueada_at,
+      // Vencida = congelada otra vez. Lo que alcanzó a registrar se queda: la
+      // plata registrada es plata registrada. Lo único que se le quita es
+      // poder seguir, hasta que secretaría lo habilite de nuevo.
+      desbloqueada: !!desbloqueadaAt && !vencida,
+      venceEn,
+      vencida,
     }
   } catch (err) {
     console.error("[v0] buscarJornadaPendiente falló:", err)

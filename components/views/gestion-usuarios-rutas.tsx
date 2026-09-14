@@ -474,6 +474,7 @@ type RutaConfigRow = {
   cedula_obligatoria: boolean
   /** ¿Puede esta unidad venderle otra vez a quien ya tiene un credito? */
   multiples_prestamos: boolean
+  cierre_atrasado_minutos: number | null
   /** Logo propio de la unidad: va en el encabezado de sus recibos. */
   logo_url: string | null
 }
@@ -537,6 +538,11 @@ function RutasTab() {
   // Encendida por defecto: es como se comportó siempre la app.
   const [fCedulaObligatoria, setFCedulaObligatoria] = useState(true)
   const [fMultiplesPrestamos, setFMultiplesPrestamos] = useState(false)
+  // El limite de tiempo para cerrar un dia viejo (scripts/113). Se guarda
+  // como texto mientras se escribe: un `number` obligaria a decidir que es
+  // un campo vacio mientras el usuario borra para teclear otro numero.
+  const [fCierreLimite, setFCierreLimite] = useState(false)
+  const [fCierreMinutos, setFCierreMinutos] = useState("15")
   const [fLogoUrl, setFLogoUrl] = useState("")
   const [subiendoLogo, setSubiendoLogo] = useState(false)
   // Métodos de interés que usa la unidad, y cuál llega preseleccionado en la
@@ -597,6 +603,9 @@ function RutasTab() {
     setFGeocercaRadio(c?.geocerca_radio_metros?.toString() ?? "100")
     setFCedulaObligatoria(c?.cedula_obligatoria ?? true)
     setFMultiplesPrestamos(c?.multiples_prestamos ?? false)
+    const min = Number(c?.cierre_atrasado_minutos) || 0
+    setFCierreLimite(min > 0)
+    setFCierreMinutos(min > 0 ? String(min) : "15")
     setFLogoUrl(c?.logo_url ?? "")
     const amort = c?.amortizaciones_habilitadas
     setFAmortizaciones(amort && amort.length > 0 ? amort : AMORTIZACIONES_DEFAULT)
@@ -784,6 +793,11 @@ function RutasTab() {
         geocerca_habilitada: fGeocercaHab,
         cedula_obligatoria: fCedulaObligatoria,
         multiples_prestamos: fMultiplesPrestamos,
+        // Apagado = NULL (sin limite), no 0: la columna distingue "no hay
+        // regla" de "hay regla de cero minutos", que no tendria sentido.
+        cierre_atrasado_minutos: fCierreLimite
+          ? Math.min(1440, Math.max(1, Number(fCierreMinutos) || 15))
+          : null,
         // El logo propio de la unidad. Vacio = se usa el de la app.
         logo_url: fLogoUrl.trim() || null,
         // La columna es NOT NULL: si el campo queda vacio se guarda el
@@ -1322,6 +1336,51 @@ function RutasTab() {
                   <>
                     Como hasta hoy: al vender solo aparecen los clientes sin crédito activo. Para
                     darle otro hay que cancelar el que tiene o hacer una renovación.
+                  </>
+                )}
+              </p>
+            </div>
+
+            {/* ── Tiempo para cerrar un dia atrasado ────────────────────── */}
+            {/* Cuando secretaria descongela una ruta, hoy ese permiso no
+                caduca. Este interruptor le pone reloj. Apagado = como hasta
+                hoy, que es el defecto de todas las rutas: encender un limite
+                para todo el mundo de golpe dejaria cobradores bloqueados en
+                la calle sin que nadie lo hubiera decidido. Ver scripts/113. */}
+            <div className="space-y-1.5 border-t pt-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm">Limitar el tiempo para cerrar un día atrasado</Label>
+                <Switch checked={fCierreLimite} onCheckedChange={setFCierreLimite} />
+              </div>
+
+              {fCierreLimite && (
+                <div className="flex items-center gap-2 pt-1">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={1440}
+                    inputMode="numeric"
+                    value={fCierreMinutos}
+                    onChange={(e) => setFCierreMinutos(e.target.value)}
+                    className="h-9 w-24 text-sm"
+                  />
+                  <span className="text-sm text-muted-foreground">minutos</span>
+                </div>
+              )}
+
+              <p className="text-[11px] text-muted-foreground">
+                {fCierreLimite ? (
+                  <>
+                    Desde que la secretaría desbloquea la unidad, el cobrador tiene{" "}
+                    <strong>{Number(fCierreMinutos) || 15} minutos</strong> para procesar y cerrar
+                    ese día. Ve un contador en pantalla. Si se le vence, la unidad se vuelve a
+                    congelar y hay que habilitarla de nuevo — lo que alcanzó a registrar no se
+                    pierde.
+                  </>
+                ) : (
+                  <>
+                    Como hasta hoy: una vez desbloqueada, el cobrador tiene el tiempo que necesite
+                    para terminar de cerrar el día atrasado.
                   </>
                 )}
               </p>

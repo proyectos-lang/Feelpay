@@ -17,7 +17,7 @@
 
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Snowflake, Loader2, Unlock, MessageSquare, Lock } from "lucide-react"
+import { Snowflake, Loader2, Unlock, MessageSquare, Lock, Timer } from "lucide-react"
 import { fmtFecha } from "@/lib/colombia-date"
 import { descongelarJornada, habilitarCierreAtrasado, type JornadaPendiente } from "@/lib/jornada-pendiente"
 import { useToast } from "@/hooks/use-toast"
@@ -45,6 +45,49 @@ interface PantallaProps {
   desbloqueada?: boolean
 }
 
+/**
+ * EL RELOJ DEL PERMISO.
+ *
+ * Cuando la ruta tiene la regla de tiempo encendida (scripts/113), el
+ * desbloqueo caduca. Sin ver cuánto falta, el cobrador descubre el límite
+ * cuando ya se le venció — y eso, en la calle y con la plata contada, es la
+ * peor forma de enterarse.
+ *
+ * Corre en segundos para que el número se mueva: un contador que solo cambia
+ * cada minuto parece congelado y no transmite urgencia.
+ */
+function Contador({ venceEn }: { venceEn: Date }) {
+  const [restante, setRestante] = useState(() => venceEn.getTime() - Date.now())
+
+  useEffect(() => {
+    const reloj = setInterval(() => setRestante(venceEn.getTime() - Date.now()), 1000)
+    return () => clearInterval(reloj)
+  }, [venceEn])
+
+  if (restante <= 0) return null
+
+  const totalSeg = Math.ceil(restante / 1000)
+  const mm = Math.floor(totalSeg / 60)
+  const ss = totalSeg % 60
+  // Bajo los dos minutos se pone rojo: es cuando de verdad hay que apurarse.
+  const urgente = restante <= 120_000
+
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-bold tabular-nums ${
+        urgente
+          ? "border-destructive/40 bg-destructive/10 text-destructive"
+          : "border-warning/40 bg-warning/10 text-warning-foreground"
+      }`}
+    >
+      <Timer className="h-4 w-4 shrink-0" />
+      <span>
+        Te quedan {mm}:{String(ss).padStart(2, "0")} para cerrar
+      </span>
+    </div>
+  )
+}
+
 export function RutaCongelada({ jornada, onIrAlChat, onIrAlCierre, desbloqueada }: PantallaProps) {
   const puedeCerrar = !!desbloqueada && !!onIrAlCierre
   return (
@@ -62,7 +105,11 @@ export function RutaCongelada({ jornada, onIrAlChat, onIrAlCierre, desbloqueada 
       </div>
       <div className="flex flex-col items-center gap-2">
         <h2 className="text-xl font-bold text-foreground">
-          {puedeCerrar ? "Cierra la caja del día anterior" : "Ruta congelada"}
+          {puedeCerrar
+            ? "Cierra la caja del día anterior"
+            : jornada.vencida
+              ? "Se te venció el tiempo"
+              : "Ruta congelada"}
         </h2>
         <p className="max-w-sm text-sm text-muted-foreground leading-relaxed">
           La caja del <strong className="text-foreground">{fmtFecha(jornada.fecha)}</strong> quedó
@@ -71,8 +118,11 @@ export function RutaCongelada({ jornada, onIrAlChat, onIrAlCierre, desbloqueada 
         <p className="max-w-sm text-sm text-muted-foreground leading-relaxed">
           {puedeCerrar
             ? "La secretaría ya te habilitó. Cierra esa caja y la ruta queda lista para trabajar hoy."
-            : "Pídele a la secretaría que te habilite. Apenas lo haga, tú mismo cierras ese día y la ruta se libera. El chat sigue disponible."}
+            : jornada.vencida
+              ? "Se pasó el tiempo que tenías para cerrar y la ruta se volvió a bloquear. Lo que alcanzaste a registrar NO se perdió: quedó guardado. Pídele a la secretaría que te habilite otra vez para terminar."
+              : "Pídele a la secretaría que te habilite. Apenas lo haga, tú mismo cierras ese día y la ruta se libera. El chat sigue disponible."}
         </p>
+        {puedeCerrar && jornada.venceEn && <Contador venceEn={jornada.venceEn} />}
       </div>
       <div className="flex flex-wrap items-center justify-center gap-2">
         {puedeCerrar && (

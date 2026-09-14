@@ -1127,16 +1127,47 @@ export default function Page() {
     const revisar = () => {
       buscarJornadaPendiente(selectedRuta.id).then((j) => {
         if (!vigente) return
-        setJornadaPendiente((prev) => (prev && j && prev.id === j.id ? prev : j))
+        setJornadaPendiente((prev) => {
+          // Se conserva el objeto anterior SOLO si de verdad no cambió nada.
+          // Comparar por `id` a secas no alcanzaba desde que el desbloqueo
+          // caduca (scripts/113): la misma jornada pasa de habilitada a
+          // vencida sin cambiar de id, y quedándose con el objeto viejo el
+          // vencimiento no se veía nunca.
+          if (
+            prev && j &&
+            prev.id === j.id &&
+            prev.desbloqueada === j.desbloqueada &&
+            prev.vencida === j.vencida
+          ) {
+            return prev
+          }
+          return j
+        })
       })
     }
     const alVolver = () => { if (document.visibilityState === "visible") revisar() }
     const reloj = setInterval(revisar, 45000)
+
+    // EL VENCIMIENTO SE REVISA AL SEGUNDO EXACTO, no en la próxima vuelta del
+    // reloj de 45s: si el permiso vence a las 10:15:00, esperar hasta 45
+    // segundos más le regalaría al cobrador un tiempo que no tiene. El +1000
+    // es para caer del lado de allá del límite y no justo encima.
+    let alVencer: ReturnType<typeof setTimeout> | undefined
+    if (jornadaPendiente.venceEn && !jornadaPendiente.vencida) {
+      const falta = jornadaPendiente.venceEn.getTime() - Date.now()
+      // `setTimeout` desborda pasados ~24.8 días y dispararía de inmediato;
+      // con el tope de 1440 minutos del script 113 no puede pasar, pero el
+      // guard cuesta una línea.
+      if (falta > 0 && falta < 2_147_483_647) {
+        alVencer = setTimeout(revisar, falta + 1000)
+      }
+    }
     document.addEventListener("visibilitychange", alVolver)
     window.addEventListener("focus", revisar)
     return () => {
       vigente = false
       clearInterval(reloj)
+      if (alVencer) clearTimeout(alVencer)
       document.removeEventListener("visibilitychange", alVolver)
       window.removeEventListener("focus", revisar)
     }

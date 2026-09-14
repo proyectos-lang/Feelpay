@@ -57,6 +57,20 @@ export interface RutaUmbrales {
    * la bandera que la levanta empieza apagada. Ver scripts/105.
    */
   multiples_prestamos: boolean
+
+  /**
+   * CUANTO TIEMPO TIENE EL COBRADOR PARA CERRAR UN DIA VIEJO.
+   *
+   * Cuando secretaria descongela una ruta, hoy ese permiso no caduca. Esto le
+   * pone reloj: minutos contados desde `rutas_diarias.desbloqueada_at`.
+   *
+   *   null o 0  -> sin limite (lo de siempre, y el defecto)
+   *   15        -> quince minutos y la ruta se vuelve a congelar
+   *
+   * Es un numero y no un booleano para que mover 15 a 20 no necesite otro
+   * script. Ver scripts/113.
+   */
+  cierre_atrasado_minutos: number | null
 }
 
 const DEFAULT_UMBRALES: RutaUmbrales = {
@@ -72,6 +86,8 @@ const DEFAULT_UMBRALES: RutaUmbrales = {
   amortizacion_default: null,
   cedula_obligatoria: true,
   multiples_prestamos: false,
+  // Sin limite: es la conducta de hoy. La regla se enciende ruta por ruta.
+  cierre_atrasado_minutos: null,
 }
 
 // Cache local de los umbrales por ruta.
@@ -119,7 +135,8 @@ function guardarCache(rutaId: number, u: RutaUmbrales): void {
 // reintenta sin ella. El reintento desaparece solo en cuanto el script corra.
 const COLUMNAS_BASE =
   "venta_nueva_habilitado, venta_nueva_umbral, venta_renovacion_habilitado, venta_renovacion_umbral, abono_habilitado, abono_umbral_cuotas, multa_habilitada, multa_cuotas_umbral, multa_tipo_valor, multa_valor, multa_cantidad_cuotas, logo_url, geocerca_habilitada, geocerca_radio_metros, amortizaciones_habilitadas, amortizacion_default"
-const COLUMNAS = `${COLUMNAS_BASE}, cedula_obligatoria, multiples_prestamos`
+const COLUMNAS =
+  `${COLUMNAS_BASE}, cedula_obligatoria, multiples_prestamos, cierre_atrasado_minutos`
 
 // Si la ruta no tiene fila configurada, no hay revisión (falla abierta hacia
 // "sin revisión" para no bloquear la operación normal si algo sale mal).
@@ -131,7 +148,7 @@ export async function getRutaUmbrales(rutaId: number): Promise<RutaUmbrales> {
 
     let { data, error } = await pedir(COLUMNAS)
     if (error?.code === "42703") {
-      console.warn("[v0] Falta `cedula_obligatoria` (scripts/080) o `multiples_prestamos` (scripts/105) — se piden sin ellas.")
+      console.warn("[v0] Falta `cedula_obligatoria` (scripts/080), `multiples_prestamos` (scripts/105) o `cierre_atrasado_minutos` (scripts/113) — se piden sin ellas.")
       ;({ data, error } = await pedir(COLUMNAS_BASE))
     }
     if (error) return leerCache(rutaId) ?? DEFAULT_UMBRALES
@@ -155,6 +172,8 @@ export async function getRutaUmbrales(rutaId: number): Promise<RutaUmbrales> {
       // no vino, NO se concede el permiso. Uno que se otorga solo cuando algo
       // falla no es un permiso.
       multiples_prestamos: fila.multiples_prestamos ?? DEFAULT_UMBRALES.multiples_prestamos,
+      cierre_atrasado_minutos:
+        fila.cierre_atrasado_minutos ?? DEFAULT_UMBRALES.cierre_atrasado_minutos,
     }
     guardarCache(rutaId, umbrales)
     return umbrales
