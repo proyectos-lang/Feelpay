@@ -393,6 +393,64 @@ export default function Page() {
     [selectedRuta],
   )
 
+  /**
+   * EL COBRADOR ACABA DE CERRAR UN DIA VIEJO.
+   *
+   * Tiene que quedar como si abriera la app por primera vez hoy: con el boton
+   * de "Iniciar Ruta" del dia de HOY, que todavia no ha empezado.
+   *
+   * POR QUE UNA RECARGA Y NO UN setState.
+   * `rutaActivaEstado` lo carga un efecto que depende solo de
+   * `[selectedRuta, sesionFixed]`, asi que despues del cierre NO se vuelve a
+   * correr: se queda con el ultimo valor que tuvo. Y mientras se cerraba el
+   * dia viejo, el Resumen del Dia pudo haber reportado "abierta" hacia arriba.
+   * Resultado: la jornada vieja desaparece, el guard de "Ruta no iniciada" se
+   * destapa... y no aparece, porque el estado dice que la ruta ya esta
+   * abierta. El cobrador entra a cobrar sobre un dia que nunca inicio.
+   *
+   * Recargar es la unica forma de garantizar que TODO vuelva a leerse del
+   * servidor —el estado de hoy, la jornada pendiente, los umbrales— sin ir
+   * reseteando a mano cada pedazo de estado y arriesgarse a olvidar uno.
+   *
+   * EL CACHE SE BORRA ANTES. Si no, la recarga vuelve a hidratar desde
+   * `localStorage` el mismo "abierta" que acabamos de quitar y el problema
+   * reaparece identico. El cache se repone solo en cuanto se inicie la ruta.
+   */
+  const terminoElCierreAtrasado = useCallback(() => {
+    try {
+      localStorage.removeItem(RUTA_ACTIVA_CACHE_KEY)
+    } catch {
+      /* modo privado: la recarga igual vuelve a preguntarle al servidor */
+    }
+    if (typeof window !== "undefined") {
+      window.location.reload()
+      return
+    }
+    // Sin `window` (no deberia pasar en el navegador) queda el camino de
+    // antes: releer la jornada pendiente.
+    setReleerJornada((n) => n + 1)
+  }, [])
+
+  /**
+   * LO MISMO, PERO SIN ARRANCARLE EL COMPROBANTE DE LAS MANOS.
+   *
+   * `terminoElCierreAtrasado` recarga de una. Eso sirve cuando el cierre lo
+   * dispara algo que no deja pantalla que mirar, pero NO justo despues de
+   * cerrar: ahi el cobrador tiene al frente el resumen de la jornada, el PDF
+   * y la imagen para mandar al chat. Recargar en ese momento se los borra.
+   *
+   * Asi que al cerrar solo se BORRA EL CACHE —para que ni un refresh
+   * accidental reviva el estado viejo— y la recarga se hace cuando el
+   * cobrador toca "Volver", que es cuando ya termino con el comprobante.
+   */
+  const marcarCierreAtrasadoHecho = useCallback(() => {
+    try {
+      localStorage.removeItem(RUTA_ACTIVA_CACHE_KEY)
+    } catch {
+      /* modo privado */
+    }
+  }, [])
+
   // Carga global del estado de rutas_diarias para la ruta + fecha actual.
   // Antes esto solo ocurria dentro de DailySummary, por lo que si el usuario
   // entraba directamente a Clientes Activos (register-payment) sin pasar por
@@ -1290,10 +1348,11 @@ export default function Page() {
                para quien lo pase explícito (la secretaría desde el Monitoreo,
                que no tiene la ruta congelada en su propia sesión). */
             fechaJornada={jornadaAtrasadaAbierta ?? viewData?.fechaJornada}
-            /* Cerro la jornada VIEJA: se vuelve a preguntar si queda alguna
-               otra. Si no queda, el congelamiento se levanta solo; si quedaba
-               una mas vieja todavia, aparece esa. */
-            onJornadaAtrasadaCerrada={() => setReleerJornada((n) => n + 1)}
+            /* Cerro la jornada VIEJA: se limpia el estado cacheado ya, y la
+               recarga entera se hace al salir de la pantalla — para no
+               borrarle el comprobante que acaba de generar. */
+            onJornadaAtrasadaCerrada={marcarCierreAtrasadoHecho}
+            onSalirTrasCierreAtrasado={terminoElCierreAtrasado}
           />
         )
       case "view-clients":

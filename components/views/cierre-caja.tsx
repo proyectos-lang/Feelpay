@@ -51,11 +51,24 @@ interface CierreCajaProps {
    * que habilita empezarla.
    */
   onJornadaAtrasadaCerrada?: () => void
+  /**
+   * SALIR DESPUES DE HABER CERRADO UN DIA VIEJO.
+   *
+   * Reemplaza a `onBack` solo en ese caso. El padre lo usa para RECARGAR la
+   * app entera: cerrada la jornada vieja, el cobrador tiene que quedar como
+   * si abriera la app por primera vez hoy —con "Iniciar Ruta" del dia de
+   * HOY—, y hay demasiado estado en memoria (el de la ruta activa, la
+   * jornada pendiente) como para ir reseteandolo pieza por pieza.
+   *
+   * La recarga va acá y no al cerrar, porque al cerrar el cobrador tiene al
+   * frente el resumen y el PDF de la jornada: recargar ahi se los borra.
+   */
+  onSalirTrasCierreAtrasado?: () => void
 }
 
 export function CierreCaja({
   onBack, rutaId = 1, rutaNombre = "", onRouteStateChange, currentUser,
-  fechaJornada, onJornadaAtrasadaCerrada,
+  fechaJornada, onJornadaAtrasadaCerrada, onSalirTrasCierreAtrasado,
 }: CierreCajaProps) {
   const [compartirAbierto, setCompartirAbierto] = useState(false)
   const _now = new Date()
@@ -355,6 +368,24 @@ export function CierreCaja({
   }, [rutaId, totalCartera, resumenDelDiaRuta, fechaCierre, esAtrasado])
 
   const [cajaCerrada, setCajaCerrada] = useState(false)
+
+  /**
+   * SALIR DE ESTA PANTALLA.
+   *
+   * Si se acaba de cerrar un dia VIEJO, salir no es volver: es recargar la
+   * app, para que el cobrador quede con "Iniciar Ruta" del dia de hoy. Va
+   * envuelto en una sola funcion —y no repetido en cada boton— porque de esta
+   * pantalla se sale por tres lados (la flecha del encabezado, el boton
+   * "Volver" del panel de confirmacion, y el menu), y si uno solo se olvidara
+   * de recargar el problema volveria justo por ahi.
+   */
+  const salir = () => {
+    if (cajaCerrada && esAtrasado && onSalirTrasCierreAtrasado) {
+      onSalirTrasCierreAtrasado()
+      return
+    }
+    onBack()
+  }
 
   /**
    * ¿LA JORNADA YA ESTABA CERRADA AL ENTRAR?
@@ -672,7 +703,7 @@ ${filasPdf}
       <div className="bg-brand-gradient text-brand-foreground px-4 pt-4 pb-3 rounded-b-2xl shadow-lg shrink-0">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" className="text-brand-foreground hover:bg-white/20 h-8 w-8" onClick={onBack}>
+            <Button variant="ghost" size="icon" className="text-brand-foreground hover:bg-white/20 h-8 w-8" onClick={salir}>
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
@@ -825,7 +856,14 @@ ${filasPdf}
               <p className="mt-1 text-[12px] text-muted-foreground">
                 La ruta quedo descongelada. Ya se puede iniciar la del {hoyTexto}.
               </p>
-              <Button variant="outline" className="mt-3 w-full rounded-xl text-sm" onClick={onBack}>
+              {/* Al volver se RECARGA la app: el dia viejo ya se cerro y el
+                  cobrador tiene que ver "Iniciar Ruta" del dia de hoy, no
+                  quedarse con el estado que habia en memoria. */}
+              <Button
+                variant="outline"
+                className="mt-3 w-full rounded-xl text-sm"
+                onClick={salir}
+              >
                 Volver
               </Button>
             </div>
