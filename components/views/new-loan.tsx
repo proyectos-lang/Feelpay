@@ -496,9 +496,17 @@ export function NewLoan({
     brasil: 10,
     brazil: 10,
     paraguay: 10,
+    // Los demas del desplegable. No se pidieron, pero si una opcion existe
+    // tiene que tener su numero: sin esto, elegir Mexico o EE. UU. caia al
+    // valor por defecto de 10 sin que nadie lo hubiera decidido.
     peru: 9,
     perú: 9,
     chile: 9,
+    venezuela: 10,
+    méxico: 10,
+    mexico: 10,
+    "ee. uu.": 10,
+    españa: 9,
   }
 
   /**
@@ -574,13 +582,22 @@ export function NewLoan({
     brazil: "+55",
   }
 
-  // Se busca por el pais tal cual; si lo que hay es una ciudad, se traduce
-  // antes de rendirse al valor por defecto.
-  const paisNormalizado = rutaPais.trim().toLowerCase()
+  /**
+   * LOS DIGITOS LOS MANDA EL INDICATIVO ELEGIDO, no la ruta.
+   *
+   * La ruta solo decide cual indicativo viene puesto por defecto. A partir de
+   * ahi manda lo que la persona SELECCIONA: si a un cliente de una ruta
+   * argentina se le pone +57, el numero pasa a pedir los 10 digitos de
+   * Colombia en el mismo momento. Antes los digitos se quedaban clavados en
+   * los de la ruta y el numero correcto se marcaba como invalido.
+   *
+   * El pais sale de `INDICATIVOS`, que ya empareja cada codigo con su nombre:
+   * asi no hay una segunda lista de codigos que se pueda desincronizar.
+   */
+  const paisDelIndicativo = INDICATIVOS.find((i) => i.codigo === indicativo)?.pais ?? ""
+
   const requiredPhoneDigits =
-    phoneDigitsByCountry[paisNormalizado] ??
-    phoneDigitsByCountry[CIUDADES_A_PAIS[paisNormalizado] ?? ""] ??
-    10
+    phoneDigitsByCountry[paisDelIndicativo.toLowerCase()] ?? 10
 
   // El indicativo arranca en el del pais de la ruta. Se hace en un efecto y
   // no al crear el estado porque `rutaPais` llega despues del primer render.
@@ -594,10 +611,52 @@ export function NewLoan({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rutaPais])
 
+  /**
+   * CAMBIAR EL INDICATIVO CAMBIA LOS DIGITOS QUE SE PIDEN.
+   *
+   * Y hay que arreglar lo que ya estaba escrito, o el formulario queda
+   * mintiendo de dos formas:
+   *
+   *   1. Un numero de 11 digitos al pasar a un pais de 10 se queda con uno de
+   *      mas. El `maxLength` del campo NO recorta lo ya tecleado — solo
+   *      impide seguir escribiendo— asi que hay que recortarlo a mano.
+   *   2. El error viejo ("debe tener 11 digitos") se queda en pantalla
+   *      aunque el numero ya sea valido para el pais nuevo.
+   *
+   * Se recalculan los digitos aca en vez de leer `requiredPhoneDigits`
+   * porque ese valor todavia tiene el indicativo ANTERIOR: el estado de React
+   * no se actualiza hasta el siguiente render.
+   */
+  const cambiarIndicativo = (codigo: string) => {
+    setIndicativo(codigo)
+
+    const pais = INDICATIVOS.find((i) => i.codigo === codigo)?.pais ?? ""
+    const digitos = phoneDigitsByCountry[pais.toLowerCase()] ?? 10
+
+    const ajustar = (
+      valor: string,
+      setValor: (v: string) => void,
+      setError: (v: string) => void,
+    ) => {
+      const limpio = valor.replace(/\D/g, "").slice(0, digitos)
+      if (limpio !== valor) setValor(limpio)
+      setError(
+        limpio.length > 0 && limpio.length !== digitos
+          ? `El teléfono debe tener ${digitos} dígitos (${pais})`
+          : "",
+      )
+    }
+
+    ajustar(telefono, setTelefono, setTelefonoError)
+    ajustar(telefono2, setTelefono2, setTelefono2Error)
+  }
+
   const validatePhone = (value: string, field: "tel1" | "tel2") => {
     const digits = value.replace(/\D/g, "")
     if (digits.length > 0 && digits.length !== requiredPhoneDigits) {
-      const msg = `El teléfono debe tener ${requiredPhoneDigits} dígitos (${rutaPais || "país no definido"})`
+      // El pais del INDICATIVO elegido, no el de la ruta: si el numero es
+      // colombiano en una ruta argentina, decir "(Argentina)" confunde.
+      const msg = `El teléfono debe tener ${requiredPhoneDigits} dígitos (${paisDelIndicativo || rutaPais || "país no definido"})`
       if (field === "tel1") setTelefonoError(msg)
       else setTelefono2Error(msg)
       return false
@@ -2375,7 +2434,7 @@ export function NewLoan({
                       llenar uno y olvidar el otro. Ancho fijo para que el
                       numero se quede con el espacio, que es lo que se teclea. */}
                   <div className="flex gap-1">
-                    <Select value={indicativo} onValueChange={setIndicativo}>
+                    <Select value={indicativo} onValueChange={cambiarIndicativo}>
                       <SelectTrigger
                         aria-label="Indicativo del país"
                         className="h-7 w-[68px] shrink-0 px-2 text-[10px] md:h-10 md:w-[88px] md:text-sm"
