@@ -1681,11 +1681,19 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                   </div>
 
                   {/* Resumen Financiero */}
-                  {/* En el teléfono no se muestra: son cuatro cifras que
-                      ocupan medio renglón cada una y las mismas están, con
-                      todo su detalle, detrás del botón "Detalle de Caja". */}
-                  <div className="hidden grid-cols-2 gap-x-3 gap-y-0.5 rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5 text-[11px] lg:grid lg:grid-cols-4 lg:flex-1 lg:min-w-[280px]">
-                    <div className="flex items-center justify-between gap-2 lg:flex-col lg:items-start lg:justify-center lg:gap-0">
+                  {/* EN EL TELEFONO TAMBIEN SE MUESTRA.
+                      Antes iba `hidden` y solo aparecia en pantalla grande:
+                      quien abre el monitoreo desde el celular —que es como se
+                      usa en la calle— no veia ingresos, gastos, retiros ni
+                      ventas por ninguna parte. Estaban detras de "Detalle de
+                      Caja", pero eso son dos toques por ruta y nueve rutas.
+
+                      En movil van en rejilla de 2x2 con la etiqueta encima
+                      del valor: apiladas en un renglon cada una no caben en
+                      390px sin que el numero se monte sobre el texto. Desde
+                      `lg` queda como estaba, en cuatro columnas. */}
+                  <div className="grid w-full grid-cols-2 gap-x-3 gap-y-1.5 rounded-md border border-border/60 bg-muted/20 px-2.5 py-2 text-[11px] lg:w-auto lg:grid-cols-4 lg:gap-y-0.5 lg:py-1.5 lg:flex-1 lg:min-w-[280px]">
+                    <div className="flex flex-col items-start justify-center gap-0">
                       <span className="flex items-center gap-1 text-muted-foreground">
                         <TrendingUp className="h-3 w-3 text-success" />
                         Ingresos
@@ -1694,7 +1702,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                         {formatCurrency(r.total_ingresos)}
                       </span>
                     </div>
-                    <div className="flex items-center justify-between gap-2 lg:flex-col lg:items-start lg:justify-center lg:gap-0">
+                    <div className="flex flex-col items-start justify-center gap-0">
                       <span className="flex items-center gap-1 text-muted-foreground">
                         <Receipt className="h-3 w-3 text-destructive" />
                         Gastos
@@ -1703,7 +1711,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                         {formatCurrency(r.total_gastos)}
                       </span>
                     </div>
-                    <div className="flex items-center justify-between gap-2 lg:flex-col lg:items-start lg:justify-center lg:gap-0">
+                    <div className="flex flex-col items-start justify-center gap-0">
                       <span className="flex items-center gap-1 text-muted-foreground">
                         <Wallet className="h-3 w-3 text-brand-secondary" />
                         Retiros
@@ -1712,7 +1720,7 @@ export function AdminRouteMonitor({ currentUser }: AdminRouteMonitorProps) {
                         {formatCurrency(r.total_retiros)}
                       </span>
                     </div>
-                    <div className="flex items-center justify-between gap-2 lg:flex-col lg:items-start lg:justify-center lg:gap-0">
+                    <div className="flex flex-col items-start justify-center gap-0">
                       <span className="flex items-center gap-1 text-muted-foreground">
                         <ShoppingCart className="h-3 w-3 text-brand" />
                         Ventas
