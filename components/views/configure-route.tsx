@@ -220,6 +220,23 @@ export function ConfigureRoute({ currentRutaId = 1 }: ConfigureRouteProps) {
     return loan.clients?.apodo || loan.clients?.nombre_completo || "Sin nombre"
   }
 
+  /**
+   * EL NOMBRE COMPLETO, para ponerlo debajo del apodo.
+   *
+   * Devuelve `null` cuando no aporta nada: si el cliente no tiene apodo, el
+   * renglon de arriba YA es el nombre completo, y repetirlo seria ruido.
+   *
+   * Se compara sin mayusculas ni espacios de sobra porque "CELULAR" y
+   * "Celular " son el mismo dato escrito distinto.
+   */
+  const getClientFullName = (loan: LoanItem) => {
+    const apodo = (loan.clients?.apodo ?? "").trim()
+    const nombre = (loan.clients?.nombre_completo ?? "").trim()
+    if (!apodo || !nombre) return null
+    if (apodo.toLowerCase() === nombre.toLowerCase()) return null
+    return nombre
+  }
+
   const formatCurrency = (val: number) => {
     return new Intl.NumberFormat("es-CO", {
       style: "currency",
@@ -358,6 +375,16 @@ export function ConfigureRoute({ currentRutaId = 1 }: ConfigureRouteProps) {
                     <p className="text-xs md:text-sm font-medium truncate text-foreground">
                       {getClientName(loan)}
                     </p>
+                    {/* El NOMBRE COMPLETO debajo del apodo: en la calle el
+                        cobrador reconoce el negocio por el apodo, pero para
+                        preguntar por alguien o cotejar con la cedula hace
+                        falta el nombre. Solo sale cuando es distinto del
+                        apodo — si no, repetiria el renglon de arriba. */}
+                    {getClientFullName(loan) && (
+                      <p className="text-[10px] md:text-xs truncate text-muted-foreground">
+                        {getClientFullName(loan)}
+                      </p>
+                    )}
                     {/* Mobile: show cuota and freq inline */}
                     <div className="flex items-center gap-2 mt-0.5 md:hidden">
                       <span className="text-[10px] text-muted-foreground">

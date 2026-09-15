@@ -4942,10 +4942,15 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               </Button>
               {/* EL SALDO, junto al boton. Antes de dejar a alguien en no pago
                   el cobrador suele preguntar cuanto debe: tenerlo aca evita
-                  cerrar el dialogo, buscar el extracto y volver. */}
-              <div className="flex flex-col justify-center leading-tight px-1">
-                <span className="text-[10px] md:text-xs text-muted-foreground">Saldo</span>
-                <span className="text-xs md:text-base font-bold tabular-nums text-foreground">
+                  cerrar el dialogo, buscar el extracto y volver.
+                  Va ENCASILLADO como el boton de al lado —misma altura, mismo
+                  radio— y en verde, para que se lea como un dato y no se
+                  confunda con la accion roja que tiene pegada. */}
+              <div className="flex h-8 md:h-10 items-center gap-1.5 rounded-md border border-green-600 bg-green-50 px-2 md:px-3 dark:bg-green-950/40">
+                <span className="text-[10px] md:text-xs font-medium text-green-800 dark:text-green-300">
+                  Saldo
+                </span>
+                <span className="text-xs md:text-base font-bold tabular-nums text-green-800 dark:text-green-300">
                   {fmtMoneda(noPaymentClient?.saldo)}
                 </span>
               </div>
@@ -5300,18 +5305,21 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                 <thead className="sticky top-0 bg-muted">
                   <tr className="text-[10px] md:text-xs text-muted-foreground">
                     <th className="w-[74px] px-2 py-1.5 text-left font-semibold">Fecha</th>
-                    {/* LA CUOTA VA CENTRADA, no pegada a la fecha.
-                        Alineada a la izquierda, el número quedaba a un par de
-                        píxeles del último dígito del año y las dos columnas se
-                        leían como un solo dato. Centrada respira, y además los
-                        números quedan alineados entre sí de arriba abajo. */}
-                    <th className="px-1 py-1.5 text-center font-semibold">Cuota</th>
-                    <th className="w-[70px] px-1 py-1.5 text-right font-semibold">Pagado</th>
+                    {/* CUOTA · PAGADO · SALDO SE REPARTEN LO MISMO.
+                        Antes cada una llevaba su propio ancho —Cuota sin
+                        ninguno, Pagado 70px, Saldo 74px— y su propia
+                        alineación, así que las tres columnas quedaban
+                        descuadradas entre sí. Con `w-1/4` y las tres
+                        centradas, el bloque se lee como una tabla pareja.
+                        La fecha conserva su ancho fijo: es la única de texto
+                        y no compite por el espacio. */}
+                    <th className="w-1/4 px-1 py-1.5 text-center font-semibold">Cuota</th>
+                    <th className="w-1/4 px-1 py-1.5 text-center font-semibold">Pagado</th>
                     {/* SALDO, no "Valor". La columna mostraba el valor de la
                         CUOTA: el mismo número en todos los renglones, que no
                         dice nada. Ahora dice con cuánto quedó el cliente
                         después de ese abono, que es lo que viene a preguntar. */}
-                    <th className="w-[74px] px-2 py-1.5 text-right font-semibold">Saldo</th>
+                    <th className="w-1/4 px-1 py-1.5 text-center font-semibold">Saldo</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -5325,7 +5333,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                         <td className="px-2 py-1.5 text-[10px] md:text-xs tabular-nums whitespace-nowrap">
                           {fechaCorta(m.fecha)}
                         </td>
-                        <td className={`px-1 py-1.5 text-center text-[10px] md:text-xs truncate ${
+                        <td className={`w-1/4 px-1 py-1.5 text-center text-[10px] md:text-xs truncate ${
                           esNoPago ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
                         }`}>
                           {/* SIN LA PALABRA "No pago": el $0 de la columna
@@ -5336,7 +5344,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                             ? m.numeroCuota
                             : ETIQUETA_MOVIMIENTO[m.tipo]}
                         </td>
-                        <td className={`px-1 py-1.5 text-right text-[10px] md:text-xs font-semibold tabular-nums ${
+                        <td className={`w-1/4 px-1 py-1.5 text-center text-[10px] md:text-xs font-semibold tabular-nums ${
                           esNoPago ? "text-red-600 dark:text-red-400" : ""
                         }`}>
                           {/* UN NO PAGO DICE $0, no una raya. Mezclar un
@@ -5344,7 +5352,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               traducir; "$0" se suma de un vistazo. */}
                           {`$${Math.round(m.pagado).toLocaleString("es-CO")}`}
                         </td>
-                        <td className="px-2 py-1.5 text-right text-[10px] md:text-xs tabular-nums text-muted-foreground">
+                        <td className="w-1/4 px-1 py-1.5 text-center text-[10px] md:text-xs tabular-nums text-muted-foreground">
                           {m.saldoDespues !== null ? `$${Math.round(m.saldoDespues).toLocaleString("es-CO")}` : "—"}
                         </td>
                       </tr>

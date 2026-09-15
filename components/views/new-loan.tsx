@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Barcode as BarCode, X, Loader2, UserPlus, AlertCircle, CheckCircle2, ChevronsUpDown, Check } from "lucide-react"
+import { Barcode as BarCode, X, Loader2, UserPlus, AlertCircle, CheckCircle2, ChevronsUpDown, Check, Paperclip, Trash2 } from "lucide-react"
 // Ya no usamos los helpers de lib/database (createClient/createLoan/
 // createPaymentPlan): la creacion de venta corre ahora en una sola
 // transaccion via la RPC `crear_venta_atomica` que evita los problemas
@@ -334,6 +334,13 @@ export function NewLoan({
   const [valorPago, setValorPago] = useState("")
   const [prestamoEmpleado, setPrestamoEmpleado] = useState(false)
   const [telefono, setTelefono] = useState("")
+  // EL COMPROBANTE DE LA TRANSFERENCIA. Se sube al mismo Vercel Blob que las
+  // fotos de cedula y los logos, y la URL viaja con la venta (scripts/115).
+  // Se guarda la URL y no el archivo: la imagen ya vive en la bodega, y
+  // mandar el binario dentro del payload de la venta lo haria enorme.
+  const [indicativo, setIndicativo] = useState("+57")
+  const [comprobanteUrl, setComprobanteUrl] = useState<string | null>(null)
+  const [subiendoComprobante, setSubiendoComprobante] = useState(false)
   const [telefono2, setTelefono2] = useState("")
   // ── Campos antes no controlados que ahora se persisten en estado para
   //    poder validar "obligatoriedad" y resaltar errores en la UI. ──
@@ -395,6 +402,63 @@ export function NewLoan({
   }
   // Helper: marca/desmarca un campo en formErrors. Permite que el onChange
   // de cada input limpie el resaltado tan pronto el usuario corrige.
+  /**
+   * SUBIR EL COMPROBANTE DE LA TRANSFERENCIA.
+   *
+   * Va al mismo `/api/upload-photo` que el resto de imagenes de la app. Se
+   * sube AL ELEGIRLO y no al guardar la venta: si la subida falla, el
+   * vendedor se entera ahi mismo y puede reintentar, en vez de perder todo
+   * el formulario al final.
+   *
+   * No bloquea la venta: si no se pudo subir, se avisa y la venta se puede
+   * registrar igual sin comprobante. Es un respaldo, no un requisito.
+   */
+  const handleComprobante = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    // Se limpia el input para que elegir el MISMO archivo dos veces seguidas
+    // vuelva a disparar el onChange.
+    e.target.value = ""
+    if (!file) return
+
+    if (!file.type.startsWith("image/") && file.type !== "application/pdf") {
+      toast({
+        title: "Formato no compatible",
+        description: "Sube una imagen (JPG o PNG) o un PDF.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast({
+        title: "Archivo muy pesado",
+        description: "El comprobante no puede pasar de 10 MB.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setSubiendoComprobante(true)
+    try {
+      const fd = new FormData()
+      fd.append("file", file)
+      fd.append("folder", `comprobantes/${currentRutaId}`)
+      const res = await fetch("/api/upload-photo", { method: "POST", body: fd })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? "No se pudo subir el comprobante")
+      setComprobanteUrl(json.url)
+      toast({ title: "Comprobante cargado", description: "Queda guardado con la venta." })
+    } catch (err) {
+      console.error("[v0] Error subiendo el comprobante:", err)
+      toast({
+        title: "No se pudo subir",
+        description: err instanceof Error ? err.message : "Intenta de nuevo",
+        variant: "destructive",
+      })
+    } finally {
+      setSubiendoComprobante(false)
+    }
+  }
+
   const clearFieldError = (field: string) =>
     setFormErrors((prev) => {
       // Cuando el usuario corrige un campo, ocultamos tambien el banner
@@ -417,6 +481,7 @@ export function NewLoan({
   const phoneDigitsByCountry: Record<string, number> = {
     colombia: 10,
     argentina: 10,
+    ecuador: 9,
     peru: 9,
     perú: 9,
     chile: 9,
@@ -424,7 +489,53 @@ export function NewLoan({
     brazil: 9,
   }
 
+  /**
+   * INDICATIVO DEL PAIS AL QUE PERTENECE EL NUMERO.
+   *
+   * No se deduce del pais de la ruta: una ruta de Colombia puede tener un
+   * cliente con celular de Venezuela o de Ecuador, y ese es justo el caso que
+   * se pidio cubrir. El pais de la ruta solo decide cual viene ELEGIDO por
+   * defecto — la mayoria de las veces acierta y nadie toca nada.
+   *
+   * Se guarda pegado al numero (`+57 3001234567`) y no en una columna aparte:
+   * `clients.telefono` es texto y ya lo admite, y asi el numero viaja completo
+   * a donde sea que se lea —el recibo, la lista, WhatsApp— sin que cada
+   * pantalla tenga que volver a juntarlo.
+   */
+  const INDICATIVOS: { codigo: string; pais: string }[] = [
+    { codigo: "+57", pais: "Colombia" },
+    { codigo: "+54", pais: "Argentina" },
+    { codigo: "+593", pais: "Ecuador" },
+    { codigo: "+51", pais: "Perú" },
+    { codigo: "+56", pais: "Chile" },
+    { codigo: "+58", pais: "Venezuela" },
+    { codigo: "+55", pais: "Brasil" },
+    { codigo: "+52", pais: "México" },
+    { codigo: "+1", pais: "EE. UU." },
+    { codigo: "+34", pais: "España" },
+  ]
+
+  const indicativoPorPais: Record<string, string> = {
+    colombia: "+57",
+    argentina: "+54",
+    ecuador: "+593",
+    peru: "+51",
+    perú: "+51",
+    chile: "+56",
+    venezuela: "+58",
+    brasil: "+55",
+    brazil: "+55",
+  }
+
   const requiredPhoneDigits = phoneDigitsByCountry[rutaPais.toLowerCase()] ?? 10
+
+  // El indicativo arranca en el del pais de la ruta. Se hace en un efecto y
+  // no al crear el estado porque `rutaPais` llega despues del primer render.
+  useEffect(() => {
+    const porDefecto = indicativoPorPais[rutaPais.toLowerCase()]
+    if (porDefecto) setIndicativo(porDefecto)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rutaPais])
 
   const validatePhone = (value: string, field: "tel1" | "tel2") => {
     const digits = value.replace(/\D/g, "")
@@ -1238,7 +1349,9 @@ export function NewLoan({
           apodo: apodo || null,
           apodo_2: apodo2.trim() || null,
           sector: sector || null,
-          telefono: telefono || null,
+          // El numero viaja COMPLETO, con su indicativo. Sin el, un celular de
+          // otro pais no se puede marcar desde la ruta.
+          telefono: telefono ? `${indicativo} ${telefono}` : null,
           telefono2: telefono2 || null,
           // Datos adicionales obligatorios capturados en el formulario
           // (antes se enviaban como null porque eran inputs no controlados).
@@ -1437,6 +1550,8 @@ export function NewLoan({
         frecuencia_pago: frecuenciaPago,
         dia_semana: diaSemana || null,
         tipo_venta: tipoVenta,
+        // El comprobante de la transferencia (scripts/115). Null en efectivo.
+        comprobante_url: comprobanteUrl,
         // Con cual de los dos apodos se ve ESTE prestamo. 1 = el de siempre.
         apodo_elegido: apodoElegido,
         prestamo_empleado: prestamoEmpleado,
@@ -2198,20 +2313,41 @@ export function NewLoan({
                       <span className="ml-1 text-muted-foreground">({requiredPhoneDigits} dígitos)</span>
                     )}
                   </Label>
-                  <Input
-                    id="telefono"
-                    placeholder={`${requiredPhoneDigits} dígitos`}
-                    type="tel"
-                    value={telefono}
-                    maxLength={requiredPhoneDigits}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, "")
-                      setTelefono(val)
-                      validatePhone(val, "tel1")
-                      if (val) clearFieldError("telefono")
-                    }}
-                    className={`h-7 md:h-10 text-[10px] md:text-sm ${telefonoError ? "border-red-500 focus-visible:ring-red-500" : ""} ${errCls("telefono")}`}
-                  />
+                  {/* El indicativo va PEGADO al numero, no en su propia
+                      casilla suelta: son un solo dato y separarlos invita a
+                      llenar uno y olvidar el otro. Ancho fijo para que el
+                      numero se quede con el espacio, que es lo que se teclea. */}
+                  <div className="flex gap-1">
+                    <Select value={indicativo} onValueChange={setIndicativo}>
+                      <SelectTrigger
+                        aria-label="Indicativo del país"
+                        className="h-7 w-[68px] shrink-0 px-2 text-[10px] md:h-10 md:w-[88px] md:text-sm"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {INDICATIVOS.map((i) => (
+                          <SelectItem key={i.codigo} value={i.codigo} className="text-[11px] md:text-sm">
+                            {i.codigo} · {i.pais}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      id="telefono"
+                      placeholder={`${requiredPhoneDigits} dígitos`}
+                      type="tel"
+                      value={telefono}
+                      maxLength={requiredPhoneDigits}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/\D/g, "")
+                        setTelefono(val)
+                        validatePhone(val, "tel1")
+                        if (val) clearFieldError("telefono")
+                      }}
+                      className={`h-7 flex-1 min-w-0 md:h-10 text-[10px] md:text-sm ${telefonoError ? "border-red-500 focus-visible:ring-red-500" : ""} ${errCls("telefono")}`}
+                    />
+                  </div>
                   {telefonoError && (
                     <p className="text-[9px] md:text-xs text-red-500">{telefonoError}</p>
                   )}
@@ -2837,24 +2973,48 @@ export function NewLoan({
             </label>
           </div>
 
-          {/* Tipo de Venta */}
-          <div className="space-y-1 md:space-y-2">
-            <Label htmlFor="tipoVenta" className="text-[11px] md:text-sm">
-              Tipo de Venta
-            </Label>
-            <Select value={tipoVenta} onValueChange={(v) => { setTipoVenta(v); setCuentaId("") }}>
-              <SelectTrigger id="tipoVenta" className="h-8 md:h-10 text-[11px] md:text-sm">
-                <SelectValue placeholder="Seleccione tipo" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="efectivo" className="text-[11px] md:text-sm">
-                  Efectivo
-                </SelectItem>
-                <SelectItem value="transferencia" className="text-[11px] md:text-sm">
-                  Transferencia
-                </SelectItem>
-              </SelectContent>
-            </Select>
+          {/* Tipo de Venta · Nro Cuotas
+              Van EN PAREJA y no uno debajo del otro: sueltos, cada uno ocupaba
+              el ancho completo de la pantalla para un dato de una palabra o de
+              dos digitos, y el formulario se alargaba sin necesidad. Es el
+              mismo `grid-cols-2` que ya usan Frecuencia y Valor Cuota. */}
+          <div className="grid gap-2 md:gap-4 grid-cols-2">
+            <div className="space-y-1 md:space-y-2">
+              <Label htmlFor="tipoVenta" className="text-[11px] md:text-sm">
+                Tipo de Venta
+              </Label>
+              <Select value={tipoVenta} onValueChange={(v) => { setTipoVenta(v); setCuentaId("") }}>
+                <SelectTrigger id="tipoVenta" className="h-8 md:h-10 text-[11px] md:text-sm">
+                  <SelectValue placeholder="Seleccione tipo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="efectivo" className="text-[11px] md:text-sm">
+                    Efectivo
+                  </SelectItem>
+                  <SelectItem value="transferencia" className="text-[11px] md:text-sm">
+                    Transferencia
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1 md:space-y-2">
+              <Label htmlFor="dias" className="text-[11px] md:text-sm">
+                Nro Cuotas <span className="text-red-500">*</span>
+              </Label>
+              <Input
+                id="dias"
+                type="number"
+                inputMode="numeric"
+                placeholder="Cuotas"
+                value={dias}
+                onChange={(e) => {
+                  setDias(e.target.value)
+                  if (e.target.value) clearFieldError("dias")
+                }}
+                className={`h-8 md:h-10 text-[11px] md:text-sm ${errCls("dias")}`}
+              />
+            </div>
           </div>
 
           {/* Cuenta bancaria - solo visible para Transferencia */}
@@ -2881,6 +3041,71 @@ export function NewLoan({
                   )}
                 </SelectContent>
               </Select>
+            </div>
+          )}
+
+          {/* Comprobante — solo en transferencia.
+              Se pide donde se pide la cuenta, que es el momento en que el
+              vendedor tiene el soporte a la mano. En efectivo no aparece:
+              una casilla que nunca se llena solo alarga el formulario. */}
+          {tipoVenta === "transferencia" && (
+            <div className="space-y-1 md:space-y-2">
+              <Label className="text-[11px] md:text-sm">Comprobante (opcional)</Label>
+              {comprobanteUrl ? (
+                <div className="flex items-center gap-2 rounded-md border border-green-600 bg-green-50 px-2 py-1.5 dark:bg-green-950/40">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-green-700 dark:text-green-400" />
+                  <a
+                    href={comprobanteUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 truncate text-[11px] md:text-sm font-medium text-green-800 underline dark:text-green-300"
+                  >
+                    Ver comprobante cargado
+                  </a>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 shrink-0 text-green-800 hover:bg-green-100 dark:text-green-300"
+                    onClick={() => setComprobanteUrl(null)}
+                    aria-label="Quitar el comprobante"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ) : (
+                <div>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    onChange={handleComprobante}
+                    className="hidden"
+                    id="comprobante-venta"
+                    disabled={subiendoComprobante}
+                  />
+                  <Label htmlFor="comprobante-venta" className="m-0 cursor-pointer">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-8 w-full justify-start gap-2 text-[11px] md:h-10 md:text-sm"
+                      disabled={subiendoComprobante}
+                      asChild
+                    >
+                      <span>
+                        {subiendoComprobante ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Paperclip className="h-3.5 w-3.5" />
+                        )}
+                        {subiendoComprobante ? "Subiendo…" : "Adjuntar comprobante"}
+                      </span>
+                    </Button>
+                  </Label>
+                </div>
+              )}
+              <p className="text-[10px] md:text-xs text-muted-foreground">
+                Foto o PDF del soporte de la transferencia. Queda guardado con la venta.
+              </p>
             </div>
           )}
 
@@ -2989,24 +3214,6 @@ export function NewLoan({
             )}
           </div>
           )}
-
-          {/* Nro Cuotas */}
-          <div className="space-y-1 md:space-y-2">
-            <Label htmlFor="dias" className="text-[11px] md:text-sm">
-              Nro Cuotas <span className="text-red-500">*</span>
-            </Label>
-            <Input
-              id="dias"
-              type="number"
-              placeholder="Número de cuotas"
-              value={dias}
-              onChange={(e) => {
-                setDias(e.target.value)
-                if (e.target.value) clearFieldError("dias")
-              }}
-              className={`h-8 md:h-10 text-[11px] md:text-sm ${errCls("dias")}`}
-            />
-          </div>
 
           {/* Frecuencia de Pago - Valor Cuota */}
           <div className="grid gap-2 md:gap-4 grid-cols-2">
