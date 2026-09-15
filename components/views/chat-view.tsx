@@ -679,6 +679,19 @@ export function ChatView({ currentUser, onUnreadChange }: ChatViewProps) {
   const msgRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
   /**
+   * CUANTOS MENSAJES SIN LEER HABIA AL ABRIR LA CONVERSACION.
+   *
+   * Se guarda en un ref y no en estado porque no pinta nada: solo sirve para
+   * decidir a donde saltar la primera vez que se dibujan los mensajes.
+   *
+   * Hay que capturarlo ANTES de `markAsRead`, que pone `last_read_at` en la
+   * hora actual y borra la unica pista de donde se habia quedado la persona.
+   * `null` = ya se uso (o no habia sin leer): a partir de ahi el hilo se
+   * comporta como siempre, bajando al fondo con cada mensaje nuevo.
+   */
+  const sinLeerAlAbrir = useRef<number | null>(null)
+
+  /**
    * El campo crece con el texto, hasta 120px.
    *
    * Hacia falta desde que Enter hace salto de linea en el telefono: sin esto
@@ -1089,13 +1102,51 @@ export function ChatView({ currentUser, onUnreadChange }: ChatViewProps) {
 
   // ── Scroll al fondo cuando llegan mensajes ────────────────────────────────
 
+  /**
+   * DONDE QUEDA EL HILO AL ABRIRLO.
+   *
+   * Antes bajaba SIEMPRE al fondo, asi que quien tenia diez mensajes sin leer
+   * aterrizaba debajo del ultimo y tenia que subir a buscar donde se habia
+   * quedado. Ahora, si habia mensajes sin leer, salta al PRIMERO de ellos y
+   * lo deja arriba de la pantalla: desde ahi se lee hacia abajo, en orden.
+   *
+   * Solo la primera vez. Despues —y cuando no habia nada sin leer— el hilo
+   * hace lo de siempre: seguir al fondo con cada mensaje que entra, que es lo
+   * que se espera mientras uno esta conversando.
+   */
   useEffect(() => {
+    if (messages.length === 0) return
+
+    const pendientes = sinLeerAlAbrir.current
+    if (pendientes != null) {
+      // Se consume aunque no se encuentre el mensaje: si no, cada mensaje
+      // nuevo volveria a intentar el salto y el hilo no bajaria nunca.
+      sinLeerAlAbrir.current = null
+
+      // El primero sin leer es el que esta `pendientes` posiciones antes del
+      // final. Si llegaron mas mensajes de los que cabian en la carga, se
+      // cae al mas viejo que haya.
+      const i = Math.max(0, messages.length - pendientes)
+      const primeroSinLeer = messages[i]
+      const el = primeroSinLeer ? msgRefs.current.get(primeroSinLeer.id) : null
+      if (el) {
+        el.scrollIntoView({ block: "start" })
+        return
+      }
+    }
+
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
 
   // ── Seleccionar conversación ──────────────────────────────────────────────
 
   const selectConversation = (convId: string) => {
+    // ANTES de cargar nada: `loadMessages` llama a `markAsRead`, que pisa
+    // `last_read_at` y con eso se pierde donde se habia quedado la persona.
+    const conv = conversations.find((c) => c.conversation_id === convId)
+    const sinLeer = conv?.unread_count ?? 0
+    sinLeerAlAbrir.current = sinLeer > 0 ? sinLeer : null
+
     setActiveConvId(convId)
     setShowThread(true)
     setSearchOpen(false)

@@ -2350,14 +2350,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             : ""
         }`,
       },
-      { label: "Valor prestado", valor: money(c.valorVenta) },
-      // EL % DE INTERES NO VA EN EL COMPROBANTE DEL CLIENTE.
+      // NI "Valor prestado" NI EL % DE INTERES.
       //
-      // Lo que el cliente necesita para cuadrar su deuda esta completo sin el:
-      // cuanto le prestaron, cuanto debe en total, de a cuanto es la cuota,
-      // cuanto lleva abonado y cuanto le falta. La tasa no le cambia ninguno
-      // de esos numeros — ya viene incorporada en el total a pagar — y en la
-      // calle solo abre discusiones que no son del cobrador.
+      // El comprobante dice COMO VA LA DEUDA: total a pagar, cuota, abonado y
+      // saldo. Cuanto se presto al principio y a que tasa ya estan
+      // incorporados en el total — repetirlos solo abre discusiones en la
+      // calle que no son del cobrador.
+      //
+      // Va igual que el extracto EN PANTALLA: si la imagen mostrara datos que
+      // la pantalla no tiene, el cobrador estaria mandando algo distinto de lo
+      // que le acaba de ensenar al cliente.
       //
       // OJO: sigue estando en la APP. Se ve en el extracto en pantalla, en
       // Auditoria 360 y en el detalle de clientes, que es donde tiene que
@@ -5178,8 +5180,16 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                   ? ` · ${extractoClient.diaSemana.charAt(0).toUpperCase()}${extractoClient.diaSemana.slice(1)}`
                   : ""
               }`],
-              ["Valor prestado", fmt(extractoClient.valorVenta)],
-              ["Interés", `${extractoClient.tasaInteres ?? 0}%`],
+              // NI "Valor prestado" NI "Interés".
+              //
+              // El extracto existe para que el cliente sepa CÓMO VA SU DEUDA,
+              // y para eso lo que manda es el total a pagar, la cuota, lo
+              // abonado y el saldo. Cuánto se prestó al principio y a qué
+              // tasa ya está incorporado en el total: repetirlos solo abre
+              // discusiones en la calle que no son del cobrador.
+              //
+              // Los dos siguen en la app donde sí hacen falta: Auditoría 360,
+              // el detalle de clientes y Control Total.
               ["Total a pagar", fmt(extractoClient.totalAPagar)],
               ["Valor de cuota", fmt(extractoClient.valorCuota)],
               ["Cuotas", `${cuotasConDecimal(extractoClient.abonado, extractoClient.valorCuota, extractoClient.cuotasTotales)}/${extractoClient.cuotasTotales}`],
