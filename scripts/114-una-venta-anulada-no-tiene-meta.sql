@@ -209,76 +209,93 @@ $fix$;
 -- hoy, una venta anulada CON pagos conserva su cronograma a proposito, y esas
 -- cuotas no pueden seguir contando como algo por cobrar.
 --
--- Es UN SOLO cambio sobre la vista del script 112: el `WHERE` del CTE
--- `meta_plan` pasa de mirar solo 'cancelado' a mirar tambien 'anulado'.
+-- POR QUE ESTO NO BUSCA UN TEXTO EXACTO
+-- --------------------------------------
+-- El primer intento anclaba en `l.estado <> 'cancelado'` y fallo con
+-- "aparece 0 veces". No es que el filtro no este: es que `pg_get_viewdef` NO
+-- devuelve el SQL como se escribio, lo devuelve NORMALIZADO — pone los tipos
+-- (`::text`), cambia el espaciado y reacomoda los parentesis. Asi que
+-- `l.estado <> 'cancelado'` en la fuente se lee como algo del estilo
+-- `l.estado::text <> 'cancelado'::text` en la definicion viva.
 --
--- Se parchea la vista VIVA en vez de reescribirla: `resumen_diario_v2` tiene
--- 250 lineas y varios scripts la han tocado. Y OJO — `vista_monitoreo_recaudos`
--- cuelga de ella, asi que se recrea despues del CASCADE.
+-- Por eso ahora se busca con una EXPRESION REGULAR que tolera esas variantes,
+-- y el script dice exactamente que encontro antes de tocar nada.
+--
+-- OJO CON EL `OR`. El filtro entero es:
+--
+--     WHERE l.estado <> 'cancelado' OR pp.fecha_pago <= fin.dia_cierre
+--
+-- Ese `OR` existe para que un CANCELADO siga contando hasta el dia en que
+-- termino de pagar: la meta del 1 no se reescribe porque el credito cerro el
+-- 3. Para una cancelacion es correcto.
+--
+-- Para una ANULACION no. Una venta anulada nunca debio existir, asi que sus
+-- cuotas no fueron cobrables NINGUN dia. Y el `OR` las dejaria pasar igual,
+-- porque `dia_cierre` sale del ultimo evento aplicado y el propio ajuste de
+-- anular ES un evento: a LIMPIEZA le daria 12/09, y su cuota del 12/09
+-- seguiria contando. Por eso el `OR` se acota a 'cancelado'.
+--
+-- `vista_monitoreo_recaudos` cuelga del resumen, asi que se guarda antes del
+-- CASCADE y se recrea igual, con su GRANT.
 DO $vista$
 DECLARE
   v_src    text;
   v_nuevo  text;
   v_dep    text;
-  v_n      int;
+  v_est    text;
+  v_fec    text;
+  v_alias  text;
 BEGIN
   SELECT pg_get_viewdef('public.resumen_diario_v2'::regclass, true) INTO v_src;
   IF v_src IS NULL THEN
     RAISE EXCEPTION 'No existe public.resumen_diario_v2';
   END IF;
 
-  IF strpos(v_src, '''anulado''') > 0 THEN
+  IF v_src ~ '''anulado''' THEN
     RAISE NOTICE 'La meta ya ignoraba lo anulado. Nada que cambiar.';
     RETURN;
   END IF;
 
-  -- El ancla es el filtro del CTE `meta_plan`. Tiene que aparecer UNA sola
-  -- vez: si aparece mas, alguien mas lo usa y hay que mirarlo a mano.
-  SELECT count(*) INTO v_n
-    FROM regexp_matches(v_src, 'l\.estado <> ''cancelado''', 'g');
-  IF v_n <> 1 THEN
-    RAISE EXCEPTION 'El filtro de cancelado aparece % veces; revise a mano', v_n;
+  -- 1) El trozo que compara el estado contra 'cancelado', sea como sea que
+  --    Postgres lo haya normalizado (con o sin `::text`, con o sin espacios).
+  -- El alias tambien puede cambiar: Postgres a veces renombra `l` a `l_1`
+  -- cuando hay varios JOIN al mismo tabla. Se acepta cualquier alias y se
+  -- informa cual salio, para que quede constancia de sobre que se actuo.
+  SELECT (regexp_match(v_src, '([A-Za-z_][A-Za-z0-9_]*\.estado(?:::text)?\s*<>\s*''cancelado''(?:::text)?)'))[1]
+    INTO v_est;
+
+  IF v_est IS NULL THEN
+    RAISE EXCEPTION
+      'No encuentro el filtro de cancelado en la vista. Corra el PASO 6-BIS de abajo y mandeme lo que salga.';
   END IF;
 
-  -- Se guarda la vista dependiente ANTES del CASCADE para recrearla igual.
-  SELECT pg_get_viewdef('public.vista_monitoreo_recaudos'::regclass, true) INTO v_dep;
+  -- 2) El trozo del OR que lo acompaña.
+  SELECT (regexp_match(v_src, '([A-Za-z_][A-Za-z0-9_]*\.fecha_pago\s*<=\s*[A-Za-z_][A-Za-z0-9_]*\.dia_cierre)'))[1]
+    INTO v_fec;
 
-  -- ── OJO CON EL `OR` ───────────────────────────────────────────────────
-  -- El filtro entero es:
-  --
-  --     WHERE l.estado <> 'cancelado' OR pp.fecha_pago <= fin.dia_cierre
-  --
-  -- Ese `OR` existe para que un CANCELADO siga contando hasta el dia en que
-  -- termino de pagar: la meta del 1 no se reescribe porque el credito cerro
-  -- el 3. Para una cancelacion es correcto.
-  --
-  -- Para una ANULACION no. Una venta anulada nunca debio existir, asi que sus
-  -- cuotas no fueron cobrables NINGUN dia — ni antes ni despues. Y el `OR`
-  -- las dejaria pasar igual, porque `dia_cierre` sale del ultimo evento
-  -- aplicado y el propio ajuste de anular ES un evento: a LIMPIEZA le daria
-  -- 12/09, y su cuota del 12/09 seguiria contando.
-  --
-  -- Por eso el `OR` se acota a 'cancelado' en vez de agregar 'anulado' al
-  -- NOT IN. Se comprobo la diferencia antes de escribirlo.
-  v_nuevo := replace(v_src,
-    'l.estado <> ''cancelado''
-      OR pp.fecha_pago <= fin.dia_cierre',
-    'l.estado NOT IN (''cancelado'', ''anulado'')
-      OR (l.estado = ''cancelado'' AND pp.fecha_pago <= fin.dia_cierre)');
-
-  -- `pg_get_viewdef` normaliza el espaciado, asi que el reemplazo de arriba
-  -- puede no enganchar. Si no engancho, se hace en dos pasos sobre piezas que
-  -- no dependen del salto de linea.
-  IF v_nuevo = v_src THEN
-    v_nuevo := replace(v_src, 'l.estado <> ''cancelado''',
-                              'l.estado NOT IN (''cancelado'', ''anulado'')');
-    v_nuevo := replace(v_nuevo, 'OR pp.fecha_pago <= fin.dia_cierre',
-                                'OR (l.estado = ''cancelado'' AND pp.fecha_pago <= fin.dia_cierre)');
+  IF v_fec IS NULL THEN
+    RAISE EXCEPTION
+      'Encontre el filtro de cancelado pero no el OR de dia_cierre. Corra el PASO 6-BIS y mandeme lo que salga.';
   END IF;
+
+  RAISE NOTICE 'Filtro encontrado: "%" ... OR ... "%"', v_est, v_fec;
+
+  -- 3) Los dos reemplazos, sobre el texto REAL que se encontro.
+  -- Se reconstruye con EL MISMO alias que traia: si la vista usa `l_1`,
+  -- escribir `l` dejaria la vista sin compilar.
+  v_alias := split_part(v_est, '.', 1);
+
+  v_nuevo := replace(v_src, v_est,
+    v_alias || '.estado NOT IN (''cancelado'', ''anulado'')');
+  v_nuevo := replace(v_nuevo, v_fec,
+    '(' || v_alias || '.estado = ''cancelado'' AND ' || v_fec || ')');
 
   IF v_nuevo = v_src THEN
     RAISE EXCEPTION 'No se pudo cambiar el filtro de la meta. No toco nada.';
   END IF;
+
+  -- Se guarda la vista dependiente ANTES del CASCADE para recrearla igual.
+  SELECT pg_get_viewdef('public.vista_monitoreo_recaudos'::regclass, true) INTO v_dep;
 
   EXECUTE 'DROP VIEW IF EXISTS public.resumen_diario_v2 CASCADE';
   EXECUTE 'CREATE VIEW public.resumen_diario_v2 AS ' || v_nuevo;
@@ -295,6 +312,18 @@ BEGIN
   RAISE NOTICE 'La meta ya no cuenta las cuotas de ventas anuladas.';
 END
 $vista$;
+
+
+-- ── PASO 6-BIS) SOLO SI EL PASO 6 FALLA (SOLO LECTURA) ───────────────────
+-- Si el PASO 6 dijo que no encuentra el filtro, corra esto y mandeme el
+-- resultado: es el trozo de la vista donde vive la meta, tal como Postgres lo
+-- tiene guardado. Con eso ajusto el ancla sin adivinar.
+--
+-- (Si el PASO 6 funciono, esta consulta no hace falta.)
+SELECT substring(pg_get_viewdef('public.resumen_diario_v2'::regclass, true)
+                 FROM position('dia_cierre' IN
+                      pg_get_viewdef('public.resumen_diario_v2'::regclass, true)) - 400
+                 FOR 900) AS el_trozo_de_la_meta;
 
 
 -- ── PASO 7) Que quedo bien (SOLO LECTURA) ────────────────────────────────
