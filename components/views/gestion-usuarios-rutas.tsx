@@ -9,9 +9,12 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Card, CardContent } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion"
-import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info, MessageSquare, BarChart2, Gauge, Upload } from "lucide-react"
+import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info, MessageSquare, BarChart2, Gauge, Upload, AlertCircle } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { ALL_MODULES, MODULE_GROUPS, getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
 import { AMORTIZACIONES, mostrarMonto, leerMonto } from "@/lib/gestion-core"
@@ -1464,6 +1467,243 @@ function RutasTab() {
   )
 }
 
+// ─── Tab Gerentes ─────────────────────────────────────────────────────────────
+
+/**
+ * QUÉ ADMINISTRADORES TIENE A CARGO CADA GERENTE.
+ *
+ * Es la misma forma que Asignaciones —se elige a la izquierda, se marca a la
+ * derecha— pero entre usuarios: un gerente y sus administradores. Es lo que
+ * decide a quién ve ese gerente en el Reporte Gerencial.
+ *
+ * Si la tabla `gerente_admins` no existe todavía (script 116 sin correr), se
+ * avisa en vez de dejar una pantalla muerta.
+ */
+function GerentesTab() {
+  const { toast } = useToast()
+  const [usuarios, setUsuarios] = useState<Usuario[]>([])
+  const [vinculos, setVinculos] = useState<{ gerente_id: number; admin_id: number }[]>([])
+  const [loading, setLoading] = useState(true)
+  const [faltaTabla, setFaltaTabla] = useState(false)
+  const [selectedGerente, setSelectedGerente] = useState<number | null>(null)
+  const [checked, setChecked] = useState<Set<number>>(new Set())
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const supabase = createClient()
+      const [uRes, vRes] = await Promise.all([
+        supabase.from("usuarios").select("id, usuario, nombre, rol, activo").order("nombre"),
+        supabase.from("gerente_admins").select("gerente_id, admin_id"),
+      ])
+      if (uRes.error) throw uRes.error
+      setUsuarios((uRes.data ?? []) as unknown as Usuario[])
+      // LA TABLA NO EXISTE = el script 116 no se ha corrido.
+      //
+      // Se miran DOS codigos: `42P01` es el de Postgres, pero PostgREST NO lo
+      // reenvia — responde `PGRST205` ("Could not find the table ... in the
+      // schema cache"). Se comprobo contra produccion: con la tabla sin
+      // crear, la respuesta es PGRST205. Mirando solo el 42P01, la pestaña
+      // se veia funcionando y el aviso no salia nunca.
+      if (vRes.error) {
+        const code = (vRes.error as { code?: string }).code
+        if (
+          code === "42P01" ||
+          code === "PGRST205" ||
+          /does not exist|could not find the table/i.test(vRes.error.message)
+        ) {
+          setFaltaTabla(true)
+          setVinculos([])
+        } else {
+          throw vRes.error
+        }
+      } else {
+        setFaltaTabla(false)
+        setVinculos((vRes.data ?? []) as unknown as { gerente_id: number; admin_id: number }[])
+      }
+    } catch (err) {
+      console.error("[v0] Error cargando gerentes:", err)
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar los gerentes",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const gerentes = usuarios.filter((u) =>
+    ["gerencia", "gerente"].includes((u.rol ?? "").toLowerCase()),
+  )
+  const admins = usuarios.filter((u) =>
+    ["admin", "administrador"].includes((u.rol ?? "").toLowerCase()),
+  )
+
+  const seleccionar = (id: number) => {
+    setSelectedGerente(id)
+    setChecked(new Set(vinculos.filter((v) => v.gerente_id === id).map((v) => v.admin_id)))
+    setDirty(false)
+  }
+
+  const alternar = (adminId: number) => {
+    setChecked((prev) => {
+      const s = new Set(prev)
+      if (s.has(adminId)) s.delete(adminId)
+      else s.add(adminId)
+      return s
+    })
+    setDirty(true)
+  }
+
+  const guardar = async () => {
+    if (selectedGerente == null) return
+    setSaving(true)
+    try {
+      const supabase = createClient()
+      const antes = new Set(
+        vinculos.filter((v) => v.gerente_id === selectedGerente).map((v) => v.admin_id),
+      )
+      const agregar = [...checked].filter((id) => !antes.has(id))
+      const quitar = [...antes].filter((id) => !checked.has(id))
+
+      if (quitar.length > 0) {
+        const { error } = await supabase
+          .from("gerente_admins")
+          .delete()
+          .eq("gerente_id", selectedGerente)
+          .in("admin_id", quitar)
+        if (error) throw error
+      }
+      if (agregar.length > 0) {
+        const { error } = await supabase
+          .from("gerente_admins")
+          .insert(agregar.map((admin_id) => ({ gerente_id: selectedGerente, admin_id })))
+        if (error) throw error
+      }
+      setVinculos((prev) => [
+        ...prev.filter((v) => v.gerente_id !== selectedGerente),
+        ...[...checked].map((admin_id) => ({ gerente_id: selectedGerente, admin_id })),
+      ])
+      setDirty(false)
+      toast({ title: "Gerente actualizado" })
+    } catch (err) {
+      console.error("[v0] Error guardando gerente_admins:", err)
+      toast({ title: "Error", description: "No se pudo guardar", variant: "destructive" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) return <Skeleton className="h-64 w-full" />
+
+  if (faltaTabla) {
+    return (
+      <Card>
+        <CardContent className="space-y-2 p-6 text-center">
+          <AlertCircle className="mx-auto h-5 w-5 text-amber-600" />
+          <p className="text-xs text-muted-foreground">
+            Falta correr <strong>scripts/116-un-gerente-tiene-administradores.sql</strong>. Hasta
+            entonces no se pueden asignar administradores a un gerente.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      <Card>
+        <CardContent className="p-3">
+          <p className="mb-2 text-xs font-semibold">Gerentes</p>
+          {gerentes.length === 0 ? (
+            <p className="py-6 text-center text-[11px] text-muted-foreground">
+              No hay usuarios con rol gerencia. Créalos en la pestaña Usuarios.
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {gerentes.map((g) => {
+                const cuantos = vinculos.filter((v) => v.gerente_id === g.id).length
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => seleccionar(g.id)}
+                    className={`flex w-full items-center justify-between rounded-md border px-2 py-1.5 text-left text-xs transition-colors ${
+                      selectedGerente === g.id ? "border-brand bg-brand/10" : "hover:bg-muted/50"
+                    }`}
+                  >
+                    <span className="truncate">{g.nombre}</span>
+                    <Badge variant="secondary" className="text-[10px]">
+                      {cuantos} {cuantos === 1 ? "admin" : "admins"}
+                    </Badge>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-xs font-semibold">Administradores a cargo</p>
+            {dirty && (
+              <Button
+                size="sm"
+                onClick={() => void guardar()}
+                disabled={saving}
+                className="h-7 text-xs"
+              >
+                {saving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+                Guardar
+              </Button>
+            )}
+          </div>
+          {selectedGerente == null ? (
+            <p className="py-6 text-center text-[11px] text-muted-foreground">
+              Elige un gerente de la izquierda.
+            </p>
+          ) : admins.length === 0 ? (
+            <p className="py-6 text-center text-[11px] text-muted-foreground">
+              No hay usuarios con rol admin.
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {admins.map((a) => (
+                <label
+                  key={a.id}
+                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-muted/50"
+                >
+                  <Checkbox
+                    checked={checked.has(a.id)}
+                    onCheckedChange={() => alternar(a.id)}
+                    className="h-4 w-4"
+                  />
+                  <span className="truncate">{a.nombre}</span>
+                  {!a.activo && (
+                    <Badge variant="outline" className="ml-auto text-[10px]">
+                      inactivo
+                    </Badge>
+                  )}
+                </label>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 // ─── Tab Asignaciones ─────────────────────────────────────────────────────────
 
 function AsignacionesTab() {
@@ -2491,7 +2731,7 @@ export function GestionUsuariosRutas() {
       </div>
 
       <Tabs defaultValue="usuarios" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-6 h-9">
+        <TabsList className="grid w-full grid-cols-7 h-9">
           <TabsTrigger value="usuarios" className="gap-1 text-xs">
             <Users className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Usuarios</span>
@@ -2503,6 +2743,10 @@ export function GestionUsuariosRutas() {
           <TabsTrigger value="asignaciones" className="gap-1 text-xs">
             <Link2 className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Asignaciones</span>
+          </TabsTrigger>
+          <TabsTrigger value="gerentes" className="gap-1 text-xs">
+            <Users className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Gerentes</span>
           </TabsTrigger>
           <TabsTrigger value="permisos" className="gap-1 text-xs">
             <Shield className="h-3.5 w-3.5" />
@@ -2526,6 +2770,9 @@ export function GestionUsuariosRutas() {
         </TabsContent>
         <TabsContent value="asignaciones">
           <AsignacionesTab />
+        </TabsContent>
+        <TabsContent value="gerentes">
+          <GerentesTab />
         </TabsContent>
         <TabsContent value="permisos">
           <PermisosTab />

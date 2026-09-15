@@ -77,6 +77,7 @@ const navGroups: NavGroup[] = [
       { id: "configure-route",        label: "Ordenar Ruta",       icon: MapPin,          colorClass: "sidebar-item-route"    },
       { id: "admin-reportes",         label: "Rep. diarios",       icon: FileText,        colorClass: "sidebar-item-secretary"},
       { id: "reporte-administrador",  label: "Reporte Admin",      icon: BarChart3,       colorClass: "sidebar-item-secretary"},
+      { id: "reporte-gerencial",      label: "Reporte Gerencial",  icon: BarChart2,       colorClass: "sidebar-item-secretary"},
     ],
   },
   {

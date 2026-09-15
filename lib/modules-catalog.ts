@@ -139,6 +139,18 @@ export const ALL_MODULES: ModuleDefinition[] = [
     group: "Administrador",
   },
   {
+    viewId: "reporte-gerencial",
+    label: "Reporte Gerencial",
+    mobileLabel: "Rep. Gerencial",
+    description: "Cuantas unidades cerro cada administrador en cada banda de recaudo",
+    // El GERENTE es el destinatario; admin y secretaria tambien, que son
+    // quienes arman y revisan la operacion.
+    defaultRoles: ["gerencia", "gerente", "admin", "administrador", "secretaria", "secretario"],
+    defaultMobileNavRoles: [],
+    iconName: "BarChart2",
+    group: "Administrador",
+  },
+  {
     viewId: "configure-route",
     label: "Ordenar Ruta",
     mobileLabel: "Ordenar",
