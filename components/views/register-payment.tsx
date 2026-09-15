@@ -393,6 +393,15 @@ type ManagedClient = DisplayClient & {
 // la necesita (para dejar la ubicacion de referencia del cliente) y ahi mismo
 // esta la regla de la geocerca.
 
+/**
+ * EL ANCHO DE CUOTA · PAGADO · SALDO en el extracto.
+ *
+ * Las tres se reparten lo que sobra despues de la fecha, en partes iguales.
+ * Va como constante para que no se desincronicen: si una llevara otro valor,
+ * las columnas volverian a quedar descuadradas entre si.
+ */
+const COL_EXTRACTO = "calc((100% - 54px) / 3)"
+
 export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = "", rutaActivaEstado, rutaActivaResolved = true, onRouteStateChange, fechaGestion }: RegisterPaymentProps) {
   const { toast } = useToast()
 
@@ -5340,22 +5349,28 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               <table className="w-full table-fixed">
                 <thead className="sticky top-0 bg-muted">
                   <tr className="text-[10px] md:text-xs text-muted-foreground">
-                    <th className="w-[74px] px-2 py-1.5 text-left font-semibold">Fecha</th>
-                    {/* CUOTA · PAGADO · SALDO SE REPARTEN LO MISMO.
-                        Antes cada una llevaba su propio ancho —Cuota sin
-                        ninguno, Pagado 70px, Saldo 74px— y su propia
-                        alineación, así que las tres columnas quedaban
-                        descuadradas entre sí. Con `w-1/4` y las tres
-                        centradas, el bloque se lee como una tabla pareja.
-                        La fecha conserva su ancho fijo: es la única de texto
-                        y no compite por el espacio. */}
-                    <th className="w-1/4 px-1 py-1.5 text-center font-semibold">Cuota</th>
-                    <th className="w-1/4 px-1 py-1.5 text-center font-semibold">Pagado</th>
+                    {/* LA FECHA SE QUEDA CON LO JUSTO, no con un cuarto.
+                        Con `w-1/4` en las otras tres, la fecha se llevaba
+                        tambien 90px de 360 para un texto de 27px: sobraban 55
+                        de aire a su derecha que empujaban TODO el bloque de
+                        cifras hacia la izquierda. Medido en el navegador.
+
+                        Ahora lleva 54px —lo que ocupa "12/09" con su padding—
+                        y las tres columnas de plata se reparten el resto en
+                        partes iguales. El ancho va por `style` y no por clase
+                        de Tailwind: `w-[54px]` no se compila si esa clase no
+                        existe en otra parte del proyecto, y quedaba sin
+                        efecto. Comprobado a 340, 390 y 480px: las tres dan
+                        exactamente el mismo ancho y el texto queda centrado
+                        al pixel. */}
+                    <th style={{ width: "54px" }} className="px-1 py-1.5 text-left font-semibold">Fecha</th>
+                    <th style={{ width: COL_EXTRACTO }} className="px-1 py-1.5 text-center font-semibold">Cuota</th>
+                    <th style={{ width: COL_EXTRACTO }} className="px-1 py-1.5 text-center font-semibold">Pagado</th>
                     {/* SALDO, no "Valor". La columna mostraba el valor de la
                         CUOTA: el mismo número en todos los renglones, que no
                         dice nada. Ahora dice con cuánto quedó el cliente
                         después de ese abono, que es lo que viene a preguntar. */}
-                    <th className="w-1/4 px-1 py-1.5 text-center font-semibold">Saldo</th>
+                    <th style={{ width: COL_EXTRACTO }} className="px-1 py-1.5 text-center font-semibold">Saldo</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -5369,7 +5384,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                         <td className="px-2 py-1.5 text-[10px] md:text-xs tabular-nums whitespace-nowrap">
                           {fechaCorta(m.fecha)}
                         </td>
-                        <td className={`w-1/4 px-1 py-1.5 text-center text-[10px] md:text-xs truncate ${
+                        <td className={`px-1 py-1.5 text-center text-[10px] md:text-xs truncate ${
                           esNoPago ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
                         }`}>
                           {/* SIN LA PALABRA "No pago": el $0 de la columna
@@ -5380,7 +5395,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                             ? m.numeroCuota
                             : ETIQUETA_MOVIMIENTO[m.tipo]}
                         </td>
-                        <td className={`w-1/4 px-1 py-1.5 text-center text-[10px] md:text-xs font-semibold tabular-nums ${
+                        <td className={`px-1 py-1.5 text-center text-[10px] md:text-xs font-semibold tabular-nums ${
                           esNoPago ? "text-red-600 dark:text-red-400" : ""
                         }`}>
                           {/* UN NO PAGO DICE $0, no una raya. Mezclar un
@@ -5388,7 +5403,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                               traducir; "$0" se suma de un vistazo. */}
                           {`$${Math.round(m.pagado).toLocaleString("es-CO")}`}
                         </td>
-                        <td className="w-1/4 px-1 py-1.5 text-center text-[10px] md:text-xs tabular-nums text-muted-foreground">
+                        <td className="px-1 py-1.5 text-center text-[10px] md:text-xs tabular-nums text-muted-foreground">
                           {m.saldoDespues !== null ? `$${Math.round(m.saldoDespues).toLocaleString("es-CO")}` : "—"}
                         </td>
                       </tr>

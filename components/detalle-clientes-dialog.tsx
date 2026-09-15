@@ -114,10 +114,20 @@ export function DetalleClientesDialog({
     )
   }, [filas, busqueda])
 
-  // En ventas y canceladas el total que importa es LO PRESTADO, que es la
-  // columna que se esta mirando. Sumar saldos ahi daria una cifra que no
-  // corresponde a ninguna columna de la tabla.
-  const saldoTotal = visibles.reduce((s, f) => s + (ocultarFicha ? f.valorVenta : f.saldo), 0)
+  // EL TOTAL SIGUE A LA COLUMNA QUE SE ESTA MIRANDO, no al modo de la tabla.
+  //
+  // Antes dependia de `ocultarFicha`, y eso amarraba dos cosas que no van
+  // juntas: en Canceladas —que ahora va con la ficha completa— habria sumado
+  // SALDOS, y un credito cancelado tiene saldo cero. El pie habria dicho $0
+  // debajo de una tabla llena de cifras.
+  //
+  // Con `mostrarValorVenta` el total suma lo PRESTADO, que es la columna
+  // "Valor" que la tabla esta mostrando. Sin ella, suma saldos.
+  const totalPorValorVenta = mostrarValorVenta || ocultarFicha
+  const saldoTotal = visibles.reduce(
+    (s, f) => s + (totalPorValorVenta ? f.valorVenta : f.saldo),
+    0,
+  )
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -312,7 +322,7 @@ export function DetalleClientesDialog({
               {busqueda && filas.length !== visibles.length && ` de ${filas.length}`}
             </span>
             <span className="font-semibold">
-              {ocultarFicha ? "Valor total " : "Saldo total "}
+              {totalPorValorVenta ? "Valor total " : "Saldo total "}
               {fmtMonedaCien(saldoTotal)}
             </span>
           </div>

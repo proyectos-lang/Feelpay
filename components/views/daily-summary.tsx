@@ -446,11 +446,20 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
       const ids = ((fin ?? []) as { loan_id: string; saldo: number | null }[])
         .filter((f) => Number(f.saldo ?? 0) <= 0)
         .map((f) => f.loan_id)
+      // CANCELADAS VA CON LA FICHA COMPLETA, como el resto de los ojitos.
+      //
+      // Antes iba con `ocultarFicha`, que deja la tabla en DOS columnas
+      // —nombre y frecuencia— porque se pensó para Ventas: ahí la pregunta es
+      // "qué se vendió hoy y por cuánto", y la ficha del crédito estorba.
+      //
+      // En una cancelación la pregunta es otra: QUIÉN TERMINÓ DE PAGAR y cómo
+      // le fue. Con la ficha se ve la fecha de venta, el %, en cuántas cuotas
+      // lo pagó y su último pago — que es lo mismo que muestra Pagos, No pagos
+      // y Pendientes. Se pidió "el mismo formato del resto del módulo".
       abrirDetalle("Créditos cancelados hoy", ids, {
         subtitulo: `${ids.length} ${ids.length === 1 ? "crédito quedó" : "créditos quedaron"} en cero`,
-        ocultarFicha: true,
-        // El valor prestado, igual que en Ventas: sin esto la tabla se quedaba
-        // con dos columnas y sin ninguna cifra.
+        // El valor prestado se conserva: en una cancelación es justo lo que se
+        // quiere comparar contra lo que acabó de pagar.
         mostrarValorVenta: true,
       })
     } catch (err) {
