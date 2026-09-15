@@ -477,16 +477,61 @@ export function NewLoan({
   const [telefonoError, setTelefonoError] = useState("")
   const [telefono2Error, setTelefono2Error] = useState("")
 
-  // Phone digits required per country
+  /**
+   * CUANTOS DIGITOS TIENE UN CELULAR EN CADA PAIS.
+   *
+   * Los cinco de la operacion, como se pidieron:
+   *
+   *   Argentina  11      Colombia  10      Ecuador  10
+   *   Brasil     10      Paraguay  10
+   *
+   * Los demas quedan de antes. La clave va en MINUSCULAS porque en la base
+   * conviven "Argentina" y "ARGENTINA" —se comprobo: 4 rutas con una forma y
+   * 2 con la otra— y la busqueda normaliza antes de mirar.
+   */
   const phoneDigitsByCountry: Record<string, number> = {
+    argentina: 11,
     colombia: 10,
-    argentina: 10,
-    ecuador: 9,
+    ecuador: 10,
+    brasil: 10,
+    brazil: 10,
+    paraguay: 10,
     peru: 9,
     perú: 9,
     chile: 9,
-    brasil: 9,
-    brazil: 9,
+  }
+
+  /**
+   * CUANDO EL CAMPO `pais` DE LA RUTA NO ES UN PAIS.
+   *
+   * La ruta 204 tiene "BUENOS AIRES" —una ciudad— en la columna del pais. Sin
+   * esto caeria al valor por defecto de 10 digitos, cuando en Argentina son
+   * 11, y el vendedor no podria registrar un celular valido.
+   *
+   * Se resuelve aca y no arreglando el dato porque el dato lo escribe quien
+   * crea la unidad: manana puede aparecer otra ciudad. Corregir la ruta 204 en
+   * la configuracion sigue siendo lo ideal; esto es la red debajo.
+   */
+  const CIUDADES_A_PAIS: Record<string, string> = {
+    "buenos aires": "argentina",
+    "la plata": "argentina",
+    chaco: "argentina",
+    rosario: "argentina",
+    cordoba: "argentina",
+    "córdoba": "argentina",
+    quito: "ecuador",
+    guayaquil: "ecuador",
+    cuenca: "ecuador",
+    ibarra: "ecuador",
+    riobamba: "ecuador",
+    rioamba: "ecuador",
+    asuncion: "paraguay",
+    "asunción": "paraguay",
+    cali: "colombia",
+    bogota: "colombia",
+    "bogotá": "colombia",
+    medellin: "colombia",
+    "medellín": "colombia",
   }
 
   /**
@@ -506,6 +551,7 @@ export function NewLoan({
     { codigo: "+57", pais: "Colombia" },
     { codigo: "+54", pais: "Argentina" },
     { codigo: "+593", pais: "Ecuador" },
+    { codigo: "+595", pais: "Paraguay" },
     { codigo: "+51", pais: "Perú" },
     { codigo: "+56", pais: "Chile" },
     { codigo: "+58", pais: "Venezuela" },
@@ -519,6 +565,7 @@ export function NewLoan({
     colombia: "+57",
     argentina: "+54",
     ecuador: "+593",
+    paraguay: "+595",
     peru: "+51",
     perú: "+51",
     chile: "+56",
@@ -527,12 +574,22 @@ export function NewLoan({
     brazil: "+55",
   }
 
-  const requiredPhoneDigits = phoneDigitsByCountry[rutaPais.toLowerCase()] ?? 10
+  // Se busca por el pais tal cual; si lo que hay es una ciudad, se traduce
+  // antes de rendirse al valor por defecto.
+  const paisNormalizado = rutaPais.trim().toLowerCase()
+  const requiredPhoneDigits =
+    phoneDigitsByCountry[paisNormalizado] ??
+    phoneDigitsByCountry[CIUDADES_A_PAIS[paisNormalizado] ?? ""] ??
+    10
 
   // El indicativo arranca en el del pais de la ruta. Se hace en un efecto y
   // no al crear el estado porque `rutaPais` llega despues del primer render.
   useEffect(() => {
-    const porDefecto = indicativoPorPais[rutaPais.toLowerCase()]
+    // Misma traduccion de ciudad a pais que los digitos: si no, la ruta 204
+    // ("BUENOS AIRES") se quedaria sin indicativo por defecto.
+    const clave = rutaPais.trim().toLowerCase()
+    const porDefecto =
+      indicativoPorPais[clave] ?? indicativoPorPais[CIUDADES_A_PAIS[clave] ?? ""]
     if (porDefecto) setIndicativo(porDefecto)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rutaPais])
