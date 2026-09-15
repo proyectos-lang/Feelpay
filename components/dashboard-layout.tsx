@@ -65,6 +65,7 @@ export function DashboardLayout({
       "auth-codes": "Generar Códigos de Autorización",
       "general-config": "Configuración General",
       "admin-route-monitor": "Monitoreo de Rutas",
+      "reporte-administrador": "Reporte del Administrador",
       "admin-dashboard": "Dashboard Administrador",
       "admin-route-detail": "Detalle de Rutas",
       "secretary-reports": "Reportes",

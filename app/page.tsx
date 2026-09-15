@@ -38,6 +38,7 @@ import { ConfigItems } from "@/components/views/config-items"
 import { AuthCodes } from "@/components/views/auth-codes"
 import { GeneralConfig } from "@/components/views/general-config"
 import { ConfigureRoute } from "@/components/views/configure-route"
+import { ReporteAdministrador } from "@/components/views/reporte-administrador"
 import { CierreCaja } from "@/components/views/cierre-caja"
 import { AdminRouteMonitor } from "@/components/views/admin-route-monitor"
 import { AdminDashboard } from "@/components/views/admin-dashboard"
@@ -1402,6 +1403,8 @@ export default function Page() {
         )
       case "daily-route":
         return <DailyRoute />
+      case "reporte-administrador":
+        return <ReporteAdministrador />
       case "configure-route":
         return <ConfigureRoute currentRutaId={rutaId} />
       case "register-payment":

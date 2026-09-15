@@ -126,6 +126,19 @@ export const ALL_MODULES: ModuleDefinition[] = [
     group: "Administrador",
   },
   {
+    viewId: "reporte-administrador",
+    label: "Reporte del Administrador",
+    mobileLabel: "Rep. Admin",
+    description: "Una línea por ruta y por día: pretendido, cobrado, canceladas y gastos",
+    // Admin Y secretaria: se pidio que "un administrador o secretaria pueda
+    // ver". No entra a la barra inferior del movil — son cinco lugares y ya
+    // estan ocupados por lo que se usa todo el dia.
+    defaultRoles: ["admin", "administrador", "secretaria", "secretario"],
+    defaultMobileNavRoles: [],
+    iconName: "BarChart3",
+    group: "Administrador",
+  },
+  {
     viewId: "configure-route",
     label: "Ordenar Ruta",
     mobileLabel: "Ordenar",
