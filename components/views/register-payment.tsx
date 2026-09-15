@@ -2351,19 +2351,21 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         }`,
       },
       { label: "Valor prestado", valor: money(c.valorVenta) },
-      { label: "Interés", valor: `${c.tasaInteres ?? 0}%` },
+      // EL % DE INTERES NO VA EN EL COMPROBANTE DEL CLIENTE.
+      //
+      // Lo que el cliente necesita para cuadrar su deuda esta completo sin el:
+      // cuanto le prestaron, cuanto debe en total, de a cuanto es la cuota,
+      // cuanto lleva abonado y cuanto le falta. La tasa no le cambia ninguno
+      // de esos numeros — ya viene incorporada en el total a pagar — y en la
+      // calle solo abre discusiones que no son del cobrador.
+      //
+      // OJO: sigue estando en la APP. Se ve en el extracto en pantalla, en
+      // Auditoria 360 y en el detalle de clientes, que es donde tiene que
+      // estar. Lo unico que se quita es del PNG que se comparte por WhatsApp.
       { label: "Total a pagar", valor: money(c.totalAPagar) },
       { label: "Valor de cuota", valor: money(c.valorCuota) },
       { label: "Cuotas", valor: `${cuotasConDecimal(c.abonado, c.valorCuota, c.cuotasTotales)}/${c.cuotasTotales}` },
       { label: "Abonado", valor: money(c.abonado) },
-      // Saldo y Estado van destacados, que es como se ven en la app: son las
-      // dos cosas por las que se abre el extracto.
-      { label: "Saldo", valor: money(c.saldo), destacado: true },
-      {
-        label: "Estado",
-        valor: c.mora > 0 ? `Mora: ${etiquetaMora(c.mora)}` : "Al día",
-        destacado: true,
-      },
     ]
     // Igual que en pantalla: si no hay multa, no hay renglón que diga "$0".
     if (c.multaPendiente) {
@@ -2375,6 +2377,30 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         valor: `${fechaCorta(c.ultimoPagoFecha)}${c.ultimoPago > 0 ? `  ${money(c.ultimoPago)}` : ""}`,
       })
     }
+
+    // SALDO Y ESTADO, AL FINAL Y JUNTOS.
+    //
+    // La rejilla llena de a DOS por renglón en el orden de la lista, así que
+    // un número impar de filas deja un hueco al final — y el hueco siempre
+    // cae en el último dato. Estos dos van destacados y son por lo que el
+    // cliente abre el extracto: separarlos, o dejar a Estado solo en el
+    // último renglón, es justo lo que no puede pasar.
+    //
+    // Antes quedaban juntos por casualidad: la lista daba par. Al quitar el
+    // interés quedó impar, y las filas condicionales de arriba (multa, último
+    // pago) ya podían romper la pareja según el cliente. Poniéndolos de
+    // últimos y rellenando a par abajo, quedan siempre en el mismo renglón.
+    if (filasCredito.length % 2 !== 0) {
+      filasCredito.push({ label: "", valor: "" })
+    }
+    filasCredito.push(
+      { label: "Saldo", valor: money(c.saldo), destacado: true },
+      {
+        label: "Estado",
+        valor: c.mora > 0 ? `Mora: ${etiquetaMora(c.mora)}` : "Al día",
+        destacado: true,
+      },
+    )
 
     const secciones: SeccionComprobante[] = [
       { titulo: "El crédito", filas: filasCredito, formato: "rejilla" },
