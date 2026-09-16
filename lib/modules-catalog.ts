@@ -155,10 +155,12 @@ export const ALL_MODULES: ModuleDefinition[] = [
     label: "Descargar Informe",
     mobileLabel: "Informe",
     description: "El Excel de seis hojas: pagos, no pagos, ventas, gastos, ingresos y resumen",
-    // Se pidio para las SECRETARIAS. Admin tambien: es quien lo revisa.
+    // Se pidio para las SECRETARIAS, y en el menu vive en SU grupo. El admin
+    // tambien lo ve: es quien lo revisa. El rol es lo que manda la
+    // visibilidad (ver sidebar.tsx); el grupo es solo bajo que titulo sale.
     defaultRoles: ["secretaria", "secretario", "admin", "administrador"],
     defaultMobileNavRoles: [],
-    iconName: "FileText",
+    iconName: "FileSpreadsheet",
     group: "Secretaria",
   },
   {

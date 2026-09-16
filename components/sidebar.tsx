@@ -30,6 +30,7 @@ import {
   FolderOpen,
   SlidersHorizontal,
   ScanSearch,
+  FileSpreadsheet,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -78,7 +79,6 @@ const navGroups: NavGroup[] = [
       { id: "admin-reportes",         label: "Rep. diarios",       icon: FileText,        colorClass: "sidebar-item-secretary"},
       { id: "reporte-administrador",  label: "Reporte Admin",      icon: BarChart3,       colorClass: "sidebar-item-secretary"},
       { id: "reporte-gerencial",      label: "Reporte Gerencial",  icon: BarChart2,       colorClass: "sidebar-item-secretary"},
-      { id: "descargar-informe",      label: "Descargar Informe",  icon: FileText,        colorClass: "sidebar-item-secretary"},
     ],
   },
   {
@@ -93,6 +93,7 @@ const navGroups: NavGroup[] = [
       { id: "sale-editor",               label: "Control Total",   icon: SlidersHorizontal, colorClass: "sidebar-item-payment" },
       { id: "loan-audit",                label: "Auditoría 360",   icon: ScanSearch,    colorClass: "sidebar-item-summary"   },
       { id: "secretary-reports",         label: "Reportes",        icon: FileText,    colorClass: "sidebar-item-secretary" },
+      { id: "descargar-informe",         label: "Descargar Informe", icon: FileSpreadsheet, colorClass: "sidebar-item-secretary" },
       { id: "secretary-admin-reportes",  label: "Rep. Admin",      icon: FileText,    colorClass: "sidebar-item-clients"   },
       { id: "user-route-management",     label: "Usuarios/Rutas",  icon: Users,       colorClass: "sidebar-item-clients"   },
       { id: "reportes-bi",               label: "Power BI",        icon: BarChart2,   colorClass: "sidebar-item-summary"   },
