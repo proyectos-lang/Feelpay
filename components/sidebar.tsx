@@ -78,6 +78,7 @@ const navGroups: NavGroup[] = [
       { id: "admin-reportes",         label: "Rep. diarios",       icon: FileText,        colorClass: "sidebar-item-secretary"},
       { id: "reporte-administrador",  label: "Reporte Admin",      icon: BarChart3,       colorClass: "sidebar-item-secretary"},
       { id: "reporte-gerencial",      label: "Reporte Gerencial",  icon: BarChart2,       colorClass: "sidebar-item-secretary"},
+      { id: "descargar-informe",      label: "Descargar Informe",  icon: FileText,        colorClass: "sidebar-item-secretary"},
     ],
   },
   {

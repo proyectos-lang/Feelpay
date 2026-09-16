@@ -151,6 +151,17 @@ export const ALL_MODULES: ModuleDefinition[] = [
     group: "Administrador",
   },
   {
+    viewId: "descargar-informe",
+    label: "Descargar Informe",
+    mobileLabel: "Informe",
+    description: "El Excel de seis hojas: pagos, no pagos, ventas, gastos, ingresos y resumen",
+    // Se pidio para las SECRETARIAS. Admin tambien: es quien lo revisa.
+    defaultRoles: ["secretaria", "secretario", "admin", "administrador"],
+    defaultMobileNavRoles: [],
+    iconName: "FileText",
+    group: "Secretaria",
+  },
+  {
     viewId: "configure-route",
     label: "Ordenar Ruta",
     mobileLabel: "Ordenar",

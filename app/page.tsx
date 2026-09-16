@@ -40,6 +40,7 @@ import { GeneralConfig } from "@/components/views/general-config"
 import { ConfigureRoute } from "@/components/views/configure-route"
 import { ReporteAdministrador } from "@/components/views/reporte-administrador"
 import { ReporteGerencial } from "@/components/views/reporte-gerencial"
+import { DescargarInforme } from "@/components/views/descargar-informe"
 import { CierreCaja } from "@/components/views/cierre-caja"
 import { AdminRouteMonitor } from "@/components/views/admin-route-monitor"
 import { AdminDashboard } from "@/components/views/admin-dashboard"
@@ -1408,6 +1409,8 @@ export default function Page() {
         return <ReporteAdministrador />
       case "reporte-gerencial":
         return <ReporteGerencial />
+      case "descargar-informe":
+        return <DescargarInforme />
       case "configure-route":
         return <ConfigureRoute currentRutaId={rutaId} />
       case "register-payment":

@@ -67,6 +67,7 @@ export function DashboardLayout({
       "admin-route-monitor": "Monitoreo de Rutas",
       "reporte-administrador": "Reporte del Administrador",
       "reporte-gerencial": "Reporte Gerencial",
+      "descargar-informe": "Descargar Informe",
       "admin-dashboard": "Dashboard Administrador",
       "admin-route-detail": "Detalle de Rutas",
       "secretary-reports": "Reportes",
