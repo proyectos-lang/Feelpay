@@ -41,7 +41,13 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AlertTriangle, BarChart2, Download, RefreshCw } from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { AlertTriangle, BarChart2, Download, Eye, RefreshCw } from "lucide-react"
 import { getSupabaseSafe } from "@/lib/api-helper"
 import { todayColombia } from "@/lib/colombia-date"
 import { useToast } from "@/hooks/use-toast"
@@ -55,17 +61,48 @@ import { useToast } from "@/hooks/use-toast"
  * en ninguna y la suma de las tres no daría el total de unidades.
  */
 const BANDAS = [
-  { id: "baja", etiqueta: "% 0-49", min: 0, max: 49 },
-  { id: "media", etiqueta: "% 49-60", min: 49, max: 60 },
-  { id: "alta", etiqueta: "% 60-100", min: 60, max: Infinity },
+  { id: "baja", etiqueta: "0-49", min: 0, max: 49 },
+  { id: "media", etiqueta: "49-60", min: 49, max: 60 },
+  { id: "alta", etiqueta: "60-100", min: 60, max: Infinity },
 ] as const
 
 type BandaId = (typeof BANDAS)[number]["id"]
+
+/**
+ * LA PRIMERA COLUMNA VA PEGADA.
+ *
+ * Con el teléfono en la mano la tabla no cabe entera, y al desplazarse hacia
+ * las bandas el nombre del administrador se salía de pantalla: se quedaba uno
+ * mirando cuatro números sin saber de quién eran. Pegada, el nombre siempre
+ * está a la vista.
+ *
+ * El FONDO OPACO no es decoración: una celda `sticky` sin fondo deja ver por
+ * debajo las columnas que pasan, y el texto se monta encima ilegible. Por eso
+ * cada fila le pasa el suyo, que es el mismo que el de la fila.
+ */
+const PEGADA = "sticky left-0 z-10 border px-2 py-1"
+
+/** El color de cada banda, en un solo sitio: rojo, ámbar, verde. */
+const TONO: Record<BandaId, string> = {
+  baja: "bg-red-600 text-white",
+  media: "bg-amber-400 text-black",
+  alta: "bg-green-600 text-white",
+}
 
 function bandaDe(pct: number): BandaId {
   if (pct < 49) return "baja"
   if (pct < 60) return "media"
   return "alta"
+}
+
+/** Una unidad dentro de una banda, que es lo que muestra el ojito. */
+interface UnidadEnBanda {
+  ruta: number
+  nombre: string
+  /** null cuando la unidad no tenía meta: no se le puede sacar porcentaje. */
+  pct: number | null
+  meta: number
+  cobrado: number
 }
 
 /** Un administrador dentro de un país. */
@@ -80,6 +117,14 @@ interface FilaAdmin {
   sinMeta: number
   gastos: number
   unidades: number
+  /**
+   * QUE unidades hay detrás de cada número.
+   *
+   * Se llenan en el MISMO bucle que suma los contadores, no con una consulta
+   * aparte: así la lista del ojito y el número de la celda no pueden
+   * discrepar nunca. Es la misma regla que se siguió en el Informe Recaudo.
+   */
+  detalle: Record<BandaId | "sinMeta", UnidadEnBanda[]>
 }
 
 function fmt(n: number): string {
@@ -96,6 +141,12 @@ export function ReporteGerencial() {
   const [huerfanas, setHuerfanas] = useState<{ ruta: number; nombre: string }[]>([])
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** Lo que muestra el ojito: de quién, de qué banda y qué unidades. */
+  const [detalle, setDetalle] = useState<{
+    titulo: string
+    subtitulo: string
+    unidades: UnidadEnBanda[]
+  } | null>(null)
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -228,12 +279,26 @@ export function ReporteGerencial() {
               sinMeta: 0,
               gastos: 0,
               unidades: 0,
+              detalle: { baja: [], media: [], alta: [], sinMeta: [] },
             }
             acumulado.set(clave, fila)
           }
 
-          if (pct === null) fila.sinMeta += 1
-          else fila[bandaDe(pct)] += 1
+          const unidad: UnidadEnBanda = {
+            ruta: rid,
+            nombre: rutas.get(rid)?.nombre ?? String(rid),
+            pct,
+            meta: v.meta,
+            cobrado: v.cobrado,
+          }
+          if (pct === null) {
+            fila.sinMeta += 1
+            fila.detalle.sinMeta.push(unidad)
+          } else {
+            const b = bandaDe(pct)
+            fila[b] += 1
+            fila.detalle[b].push(unidad)
+          }
           fila.gastos += v.gastos
           fila.unidades += 1
         }
@@ -301,11 +366,40 @@ export function ReporteGerencial() {
     toast({ title: "Reporte descargado", description: `${filas.length} administradores.` })
   }
 
-  const celda = (n: number, tono: string) => (
-    <td className={`border px-2 py-1 text-center font-bold tabular-nums ${n > 0 ? tono : ""}`}>
-      {n}
+  /**
+   * Una celda de conteo.
+   *
+   * Con cero no se pone ojito: no hay nada que listar y un botón muerto
+   * invita a tocarlo. Con uno o más, toda la celda es el botón —en un
+   * teléfono un ícono de 12px al lado del número no se acierta—.
+   */
+  const celda = (
+    n: number,
+    tono: string,
+    ver?: { titulo: string; subtitulo: string; unidades: UnidadEnBanda[] },
+  ) => (
+    <td
+      className={`border px-1 py-1 text-center font-bold tabular-nums ${n > 0 ? tono : ""}`}
+    >
+      {n > 0 && ver ? (
+        <button
+          type="button"
+          onClick={() => setDetalle(ver)}
+          title={`Ver las ${n} unidades`}
+          className="inline-flex w-full items-center justify-center gap-0.5 rounded hover:underline"
+        >
+          {n}
+          <Eye className="h-3 w-3 shrink-0 opacity-70" />
+        </button>
+      ) : (
+        n
+      )}
     </td>
   )
+
+  /** Junta el detalle de varias filas, para los TOTAL y el GRAN TOTAL. */
+  const juntar = (lista: FilaAdmin[], banda: BandaId) =>
+    lista.flatMap((f) => f.detalle[banda])
 
   return (
     <div className="space-y-3">
@@ -425,8 +519,23 @@ export function ReporteGerencial() {
       {!cargando && !error && filas.length > 0 && (
         <Card>
           <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[520px] border-collapse text-[11px]">
+            {/* `relative` para que la columna pegada se ancle a este marco y no
+                al viewport, que la dejaría flotando sobre los filtros. */}
+            <div className="relative overflow-x-auto">
+              {/* Baja de 520 a 360: las tres bandas y Gastos caben en un
+                  teléfono. Antes el ancho mínimo obligaba a desplazar SIEMPRE,
+                  aunque la pantalla diera de sobra. */}
+              <table className="w-full min-w-[318px] table-fixed border-collapse text-[11px]">
+                {/* Los anchos se reparten al tamaño del título: los conteos son
+                    de uno o dos dígitos y no necesitan más, así que lo que
+                    sobra se lo queda el nombre del administrador. */}
+                <colgroup>
+                  <col />
+                  <col style={{ width: "38px" }} />
+                  <col style={{ width: "42px" }} />
+                  <col style={{ width: "46px" }} />
+                  <col style={{ width: "78px" }} />
+                </colgroup>
                 <tbody>
                   {porPais.map(([pais, lista]) => {
                     const sub = {
@@ -434,7 +543,7 @@ export function ReporteGerencial() {
                       media: lista.reduce((s, f) => s + f.media, 0),
                       alta: lista.reduce((s, f) => s + f.alta, 0),
                       gastos: lista.reduce((s, f) => s + f.gastos, 0),
-                    }
+                    } as Record<BandaId | "gastos", number>
                     return (
                       <>
                         {/* El país como banda, igual que en la planilla */}
@@ -447,41 +556,63 @@ export function ReporteGerencial() {
                           </td>
                         </tr>
                         <tr key={`h-${pais}`} className="bg-muted text-muted-foreground">
-                          <th className="border px-2 py-1 text-left font-semibold">Administrador</th>
+                          <th className={`${PEGADA} bg-muted text-left font-semibold`}>Administrador</th>
                           {BANDAS.map((b) => (
-                            <th key={b.id} className="border px-2 py-1 text-center font-semibold">
+                            <th
+                              key={b.id}
+                              className="whitespace-nowrap border px-1 py-1 text-center text-[10px] font-semibold"
+                            >
                               {b.etiqueta}
                             </th>
                           ))}
-                          <th className="border px-2 py-1 text-right font-semibold">Gastos</th>
+                          <th className="border px-1 py-1 text-right font-semibold">Gastos</th>
                         </tr>
                         {lista.map((f) => (
                           <tr key={`${pais}-${f.adminId}`} className="hover:bg-muted/40">
-                            <td className="border px-2 py-1" title={`${f.unidades} unidades`}>
+                            <td
+                              className={`${PEGADA} bg-background`}
+                              title={`${f.nombre} · ${f.unidades} unidades`}
+                            >
                               {f.nombre}
                               {f.sinMeta > 0 && (
-                                <span
-                                  className="ml-1 text-[10px] text-muted-foreground"
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setDetalle({
+                                      titulo: f.nombre,
+                                      subtitulo: `Sin meta en el rango · ${pais}`,
+                                      unidades: f.detalle.sinMeta,
+                                    })
+                                  }
+                                  className="ml-1 text-[10px] text-muted-foreground underline decoration-dotted"
                                   title="Unidades sin meta ese día: no se les puede sacar porcentaje"
                                 >
                                   ({f.sinMeta} sin meta)
-                                </span>
+                                </button>
                               )}
                             </td>
-                            {celda(f.baja, "bg-red-600 text-white")}
-                            {celda(f.media, "bg-amber-400 text-black")}
-                            {celda(f.alta, "bg-green-600 text-white")}
-                            <td className="border px-2 py-1 text-right tabular-nums">
+                            {BANDAS.map((b) =>
+                              celda(f[b.id], TONO[b.id], {
+                                titulo: f.nombre,
+                                subtitulo: `${b.etiqueta}% de recaudo · ${pais}`,
+                                unidades: f.detalle[b.id],
+                              }),
+                            )}
+                            <td className="whitespace-nowrap border px-1 py-1 text-right text-[10px] tabular-nums">
                               {f.gastos > 0 ? `$ ${fmt(f.gastos)}` : "$ —"}
                             </td>
                           </tr>
                         ))}
                         <tr key={`t-${pais}`} className="bg-muted font-bold">
-                          <td className="border px-2 py-1">TOTAL</td>
-                          {celda(sub.baja, "bg-red-600 text-white")}
-                          {celda(sub.media, "bg-amber-400 text-black")}
-                          {celda(sub.alta, "bg-green-600 text-white")}
-                          <td className="border px-2 py-1 text-right tabular-nums">
+                          <td className={`${PEGADA} bg-muted`}>TOTAL</td>
+                          {BANDAS.map((b) =>
+                            celda(sub[b.id], TONO[b.id], {
+                              titulo: `Total ${pais}`,
+                              subtitulo: `${b.etiqueta}% de recaudo`,
+                              unidades: juntar(lista, b.id),
+                            }),
+                          )}
+                          <td className="whitespace-nowrap border px-1 py-1 text-right text-[10px] tabular-nums">
                             {sub.gastos > 0 ? `$ ${fmt(sub.gastos)}` : "$ —"}
                           </td>
                         </tr>
@@ -490,11 +621,15 @@ export function ReporteGerencial() {
                   })}
 
                   <tr className="bg-slate-300 font-bold dark:bg-slate-600">
-                    <td className="border px-2 py-1.5">GRAN TOTAL</td>
-                    {celda(granTotal.baja, "bg-red-600 text-white")}
-                    {celda(granTotal.media, "bg-amber-400 text-black")}
-                    {celda(granTotal.alta, "bg-green-600 text-white")}
-                    <td className="border px-2 py-1.5 text-right tabular-nums">
+                    <td className={`${PEGADA} bg-slate-300 py-1.5 dark:bg-slate-600`}>GRAN TOTAL</td>
+                    {BANDAS.map((b) =>
+                      celda(granTotal[b.id], TONO[b.id], {
+                        titulo: "Gran total",
+                        subtitulo: `${b.etiqueta}% de recaudo · todos los países`,
+                        unidades: juntar(filas, b.id),
+                      }),
+                    )}
+                    <td className="whitespace-nowrap border px-1 py-1.5 text-right text-[10px] tabular-nums">
                       {granTotal.gastos > 0 ? `$ ${fmt(granTotal.gastos)}` : "$ —"}
                     </td>
                   </tr>
@@ -512,6 +647,54 @@ export function ReporteGerencial() {
           </CardContent>
         </Card>
       )}
+
+      {/* ── El ojito: qué unidades hay detrás del número ──────────────────── */}
+      <Dialog open={detalle !== null} onOpenChange={(o) => !o && setDetalle(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm">
+              {detalle?.titulo}
+              <span className="block text-[11px] font-normal text-muted-foreground">
+                {detalle?.subtitulo}
+              </span>
+            </DialogTitle>
+          </DialogHeader>
+
+          {detalle && detalle.unidades.length === 0 ? (
+            <p className="py-6 text-center text-xs text-muted-foreground">
+              No hay unidades en este rango.
+            </p>
+          ) : (
+            <div className="max-h-[60vh] space-y-1 overflow-y-auto">
+              {/* Ordenadas por porcentaje: en una banda lo que se busca es
+                  quién está al borde de caer o de subir. */}
+              {[...(detalle?.unidades ?? [])]
+                .sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1))
+                .map((u) => (
+                  <div
+                    key={u.ruta}
+                    className="flex items-center justify-between gap-2 rounded border px-2 py-1.5 text-xs"
+                  >
+                    <span className="min-w-0 flex-1 truncate" title={u.nombre}>
+                      {u.nombre}
+                    </span>
+                    <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                      $ {fmt(u.cobrado)} / $ {fmt(u.meta)}
+                    </span>
+                    <span className="w-10 shrink-0 text-right font-bold tabular-nums">
+                      {u.pct === null ? "—" : `${u.pct}%`}
+                    </span>
+                  </div>
+                ))}
+            </div>
+          )}
+
+          <p className="border-t pt-2 text-[11px] text-muted-foreground">
+            {detalle?.unidades.length ?? 0}{" "}
+            {detalle?.unidades.length === 1 ? "unidad" : "unidades"}
+          </p>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
