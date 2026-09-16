@@ -679,17 +679,13 @@ export function ChatView({ currentUser, onUnreadChange }: ChatViewProps) {
   const msgRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
   /**
-   * CUANTOS MENSAJES SIN LEER HABIA AL ABRIR LA CONVERSACION.
+   * ¿ES LA PRIMERA VEZ QUE SE PINTA ESTA CONVERSACION?
    *
-   * Se guarda en un ref y no en estado porque no pinta nada: solo sirve para
-   * decidir a donde saltar la primera vez que se dibujan los mensajes.
-   *
-   * Hay que capturarlo ANTES de `markAsRead`, que pone `last_read_at` en la
-   * hora actual y borra la unica pista de donde se habia quedado la persona.
-   * `null` = ya se uso (o no habia sin leer): a partir de ahi el hilo se
-   * comporta como siempre, bajando al fondo con cada mensaje nuevo.
+   * Solo decide COMO se baja al fondo: de golpe al abrir, con animacion
+   * cuando ya se esta conversando y entra un mensaje. Va en un ref porque no
+   * pinta nada y no debe provocar un render de mas.
    */
-  const sinLeerAlAbrir = useRef<number | null>(null)
+  const primeraPintadaRef = useRef(true)
 
   /**
    * El campo crece con el texto, hasta 120px.
@@ -1103,49 +1099,88 @@ export function ChatView({ currentUser, onUnreadChange }: ChatViewProps) {
   // ── Scroll al fondo cuando llegan mensajes ────────────────────────────────
 
   /**
-   * DONDE QUEDA EL HILO AL ABRIRLO.
+   * EL HILO SIEMPRE ABRE EN EL ULTIMO MENSAJE.
    *
-   * Antes bajaba SIEMPRE al fondo, asi que quien tenia diez mensajes sin leer
-   * aterrizaba debajo del ultimo y tenia que subir a buscar donde se habia
-   * quedado. Ahora, si habia mensajes sin leer, salta al PRIMERO de ellos y
-   * lo deja arriba de la pantalla: desde ahi se lee hacia abajo, en orden.
+   * Se intento saltar al primero SIN LEER, para no tener que subir a buscar
+   * donde uno se habia quedado. No sirvio: con muchos pendientes —y en este
+   * chat los hay de cientos— ese primero sin leer esta casi al principio del
+   * hilo, asi que abrir la conversacion se sentia como caer en el mensaje mas
+   * viejo. Se reporto tal cual: "cuando abro un chat me aparece siempre el
+   * primer mensaje".
    *
-   * Solo la primera vez. Despues —y cuando no habia nada sin leer— el hilo
-   * hace lo de siempre: seguir al fondo con cada mensaje que entra, que es lo
-   * que se espera mientras uno esta conversando.
+   * Lo ultimo es lo que importa: al abrir un chat uno quiere ver lo que le
+   * acaban de escribir. Si hace falta leer hacia atras, se sube — que es lo
+   * que hace cualquier chat.
+   *
+   * SIN `smooth` al abrir: la animacion recorre el hilo entero desde arriba y
+   * se ve como si arrancara en el primer mensaje, justo la impresion que se
+   * queria quitar. Salta directo, y solo anima cuando ya se esta conversando
+   * y entra un mensaje nuevo.
    */
   useEffect(() => {
     if (messages.length === 0) return
 
-    const pendientes = sinLeerAlAbrir.current
-    if (pendientes != null) {
-      // Se consume aunque no se encuentre el mensaje: si no, cada mensaje
-      // nuevo volveria a intentar el salto y el hilo no bajaria nunca.
-      sinLeerAlAbrir.current = null
+    // Primera pintada de esta conversacion: salto seco al fondo.
+    const recienAbierto = primeraPintadaRef.current
+    primeraPintadaRef.current = false
 
-      // El primero sin leer es el que esta `pendientes` posiciones antes del
-      // final. Si llegaron mas mensajes de los que cabian en la carga, se
-      // cae al mas viejo que haya.
-      const i = Math.max(0, messages.length - pendientes)
-      const primeroSinLeer = messages[i]
-      const el = primeroSinLeer ? msgRefs.current.get(primeroSinLeer.id) : null
-      if (el) {
-        el.scrollIntoView({ block: "start" })
-        return
-      }
+    // SE MUEVE EL CONTENEDOR, no se usa `scrollIntoView` sobre el ancla.
+    //
+    // El ancla del final es un `<div>` VACIO, de alto 0. `scrollIntoView`
+    // sobre un elemento sin alto no baja de forma fiable: medido en el
+    // navegador, el hilo se quedaba en scrollTop 0 con 8.855px por recorrer.
+    // Poner `scrollTop` al maximo si funciona, y no depende de como el
+    // navegador decida "traer a la vista" algo que no ocupa espacio.
+    const cont = messagesEndRef.current?.parentElement
+    const alFondo = () => {
+      if (!cont) return
+      if (recienAbierto) cont.scrollTop = cont.scrollHeight
+      else cont.scrollTo({ top: cont.scrollHeight, behavior: "smooth" })
     }
 
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    alFondo()
+
+    if (!recienAbierto) return
+
+    // ── POR QUE NO ALCANZA CON BAJAR UNA VEZ ──────────────────────────────
+    //
+    // Al abrir, el efecto corre cuando los mensajes ya estan en el DOM pero
+    // ANTES de que el navegador termine de acomodarlos: las imagenes no tienen
+    // alto todavia y las burbujas no han hecho su salto de linea definitivo.
+    // Se baja al fondo de ese momento y, cuando todo eso se acomoda, el hilo
+    // CRECE hacia abajo y el fondo se va mas lejos — el resultado es quedar
+    // arriba, que es justo lo que se reporto: "me aparece siempre el primer
+    // mensaje". Medido: el contenedor termina con 9.375px de contenido en una
+    // ventana de 520 y se quedaba en scrollTop 0.
+    //
+    // Por eso se vuelve a bajar despues de cada pintada, y otra vez cuando
+    // cada imagen termina de cargar. `ResizeObserver` avisa de lo primero sin
+    // tener que adivinar cuanto tarda.
+    if (!cont) return
+
+    const observador = new ResizeObserver(() => alFondo())
+    observador.observe(cont)
+
+    const imagenes = [...cont.querySelectorAll("img")].filter((im) => !im.complete)
+    for (const im of imagenes) im.addEventListener("load", alFondo, { once: true })
+
+    // Se deja de vigilar en cuanto el hilo se estabiliza: mas alla de eso, el
+    // usuario ya puede estar subiendo a leer y no se le puede arrastrar.
+    const parar = setTimeout(() => observador.disconnect(), 3000)
+
+    return () => {
+      clearTimeout(parar)
+      observador.disconnect()
+      for (const im of imagenes) im.removeEventListener("load", alFondo)
+    }
   }, [messages])
 
   // ── Seleccionar conversación ──────────────────────────────────────────────
 
   const selectConversation = (convId: string) => {
-    // ANTES de cargar nada: `loadMessages` llama a `markAsRead`, que pisa
-    // `last_read_at` y con eso se pierde donde se habia quedado la persona.
-    const conv = conversations.find((c) => c.conversation_id === convId)
-    const sinLeer = conv?.unread_count ?? 0
-    sinLeerAlAbrir.current = sinLeer > 0 ? sinLeer : null
+    // Conversacion nueva: la proxima pintada baja al fondo de golpe, sin
+    // animacion. Ver el efecto de scroll.
+    primeraPintadaRef.current = true
 
     setActiveConvId(convId)
     setShowThread(true)
