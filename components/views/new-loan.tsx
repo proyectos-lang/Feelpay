@@ -190,7 +190,7 @@ export function NewLoan({
   // busqueda nueva contra el servidor con su propio nombre.
   const [selectedClientLabel, setSelectedClientLabel] = useState("")
   const [clientPickerOpen, setClientPickerOpen] = useState(false)
-  const [clientOptions, setClientOptions] = useState<{ id: string; apodo: string; nombre_completo: string; tiene_prestamo_activo?: boolean }[]>([])
+  const [clientOptions, setClientOptions] = useState<{ id: string; apodo: string; nombre_completo: string; numero?: number | null; tiene_prestamo_activo?: boolean }[]>([])
   const [loadingClients, setLoadingClients] = useState(false)
   const [clientDropdownOpen, setClientDropdownOpen] = useState(false)
   // Cuando viene de una renovación ya hay cliente preseleccionado; desactivar
@@ -219,18 +219,60 @@ export function NewLoan({
 
         let query = supabase
           .from("clients")
-          .select("id, nombre_completo, apodo, documento, tiene_prestamo_activo")
+          .select("id, nombre_completo, apodo, documento, numero, tiene_prestamo_activo")
           .eq("ruta", rutaId)
-          .order("apodo", { ascending: true })
+          // EL ORDEN ES EL DEL NUMERO, que es como se pidio: el cliente se
+          // llama por su numero, asi que la lista tiene que ir en ese orden.
+          // `nullsFirst: false` por si algun cliente quedara sin numero: se
+          // va al final en vez de encabezar la lista. Ver scripts/117.
+          .order("numero", { ascending: true, nullsFirst: false })
 
         if (clientSearch.trim()) {
-          query = query.ilike("apodo", `%${clientSearch.trim()}%`)
+          const busca = clientSearch.trim()
+          // SI ESCRIBE UN NUMERO, BUSCA POR NUMERO. El numero existe para
+          // poder llamar al cliente por el —"el 14"—, asi que teclear 14
+          // tiene que llevar al 14. Es exacto a proposito: con `ilike` el 14
+          // traeria tambien el 140 y el 214, y el numero dejaria de servir
+          // para lo unico que se invento.
+          //
+          // Un apodo puede ser un numero ("911"), asi que no se descarta la
+          // busqueda por apodo: se piden las dos cosas con `or`.
+          query = /^\d+$/.test(busca)
+            ? query.or(`numero.eq.${busca},apodo.ilike.%${busca}%`)
+            : query.ilike("apodo", `%${busca}%`)
         }
         if (soloSinPrestamo) {
           query = query.eq("tiene_prestamo_activo", false)
         }
 
-        const { data, error } = await query
+        let { data, error } = await query
+
+        // ── SI TODAVIA NO SE CORRIO EL SCRIPT 117 ──────────────────────────
+        // `numero` es una columna nueva. Mientras no exista, PostgREST
+        // responde 42703 y la consulta entera falla: el selector se quedaria
+        // VACIO y no se podrian hacer ventas. Asi que se reintenta sin el
+        // numero, con el orden viejo por apodo.
+        //
+        // Esto no es un adorno defensivo: la app se despliega antes de que el
+        // dueño corra el script a mano, o sea que este camino SE VA A USAR.
+        if (error && (error.code === "42703" || /numero/i.test(error.message))) {
+          console.warn("[v0] clients.numero no existe todavia (falta scripts/117); se ordena por apodo")
+          let vieja = supabase
+            .from("clients")
+            .select("id, nombre_completo, apodo, documento, tiene_prestamo_activo")
+            .eq("ruta", rutaId)
+            .order("apodo", { ascending: true })
+          if (clientSearch.trim()) {
+            vieja = vieja.ilike("apodo", `%${clientSearch.trim()}%`)
+          }
+          if (soloSinPrestamo) {
+            vieja = vieja.eq("tiene_prestamo_activo", false)
+          }
+          const r = await vieja
+          data = r.data
+          error = r.error
+        }
+
         if (error) {
           console.error("[v0] Error fetching clients (new-loan):", error.message)
           setClientOptions([])
@@ -254,11 +296,21 @@ export function NewLoan({
     const fetchPreSelected = async () => {
       try {
         const supabase = createClient()
-        const { data } = await supabase
+        let { data, error } = await supabase
           .from("clients")
-          .select("id, nombre_completo, apodo, tiene_prestamo_activo")
+          .select("id, nombre_completo, apodo, numero, tiene_prestamo_activo")
           .eq("id", preSelectedClientId)
           .maybeSingle()
+        // Mismo caso que arriba: sin el script 117 la columna no existe. Sin
+        // este reintento la renovacion abriria con el nombre en blanco.
+        if (error && (error.code === "42703" || /numero/i.test(error.message))) {
+          const r = await supabase
+            .from("clients")
+            .select("id, nombre_completo, apodo, tiene_prestamo_activo")
+            .eq("id", preSelectedClientId)
+            .maybeSingle()
+          data = r.data
+        }
         if (data) {
           setClientOptions([data])
           setSelectedClientLabel((data.apodo || data.nombre_completo).toUpperCase())
@@ -2701,6 +2753,15 @@ export function NewLoan({
                               <Check
                                 className={`mr-2 h-3.5 w-3.5 shrink-0 ${selectedClient === c.id ? "opacity-100" : "opacity-0"}`}
                               />
+                              {/* El numero delante y con ancho fijo: asi los
+                                  nombres quedan alineados y la columna se lee
+                                  de un vistazo. `tabular-nums` para que el 9 y
+                                  el 1 ocupen lo mismo. */}
+                              {c.numero != null && (
+                                <span className="mr-1.5 w-7 shrink-0 text-right font-semibold tabular-nums text-muted-foreground">
+                                  {c.numero}
+                                </span>
+                              )}
                               <span className="font-medium truncate">{(c.apodo || c.nombre_completo).toUpperCase()}</span>
                               {c.apodo && (
                                 <span className="ml-2 text-muted-foreground text-[9px] truncate">{c.nombre_completo}</span>
