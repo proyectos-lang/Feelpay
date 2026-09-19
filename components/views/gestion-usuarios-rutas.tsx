@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch"
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion"
 import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info, MessageSquare, BarChart2, Gauge, Upload, AlertCircle } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { MONEDAS, getMoneda, monedaPorPais } from "@/lib/monedas"
 import { ALL_MODULES, MODULE_GROUPS, getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
 import { AMORTIZACIONES, mostrarMonto, leerMonto } from "@/lib/gestion-core"
 import { verPines } from "@/lib/pin-lock"
@@ -40,6 +41,8 @@ type Ruta = {
   nombre: string
   ciudad: string | null
   pais: string | null
+  /** ISO 4217 ('ARS', 'USD'...). NULL = todavia no le han elegido moneda. */
+  moneda?: string | null
 }
 
 const ROLES = ["vendedor", "secretaria", "gerencia", "admin", "liquidador", "socioadmin"] as const
@@ -523,6 +526,7 @@ function RutasTab() {
   const [fNombre, setFNombre] = useState("")
   const [fCiudad, setFCiudad] = useState("")
   const [fPais, setFPais] = useState("")
+  const [fMoneda, setFMoneda] = useState("")
 
   // Catálogos de items: son globales, se cargan una vez y no cambian por ruta.
   const [ingresoItems, setIngresoItems] = useState<CatalogItem[]>([])
@@ -565,7 +569,7 @@ function RutasTab() {
     try {
       const supabase = createClient()
       const [rutasRes, configsRes, ingresosRes, gastosRes, retirosRes] = await Promise.all([
-        supabase.from("rutas").select("id, nombre, ciudad, pais").order("id", { ascending: true }),
+        supabase.from("rutas").select("id, nombre, ciudad, pais, moneda").order("id", { ascending: true }),
         supabase.from("ruta_config_umbrales").select("*"),
         // `*` en ingresos por `solo_sistema` (script 083). Pedirla por nombre
         // reventaría la consulta con 42703 donde el script no haya corrido.
@@ -573,8 +577,25 @@ function RutasTab() {
         supabase.from("gastos").select("id, nombre, limite").order("nombre"),
         supabase.from("retiros").select("id, nombre, limite").order("nombre"),
       ])
-      if (rutasRes.error) throw rutasRes.error
-      setRutas((rutasRes.data as Ruta[]) ?? [])
+      // `moneda` es una columna nueva (scripts/118). Mientras no exista, la
+      // consulta entera falla con 42703 y la pestaña de Rutas se queda VACIA.
+      // Es el mismo cuidado que ya se tiene arriba con `ingresos`.
+      let rutasData = rutasRes.data
+      if (rutasRes.error) {
+        const code = (rutasRes.error as { code?: string }).code
+        if (code === "42703" || /moneda/i.test(rutasRes.error.message)) {
+          console.warn("[v0] rutas.moneda no existe todavia (falta scripts/118)")
+          const r = await supabase
+            .from("rutas")
+            .select("id, nombre, ciudad, pais")
+            .order("id", { ascending: true })
+          if (r.error) throw r.error
+          rutasData = r.data
+        } else {
+          throw rutasRes.error
+        }
+      }
+      setRutas((rutasData as Ruta[]) ?? [])
       setConfigs(new Map(((configsRes.data as RutaConfigRow[]) ?? []).map((c) => [c.ruta_id, c])))
       // Los conceptos que solo escribe el sistema no se listan acá tampoco:
       // el umbral de aprobación no los toca —`registrar_gestion` inserta la
@@ -670,7 +691,7 @@ function RutasTab() {
   }
 
   const openCreate = () => {
-    setEditing(null); setFUnidad(""); setFNombre(""); setFCiudad(""); setFPais("")
+    setEditing(null); setFUnidad(""); setFNombre(""); setFCiudad(""); setFPais(""); setFMoneda("")
     cargarConfig(undefined)
     setItemForm(new Map())
     setShowForm(true)
@@ -678,6 +699,9 @@ function RutasTab() {
 
   const openEdit = async (r: Ruta) => {
     setEditing(r); setFUnidad(String(r.id)); setFNombre(r.nombre); setFCiudad(r.ciudad ?? ""); setFPais(r.pais ?? "")
+    // Si la ruta no tiene moneda, se propone la del pais en vez de dejar el
+    // campo vacio: es lo que el dueño va a elegir el 99% de las veces.
+    setFMoneda(r.moneda ?? monedaPorPais(r.pais, r.ciudad) ?? "")
     cargarConfig(configs.get(r.id))
     setItemForm(new Map())
     setShowForm(true)
@@ -761,6 +785,11 @@ function RutasTab() {
         nombre: fNombre.trim(),
         ciudad: fCiudad.trim() || null,
         pais: fPais.trim() || null,
+        // Se manda solo si hay algo elegido. Asi, mientras no se corra el
+        // script 118, guardar una ruta sigue funcionando: sin la columna, un
+        // payload con `moneda` la rechazaria entera y no se podria ni
+        // cambiarle el nombre a una unidad.
+        ...(fMoneda ? { moneda: fMoneda } : {}),
       }
 
       // La ruta primero: si es nueva hay que conocer su id antes de poder
@@ -907,6 +936,7 @@ function RutasTab() {
                 <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Ruta</th>
                 <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden sm:table-cell">Ciudad</th>
                 <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell">País</th>
+                <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell">Moneda</th>
                 <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Interés</th>
                 <th className="px-3 py-2" />
               </tr>
@@ -914,7 +944,7 @@ function RutasTab() {
             <tbody className="divide-y divide-border">
               {rutas.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-10 text-center text-sm text-muted-foreground">
+                  <td colSpan={6} className="px-3 py-10 text-center text-sm text-muted-foreground">
                     No hay rutas registradas
                   </td>
                 </tr>
@@ -948,6 +978,20 @@ function RutasTab() {
                     {r.pais ? (
                       <span className="flex items-center gap-1"><Globe2 className="h-3 w-3" />{r.pais}</span>
                     ) : "—"}
+                  </td>
+                  {/* La moneda a la vista: una unidad sin moneda tiene que
+                      notarse en la lista, no solo al abrirla. */}
+                  <td className="px-3 py-2.5 text-xs hidden md:table-cell">
+                    {r.moneda ? (
+                      <span className="font-semibold tabular-nums">
+                        {r.moneda}{" "}
+                        <span className="font-normal text-muted-foreground">
+                          {getMoneda(r.moneda).simbolo}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-amber-600">sin moneda</span>
+                    )}
                   </td>
                   {/* Qué métodos de interés ofrece la venta en esta ruta. El
                       predeterminado va resaltado; con uno solo habilitado no
@@ -1031,8 +1075,44 @@ function RutasTab() {
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">País</Label>
-                <Input value={fPais} onChange={(e) => setFPais(e.target.value)} placeholder="Colombia" className="h-9 text-sm" />
+                <Input
+                  value={fPais}
+                  onChange={(e) => {
+                    setFPais(e.target.value)
+                    // Al escribir el país se propone su moneda, pero SOLO si
+                    // todavía no hay ninguna elegida: si el dueño ya eligió
+                    // una a mano, escribir el país no se la puede pisar.
+                    if (!fMoneda) {
+                      const sugerida = monedaPorPais(e.target.value, fCiudad)
+                      if (sugerida) setFMoneda(sugerida)
+                    }
+                  }}
+                  placeholder="Colombia"
+                  className="h-9 text-sm"
+                />
               </div>
+            </div>
+
+            {/* ── La moneda con la que trabaja la unidad ─────────────────── */}
+            <div className="space-y-1">
+              <Label className="text-xs">Moneda</Label>
+              <Select value={fMoneda} onValueChange={setFMoneda}>
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="Elige la moneda" />
+                </SelectTrigger>
+                <SelectContent>
+                  {MONEDAS.map((m) => (
+                    <SelectItem key={m.codigo} value={m.codigo} className="text-sm">
+                      {m.codigo} · {m.nombre} ({m.simbolo})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                Con qué plata trabaja esta unidad. Solo cambia cómo se{" "}
+                <strong>muestran</strong> las cifras: no convierte ningún monto
+                ni hay tasa de cambio.
+              </p>
             </div>
 
             {/* ── Métodos de interés ────────────────────────────────────── */}
