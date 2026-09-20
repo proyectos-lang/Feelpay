@@ -31,6 +31,7 @@ import {
   SlidersHorizontal,
   ScanSearch,
   FileSpreadsheet,
+  ArrowRightLeft,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -94,6 +95,7 @@ const navGroups: NavGroup[] = [
       { id: "loan-audit",                label: "Auditoría 360",   icon: ScanSearch,    colorClass: "sidebar-item-summary"   },
       { id: "secretary-reports",         label: "Reportes",        icon: FileText,    colorClass: "sidebar-item-secretary" },
       { id: "descargar-informe",         label: "Descargar Informe", icon: FileSpreadsheet, colorClass: "sidebar-item-secretary" },
+      { id: "tasas-cambio",              label: "Tasas de Cambio", icon: ArrowRightLeft, colorClass: "sidebar-item-secretary" },
       { id: "secretary-admin-reportes",  label: "Rep. Admin",      icon: FileText,    colorClass: "sidebar-item-clients"   },
       { id: "user-route-management",     label: "Usuarios/Rutas",  icon: Users,       colorClass: "sidebar-item-clients"   },
       { id: "reportes-bi",               label: "Power BI",        icon: BarChart2,   colorClass: "sidebar-item-summary"   },

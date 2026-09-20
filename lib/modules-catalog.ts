@@ -151,6 +151,18 @@ export const ALL_MODULES: ModuleDefinition[] = [
     group: "Administrador",
   },
   {
+    viewId: "tasas-cambio",
+    label: "Tasas de Cambio",
+    mobileLabel: "Tasas",
+    description: "Cuanta moneda local vale 1 USD, con su vigencia en el tiempo",
+    // Se pidio para las SECRETARIAS. Admin y gerencia tambien: son quienes
+    // leen los informes donde esa conversion se usa.
+    defaultRoles: ["secretaria", "secretario", "admin", "administrador", "gerencia", "gerente"],
+    defaultMobileNavRoles: [],
+    iconName: "ArrowRightLeft",
+    group: "Secretaria",
+  },
+  {
     viewId: "descargar-informe",
     label: "Descargar Informe",
     mobileLabel: "Informe",

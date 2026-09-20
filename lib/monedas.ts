@@ -198,3 +198,35 @@ export function formatearMoneda(
     maximumFractionDigits: m.decimales,
   })}`
 }
+
+// ── Conversión a dólares ────────────────────────────────────────────────────
+
+/**
+ * PASAR UN MONTO A DÓLARES CON LA TASA DE SU DÍA.
+ *
+ * `tasa` es cuánta moneda local vale 1 USD —"el dólar está a 1.450" es
+ * 1450— así que se DIVIDE. Ver `scripts/119`, que es donde vive la historia
+ * de tasas y la función `tasa_vigente(moneda, fecha)` que las busca.
+ *
+ * Devuelve `null` cuando no hay tasa para ese día, y eso es a propósito: la
+ * pantalla tiene que poder decir "sin tasa" en vez de mostrar un 0 que se lee
+ * como plata. Un cero inventado en un informe es peor que un hueco visible.
+ */
+export function aDolares(
+  monto: number | null | undefined,
+  tasa: number | null | undefined,
+): number | null {
+  const n = Number(monto) || 0
+  const t = Number(tasa)
+  if (!Number.isFinite(t) || t <= 0) return null
+  return n / t
+}
+
+/** Un monto en dólares, ya escrito: "USD 1.234,56". */
+export function fmtDolares(valor: number | null | undefined): string {
+  if (valor === null || valor === undefined) return "sin tasa"
+  return `USD ${Number(valor).toLocaleString("es-CO", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+}
