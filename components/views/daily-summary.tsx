@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button"
 import { getResumenDia } from "@/lib/resumen-dia"
 import { todayColombia, bandaCartera, etiquetaFrecuencia, fmtMonedaCien } from "@/lib/gestion-core"
 import { getRutaUmbrales } from "@/lib/ruta-umbrales"
+import { aDolares, formatearMoneda } from "@/lib/monedas"
 import { DetalleClientesDialog } from "@/components/detalle-clientes-dialog"
 import { PagosDelDiaDialog, type FuentePagos } from "@/components/pagos-del-dia-dialog"
 import type { ModoDia } from "@/lib/pagos-del-dia"
@@ -111,6 +112,16 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
   // Datos reales de `resumen_diario_v2` (la plata del dia sale del libro de
   // eventos `gestiones`, no de los estados de `payment_plan`).
   const [collectedAmount, setCollectedAmount] = useState(0)
+  /**
+   * LA MONEDA DE LA RUTA Y LA TASA DE **ESE** DIA.
+   *
+   * La tasa NO es la de hoy: es la que regia el dia del resumen. Un cierre
+   * del 14 tiene que seguir mostrando los dolares que valia el 14, aunque
+   * hoy el dolar este al doble. Ver scripts/119.
+   */
+  const [monedaRuta, setMonedaRuta] = useState<string | null>(null)
+  const [tasaDelDia, setTasaDelDia] = useState<number | null>(null)
+  const [cargandoTasa, setCargandoTasa] = useState(false)
   const [metaAmount, setMetaAmount] = useState(0)
   const [cantidadPagos, setCantidadPagos] = useState(0)
   const [cantidadNoPagos, setCantidadNoPagos] = useState(0)
@@ -263,6 +274,65 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
     fetchRutaDiaria()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rutaId])
+
+  // ── La moneda de la ruta y la tasa que regia el dia del resumen ─────────
+  //
+  // Se busca la tasa cuyo rango CONTIENE `diaDelResumen`, no la ultima
+  // cargada: es lo que hace que un cierre viejo siga mostrando los dolares de
+  // su dia. La misma regla de `tasa_vigente()` en scripts/119, resuelta aca
+  // con un select porque ya se tiene el cliente a mano.
+  useEffect(() => {
+    let cancelado = false
+    const cargar = async () => {
+      setCargandoTasa(true)
+      try {
+        const supabase = createClient()
+        const rRuta = await supabase.from("rutas").select("moneda").eq("id", rutaId).maybeSingle()
+        // Sin el script 118 la columna no existe: se calla y no se muestra la
+        // tarjeta, en vez de tumbar el resumen entero.
+        const moneda = (rRuta.data as { moneda?: string | null } | null)?.moneda ?? null
+        if (cancelado) return
+        setMonedaRuta(moneda)
+
+        if (!moneda || moneda === "USD") {
+          setTasaDelDia(moneda === "USD" ? 1 : null)
+          return
+        }
+
+        const rTasa = await supabase
+          .from("tasas_cambio")
+          .select("tasa, vigente_desde, vigente_hasta")
+          .eq("moneda", moneda)
+          .lte("vigente_desde", diaDelResumen)
+          .order("vigente_desde", { ascending: false })
+          .limit(1)
+        if (cancelado) return
+
+        // Sin el script 119 la tabla no existe (PGRST205). No es un error que
+        // valga la pena gritar: simplemente todavia no hay tasas.
+        if (rTasa.error) {
+          setTasaDelDia(null)
+          return
+        }
+        const fila = (rTasa.data ?? [])[0] as
+          | { tasa: number; vigente_desde: string; vigente_hasta: string | null }
+          | undefined
+        // El `limit(1)` trae la mas reciente que empezo antes del dia, pero
+        // puede estar YA CERRADA antes de ese dia: entonces ese dia no tiene
+        // tasa y hay que decirlo, no estirar la ultima que haya.
+        const sirve =
+          fila && (fila.vigente_hasta === null || fila.vigente_hasta >= diaDelResumen)
+        setTasaDelDia(sirve ? Number(fila!.tasa) : null)
+      } catch (err) {
+        console.error("[v0] Tasa del dia en el resumen:", err)
+        if (!cancelado) setTasaDelDia(null)
+      } finally {
+        if (!cancelado) setCargandoTasa(false)
+      }
+    }
+    void cargar()
+    return () => { cancelado = true }
+  }, [rutaId, diaDelResumen])
 
   const handleIniciarRuta = async () => {
     if (processingRuta) return
@@ -1193,6 +1263,87 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                 })()}
               </CardContent>
             </Card>
+
+            {/* ── Equivalente en dolares ──────────────────────────────────
+                Cuanto vale lo recaudado en USD, con la tasa que regia ESE
+                dia. Solo aparece si la ruta trabaja en otra moneda: en una
+                unidad que ya cobra en dolares seria repetir el mismo numero
+                dos veces.
+
+                Sin tarjeta cuando no hay tasa del dia NO: se muestra igual y
+                se dice "sin tasa", porque un hueco visible manda a cargarla y
+                una tarjeta ausente se lee como que la funcion no existe. */}
+            {monedaRuta && monedaRuta !== "USD" && (
+              <Card className="border-0 bg-gradient-to-br from-sky-50 to-blue-50 shadow-sm dark:from-sky-950/40 dark:to-blue-950/40">
+                <CardContent className="px-2.5 py-2">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white">
+                      $
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold leading-tight text-foreground">
+                        Equivalente en dólares
+                      </p>
+                      <p className="text-[10px] leading-tight text-muted-foreground">
+                        Conocé el valor de tu recaudación en USD
+                      </p>
+                    </div>
+                  </div>
+
+                  {cargandoTasa ? (
+                    <p className="py-2 text-center text-[11px] text-muted-foreground">
+                      Buscando la tasa…
+                    </p>
+                  ) : tasaDelDia ? (
+                    <div className="mt-1.5 space-y-1">
+                      {/* Los dos montos, mitad y mitad. El bloque de la tasa
+                          iba antes a la derecha y le robaba el ancho: en un
+                          telefono de 390 el "US$ 1.431,28" salia cortado como
+                          "US$ …" y la pagina se iba de lado. Ahora va debajo,
+                          que es donde cabe entero. */}
+                      <div className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[10px] font-semibold text-muted-foreground">
+                            {monedaRuta}
+                          </p>
+                          <p className="truncate text-sm font-bold leading-tight tabular-nums">
+                            {formatearMoneda(collectedAmount, monedaRuta)}
+                          </p>
+                        </div>
+                        <div className="h-6 w-px shrink-0 bg-border" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[10px] font-semibold text-muted-foreground">
+                            USD (aprox.)
+                          </p>
+                          <p className="truncate text-sm font-bold leading-tight tabular-nums text-blue-700 dark:text-blue-300">
+                            US$ {(aDolares(collectedAmount, tasaDelDia) ?? 0).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* La fecha es la de la TASA, no la de ahora: poner
+                          "actualizado hoy" en un cierre viejo haria creer que
+                          se convirtio con el dolar de hoy. */}
+                      <p className="text-[10px] leading-tight text-muted-foreground">
+                        1 USD ={" "}
+                        <span className="font-semibold text-foreground tabular-nums">
+                          {Number(tasaDelDia).toLocaleString("es-CO", { maximumFractionDigits: 6 })}
+                        </span>{" "}
+                        {monedaRuta} · tasa del {fmtFecha(diaDelResumen)}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="mt-1.5 rounded-md border border-dashed border-amber-400 bg-amber-50/60 px-2 py-1.5 dark:bg-amber-950/20">
+                      <p className="text-[11px] leading-snug text-amber-700 dark:text-amber-400">
+                        No hay tasa de cambio cargada para el{" "}
+                        {fmtFecha(diaDelResumen)}. Se registra en{" "}
+                        <strong>Tasas de Cambio</strong>.
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             {/* Resumen Financiero - Horizontal Bar Chart */}
             <Card className="bg-card shadow-sm border-0">
