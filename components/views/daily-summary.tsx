@@ -4,7 +4,7 @@ import React from "react"
 import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, Users, PieChart, LockKeyhole, LockKeyholeOpen, Eye, X, Play, Loader2, Share2, AlertCircle } from "lucide-react"
+import { MapPin, Target, Wallet, Banknote, ShoppingCart, CheckCircle, XCircle, TrendingUp, Receipt, Calendar, Clock, ArrowDownCircle, RotateCcw, CalendarDays, CalendarClock, CalendarRange, Coins, Users, PieChart, LockKeyhole, LockKeyholeOpen, Eye, X, Play, Loader2, Share2, AlertCircle } from "lucide-react"
 import { renderComprobanteImagen, type SeccionComprobante } from "@/lib/imagen-comprobante"
 import { CompartirComprobanteDialog } from "@/components/compartir-comprobante-dialog"
 import { getUsuarioSesion } from "@/lib/movimientos"
@@ -78,6 +78,22 @@ function IconoInformeRecaudo() {
   )
 }
 
+/**
+ * "BUENOS AIRES" -> "Buenos Aires".
+ *
+ * En `rutas` conviven las dos formas —"ARGENTINA" y "Argentina"— y la
+ * mayuscula sostenida ocupa mas ancho y se lee como si gritara. El mockup las
+ * muestra capitalizadas.
+ */
+function capitalizar(t: string): string {
+  return t
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((p) => p[0].toUpperCase() + p.slice(1))
+    .join(" ")
+}
+
 export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fechaResumen }: DailySummaryProps) {
   /**
    * EL DÍA DE NEGOCIO DE ESTA PANTALLA.
@@ -123,6 +139,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
   const [monedaRuta, setMonedaRuta] = useState<string | null>(null)
   /** Para el saludo: de donde es la ruta y como se llama quien la lleva. */
   const [nombreUsuario, setNombreUsuario] = useState<string>("")
+  const [rolUsuario, setRolUsuario] = useState<string>("Cobrador")
   const [paisRuta, setPaisRuta] = useState<string>("")
   const [ciudadRuta, setCiudadRuta] = useState<string>("")
   const [tasaDelDia, setTasaDelDia] = useState<number | null>(null)
@@ -357,6 +374,25 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
     // Solo el primer nombre: "Eilyn", no "Eilyn Margarita Rodriguez", que no
     // cabe al lado de la insignia de estado.
     setNombreUsuario(n ? n.split(/\s+/)[0] : "")
+    // "Cobrador" es como se llaman ellos mismos; `vendedor` es el nombre
+    // interno del rol y en la calle no lo usa nadie.
+    try {
+      const raw = localStorage.getItem("currentUser")
+      const rol = raw ? String((JSON.parse(raw) as { rol?: string }).rol ?? "") : ""
+      const bonito: Record<string, string> = {
+        vendedor: "Cobrador",
+        asesor: "Asesor",
+        secretaria: "Secretaria",
+        secretario: "Secretario",
+        admin: "Administrador",
+        administrador: "Administrador",
+        gerencia: "Gerencia",
+        gerente: "Gerencia",
+      }
+      setRolUsuario(bonito[rol.toLowerCase()] ?? (rol ? rol[0].toUpperCase() + rol.slice(1) : "Cobrador"))
+    } catch {
+      /* sesion ilegible: se queda con "Cobrador" */
+    }
   }, [])
 
   const handleIniciarRuta = async () => {
@@ -898,162 +934,145 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
           className={`absolute inset-0 flex flex-col bg-background ${isFlipped ? "invisible" : "visible"}`}
           style={{ backfaceVisibility: "hidden" }}
         >
-          {/* Header with gradient */}
-          <div className="bg-brand-gradient text-brand-foreground px-3 pt-2.5 pb-1.5 rounded-b-2xl shadow-lg">
-            <div className="flex items-center justify-between mb-1 gap-2">
-              <h1 className="text-lg font-bold tracking-tight">Resumen del Día</h1>
-              {/* Barra de acciones. Los iconos van en pastilla blanca con el
-                  icono a color: en ghost sobre el degradado de marca se
-                  perdian contra el fondo y no se leian como botones.
-                  Se quito el menu de 3 puntos, que no tenia onClick — no
-                  hacia absolutamente nada al tocarlo. */}
-              <div className="flex items-center gap-1.5">
-                {/* Informe Recaudo, de primero. Barras tipo 📊: es el simbolo
-                    universal de "informe" y se reconoce de un vistazo, mucho
-                    mas que la flecha circular que habia antes (que se lee como
-                    "deshacer") o que un documento con grafica, donde a este
-                    tamaño las barras casi no se distinguen. */}
-                <Button
-                  size="icon"
-                  className="h-8 w-8 rounded-full bg-white hover:bg-white/90 shadow-sm shrink-0"
-                  title="Ver el Informe de Recaudo"
-                  aria-label="Ver el Informe de Recaudo"
-                  onClick={() => setIsFlipped(true)}
-                >
-                  <IconoInformeRecaudo />
-                </Button>
+          {/* ── EL ENCABEZADO ────────────────────────────────────────────
+              La forma del mockup: la bandera grande a la izquierda, el saludo
+              en el medio y, separada por una linea, la columna de la derecha
+              con la fecha, la hora y el boton de la jornada.
 
-                {/* Botón Iniciar / Finalizar Ruta */}
+              El titulo "Resumen del Dia" salio: la barra de arriba de la app
+              ya dice en que pantalla esta uno, y el saludo con el nombre
+              cumple la misma funcion de encabezado. Eran ~28px que en esta
+              pantalla —donde la regla es que todo entre sin scroll— rinden
+              mas abajo.
+
+              Los tres botones siguen aca: informe de recaudo y cierre de caja
+              como iconos arriba a la derecha, y la jornada como pastilla
+              ancha, que es el que se toca todos los dias. */}
+          <div className="bg-brand-gradient text-brand-foreground px-3 pt-1.5 pb-1.5 rounded-b-2xl shadow-lg">
+            <div className="flex items-center gap-2.5">
+              {/* La bandera, grande y redonda */}
+              <Bandera
+                moneda={monedaRuta}
+                size={48}
+                className="shadow-md ring-2 ring-white/70"
+              />
+
+              {/* El saludo */}
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-base font-bold leading-tight">
+                  ¡Hola, {nombreUsuario || "Cobrador"}!
+                </p>
+                {/* "Secretaria - ARGENTINA" no cabia en 390px y se cortaba
+                    justo en el pais. El pais baja al renglon de la ciudad,
+                    que iba medio vacio: asi los dos datos se leen enteros sin
+                    gastar un renglon mas. */}
+                <p className="truncate text-xs leading-tight text-brand-foreground/90">
+                  {rolUsuario}
+                  {paisRuta ? ` - ${capitalizar(paisRuta)}` : ""}
+                </p>
+                {ciudadRuta && (
+                  <p className="flex items-center gap-1 text-[11px] leading-tight text-brand-foreground/80">
+                    <MapPin className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{capitalizar(ciudadRuta)}</span>
+                  </p>
+                )}
+              </div>
+
+              {/* La raya que separa, como en el mockup */}
+              <div className="h-12 w-px shrink-0 bg-white/30" />
+
+              {/* La columna de la derecha: fecha, hora y la jornada */}
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <div className="flex items-center gap-2">
+                  <div className="text-[11px] leading-tight text-brand-foreground/90">
+                    <span className="flex items-center justify-end gap-1 whitespace-nowrap">
+                      <Calendar className="h-3 w-3 shrink-0" />
+                      {/* LA FECHA DEL ENCABEZADO ES LA DE LOS NUMEROS.
+                          Cerrando una jornada vieja decia 04/09 sobre datos
+                          del 03/09 — el encabezado contradiciendo a su propio
+                          contenido. */}
+                      {esResumenAtrasado ? fmtFecha(diaDelResumen) : selectedDate}
+                    </span>
+                    <span className="flex items-center justify-end gap-1 whitespace-nowrap">
+                      <Clock className="h-3 w-3 shrink-0" />
+                      {currentTime}
+                    </span>
+                  </div>
+
+                  {/* Informe de recaudo y cierre de caja. En pastilla blanca
+                      con el icono a color: en ghost sobre el degradado se
+                      perdian contra el fondo y no se leian como botones. */}
+                  <div className="flex flex-col gap-1">
+                    <Button
+                      size="icon"
+                      className="h-7 w-7 rounded-full bg-white hover:bg-white/90 shadow-sm shrink-0"
+                      title="Ver el Informe de Recaudo"
+                      aria-label="Ver el Informe de Recaudo"
+                      onClick={() => setIsFlipped(true)}
+                    >
+                      <IconoInformeRecaudo />
+                    </Button>
+                    {/* El candado dice EN QUE ESTADO esta la caja, no solo a
+                        donde lleva: abierto y verde durante la jornada,
+                        cerrado y rojo cuando ya se cuadro. */}
+                    <Button
+                      size="icon"
+                      className={`h-7 w-7 rounded-full bg-white hover:bg-white/90 shadow-sm shrink-0 ${
+                        rutaDiariaEstado === "cerrada" ? "text-destructive" : "text-success"
+                      }`}
+                      title={
+                        rutaDiariaEstado === "cerrada"
+                          ? "Caja cerrada — ver el cierre del dia"
+                          : "Cierre de Caja"
+                      }
+                      aria-label="Cierre de Caja"
+                      onClick={() => onViewChange?.("cierre-caja")}
+                    >
+                      {rutaDiariaEstado === "cerrada" ? (
+                        <LockKeyhole className="h-4 w-4" />
+                      ) : (
+                        <LockKeyholeOpen className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* LA JORNADA, en pastilla ancha como el mockup.
+                    Las tres ramas son las de siempre —sin iniciar, abierta y
+                    cerrada— solo que ahora comparten forma y sitio, asi que
+                    el boton no salta de lugar segun el estado. */}
                 {!loadingRutaDiaria && (
                   <>
                     {rutaDiariaEstado === null && (
                       <Button
-                        size="sm"
-                        className="bg-success hover:bg-success/90 text-success-foreground h-8 px-3 font-semibold gap-1.5"
+                        className="h-8 gap-1.5 rounded-full bg-white px-3 font-bold text-brand shadow-sm hover:bg-white/90"
                         onClick={handleIniciarRuta}
                         disabled={processingRuta}
-                        title="Iniciar Ruta del Día"
+                        title="Iniciar la jornada del dia"
                       >
                         {processingRuta ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
-                          <Play className="h-4 w-4" />
+                          <Play className="h-4 w-4 fill-current" />
                         )}
-                        <span className="hidden sm:inline">Iniciar Ruta</span>
+                        <span className="text-xs">Iniciar jornada</span>
                       </Button>
                     )}
+                    {rutaDiariaEstado === "abierta" && (
+                      <Badge className="h-8 gap-1.5 rounded-full border-0 bg-white px-3 font-bold text-success shadow-sm">
+                        <Play className="h-3.5 w-3.5 fill-current" />
+                        <span className="text-xs">Jornada abierta</span>
+                      </Badge>
+                    )}
                     {rutaDiariaEstado === "cerrada" && (
-                      <Badge className="bg-white text-foreground border-0 h-8 px-3 font-semibold gap-1.5 flex items-center">
-                        <CheckCircle className="h-4 w-4 text-success" />
-                        <span className="hidden sm:inline">Ruta Completada</span>
+                      <Badge className="h-8 gap-1.5 rounded-full border-0 bg-white px-3 font-bold text-foreground shadow-sm">
+                        <CheckCircle className="h-3.5 w-3.5 text-success" />
+                        <span className="text-xs">Jornada cerrada</span>
                       </Badge>
                     )}
                   </>
                 )}
-
-                {/* Cierre de Caja: el candado, del mismo tamaño que el del
-                    informe. Iba diminuto y en ghost sobre el degradado, asi
-                    que no se veia; en pastilla blanca si.
-
-                    Y AHORA DICE EN QUE ESTADO ESTA LA CAJA, no solo a donde
-                    lleva: abierto y verde mientras la jornada esta en curso,
-                    cerrado y rojo cuando ya se cuadro. Antes era rojo siempre
-                    —para decir "esto cierra el dia"— y de reojo se leia como
-                    si la caja ya estuviera cerrada.
-
-                    EN ESTA PANTALLA, HOY, SOLO SE VE EL VERDE. Cerrar la caja
-                    saca al vendedor del Resumen del Dia: `app/page.tsx` lo
-                    manda a "Jornada cerrada" y solo le deja el cierre y el
-                    chat, y esta pantalla es de vendedor y asesor nada mas. La
-                    rama roja se deja igual —es la misma regla que la insignia
-                    del cierre y la del renglon de abajo— pero no se muestra
-                    sola: el candado rojo que la gente va a ver es el del
-                    encabezado del Cierre de Caja. */}
-                <Button
-                  size="icon"
-                  className={`h-8 w-8 rounded-full bg-white hover:bg-white/90 shadow-sm shrink-0 ${
-                    rutaDiariaEstado === "cerrada" ? "text-destructive" : "text-success"
-                  }`}
-                  title={
-                    rutaDiariaEstado === "cerrada"
-                      ? "Caja cerrada — ver el cierre del dia"
-                      : "Cierre de Caja"
-                  }
-                  aria-label="Cierre de Caja"
-                  onClick={() => onViewChange?.("cierre-caja")}
-                >
-                  {rutaDiariaEstado === "cerrada" ? (
-                    <LockKeyhole className="h-5 w-5" />
-                  ) : (
-                    <LockKeyholeOpen className="h-5 w-5" />
-                  )}
-                </Button>
               </div>
-            </div>
-            {/* LA HORA VA DEBAJO DE LA FECHA, no al lado.
-                En una sola línea competían fecha, hora e insignia de estado
-                por el ancho del teléfono, y el que perdía era el "p. m." de la
-                hora: se cortaba justo en lo que dice si es mañana o tarde.
-                Apiladas, las dos caben enteras y sobra sitio para la
-                insignia. */}
-            <div className="flex items-center gap-3 text-xs">
-              <div className="flex flex-col gap-0.5 text-brand-foreground/90">
-                <div className="flex items-center gap-1.5">
-                  <Calendar className="h-3.5 w-3.5 shrink-0" />
-                  {/* LA FECHA DEL ENCABEZADO ES LA DE LOS NÚMEROS.
-                      Cerrando una jornada vieja decía 04/09 sobre datos del
-                      03/09 — el mismo encabezado contradiciendo a su propio
-                      contenido. */}
-                  <span className="whitespace-nowrap">
-                    {esResumenAtrasado ? fmtFecha(diaDelResumen) : selectedDate}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Clock className="h-3.5 w-3.5 shrink-0" />
-                  <span className="whitespace-nowrap">{currentTime}</span>
-                </div>
-              </div>
-              {/* ── EL SALUDO, con la bandera del pais en un circulo ──────
-                  Va DENTRO del encabezado que ya existe y no en una tarjeta
-                  aparte: la regla de esta pantalla es que todo quepa sin
-                  bajar con el dedo, y una tarjeta nueva costaba ~90px que no
-                  sobran. Aca aprovecha la fila de la fecha, que tenia sitio
-                  libre.
-
-                  La bandera es un emoji: el telefono ya las trae dibujadas,
-                  asi que no hay que servir imagenes ni esperar a que
-                  carguen. (En Chrome de Windows salen como dos letras —el
-                  sistema no trae la fuente— pero en el telefono se ven.) */}
-              {nombreUsuario && (
-                <div className="ml-auto flex items-center gap-1.5 min-w-0">
-                  <Bandera
-                    moneda={monedaRuta}
-                    size={26}
-                    className="shadow-sm ring-1 ring-white/70"
-                  />
-                  <div className="min-w-0 leading-tight">
-                    <p className="truncate text-[11px] font-bold">
-                      ¡Hola, {nombreUsuario}!
-                    </p>
-                    <p className="truncate text-[10px] text-brand-foreground/80">
-                      {[paisRuta, ciudadRuta].filter(Boolean).join(" · ") || "Cobrador"}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="mt-1 flex items-center">
-              <Badge className="bg-white text-foreground border-0 text-xs">
-                Estado:{" "}
-                {rutaDiariaEstado === "abierta" ? (
-                  <span className="text-success ml-1 font-semibold">Abierta</span>
-                ) : rutaDiariaEstado === "cerrada" ? (
-                  <span className="text-warning ml-1 font-semibold">Cerrada</span>
-                ) : (
-                  <span className="text-muted-foreground ml-1 font-semibold">Sin Iniciar</span>
-                )}
-              </Badge>
             </div>
           </div>
 
@@ -1154,7 +1173,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                         : "var(--success)"
 
                     return (
-                      <svg viewBox="0 0 200 110" className="h-16 w-28 shrink-0">
+                      <svg viewBox="0 0 200 110" className="h-14 w-24 shrink-0">
                         <path
                           d="M 20 100 A 80 80 0 0 1 180 100"
                           fill="none"
@@ -1284,9 +1303,9 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                           { label: "Intereses", valor: pagoIntereses, modo: null },
                         ]
                   return (
-                    <div className="mt-1 grid grid-cols-2 gap-1.5">
+                    <div className="mt-0.5 grid grid-cols-2 gap-1.5">
                       {par.map((c) => (
-                        <div key={c.label} className="rounded-md border border-border bg-card px-2 py-0.5">
+                        <div key={c.label} className="rounded-md border border-border bg-card px-2 py-0">
                           <div className="flex items-center justify-between gap-1">
                             <span className="flex items-center gap-0.5 text-[11px] font-medium text-muted-foreground">
                               {c.label}
