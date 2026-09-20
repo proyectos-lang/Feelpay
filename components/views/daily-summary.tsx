@@ -1118,7 +1118,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                 problema, es una caja vacía. */}
             <div className="grid grid-cols-2 gap-1.5">
               <Card className="bg-card shadow-sm border-0">
-                <CardContent className="px-2 py-0.5 flex items-center gap-1.5">
+                <CardContent className="px-2 py-0 flex items-center gap-1">
                   <div className={`h-5 w-5 rounded flex items-center justify-center shrink-0 ${
                     cajaAnterior < 0 ? "bg-destructive-light" : "bg-success-light"
                   }`}>
@@ -1134,7 +1134,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
               </Card>
 
               <Card className="bg-card shadow-sm border-0">
-                <CardContent className="px-2 py-0.5 flex items-center gap-1.5">
+                <CardContent className="px-2 py-0 flex items-center gap-1">
                   <div className={`h-5 w-5 rounded flex items-center justify-center shrink-0 ${
                     efectivo < 0 ? "bg-destructive-light" : "bg-success-light"
                   }`}>
@@ -1162,7 +1162,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                 quitó además el monto de la meta que salía DOS veces: una
                 suelta sobre el medidor y otra en la fila de valores. */}
             <Card className="bg-card shadow-sm border-0">
-              <CardContent className="px-2.5 py-1">
+              <CardContent className="px-2.5 py-0.5">
                 <div className="flex items-center gap-2">
                   {(() => {
                     // Rojo hasta 50%, amarillo hasta 70%, verde por encima.
@@ -1173,7 +1173,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                         : "var(--success)"
 
                     return (
-                      <svg viewBox="0 0 200 110" className="h-14 w-24 shrink-0">
+                      <svg viewBox="0 0 200 110" className="h-12 w-20 shrink-0">
                         <path
                           d="M 20 100 A 80 80 0 0 1 180 100"
                           fill="none"
@@ -1199,7 +1199,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-xs text-muted-foreground">Recaudo</span>
-                      <span className="text-xl font-bold text-foreground tabular-nums leading-tight">
+                      <span className="text-lg font-bold text-foreground tabular-nums leading-tight">
                         {fmtMonedaCien(collectedAmount)}
                       </span>
                     </div>
@@ -1215,15 +1215,15 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                         sentido: no se puede incumplir una meta que no
                         existe. */}
                     {metaAmount <= 0 ? (
-                      <p className="mt-0.5 text-[11px] leading-tight text-muted-foreground">
+                      <p className="text-[11px] leading-tight text-muted-foreground">
                         Sin meta para hoy
                       </p>
                     ) : collectedAmount >= metaAmount ? (
-                      <p className="mt-0.5 text-[11px] font-bold leading-tight text-success">
+                      <p className="text-[11px] font-bold leading-tight text-success">
                         Superaste la meta del día
                       </p>
                     ) : (
-                      <p className="mt-0.5 text-[11px] font-bold leading-tight text-destructive">
+                      <p className="text-[11px] font-bold leading-tight text-destructive">
                         Meta no superada por {fmtMonedaCien(remaining)}
                       </p>
                     )}
@@ -1231,7 +1231,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                 </div>
 
                 {/* Pagos / No Pagos */}
-                <div className="mt-1 flex items-center justify-center gap-5 border-t border-border pt-1">
+                <div className="mt-0.5 flex items-center justify-center gap-5 border-t border-border pt-0.5">
                   <div className="flex items-center gap-1">
                     <CheckCircle className="h-4 w-4 text-success" />
                     <span className="text-xs text-muted-foreground">Pagos:</span>
@@ -1350,7 +1350,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                 una tarjeta ausente se lee como que la funcion no existe. */}
             {monedaRuta && monedaRuta !== "USD" && (
               <Card className="border-0 bg-gradient-to-br from-sky-50 to-blue-50 shadow-sm dark:from-sky-950/40 dark:to-blue-950/40">
-                <CardContent className="px-2.5 py-1">
+                <CardContent className="px-2.5 py-0.5">
                   {/* Titulo y tasa EN EL MISMO RENGLON. El subtitulo salio
                       —decia lo mismo que el titulo con mas palabras— y la
                       tasa subio aca: en una tarjeta que solo muestra dos
@@ -1379,18 +1379,18 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                       Buscando la tasa…
                     </p>
                   ) : tasaDelDia ? (
-                    <div className="mt-1 space-y-0.5">
+                    <div className="mt-0.5">
                       {/* Los dos montos, mitad y mitad. El bloque de la tasa
                           iba antes a la derecha y le robaba el ancho: en un
                           telefono de 390 el "US$ 1.431,28" salia cortado como
                           "US$ …" y la pagina se iba de lado. Ahora va debajo,
                           que es donde cabe entero. */}
                       <div
-                        className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1"
+                        className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-0.5"
                         title={`Convertido con la tasa del ${fmtFecha(diaDelResumen)}`}
                       >
                         {/* Cada lado con su bandera, como en el mockup. */}
-                        <Bandera moneda={monedaRuta} size={22} />
+                        <Bandera moneda={monedaRuta} size={18} />
                         <div className="min-w-0 flex-1">
                           <p className="text-[10px] font-semibold text-muted-foreground">
                             {monedaRuta}
@@ -1400,7 +1400,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                           </p>
                         </div>
                         <div className="h-6 w-px shrink-0 bg-border" />
-                        <Bandera moneda="USD" size={22} />
+                        <Bandera moneda="USD" size={18} />
                         <div className="min-w-0 flex-1">
                           <p className="text-[10px] font-semibold text-muted-foreground">
                             USD (aprox.)
@@ -1426,8 +1426,8 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
 
             {/* Resumen Financiero - Horizontal Bar Chart */}
             <Card className="bg-card shadow-sm border-0">
-              <CardContent className="px-2.5 py-1">
-                <p className="text-xs font-semibold text-foreground mb-0.5">Resumen Financiero</p>
+              <CardContent className="px-2.5 py-0.5">
+                <p className="text-xs font-semibold text-foreground">Resumen Financiero</p>
                 
                 {(() => {
                   const items: { label: string; value: number; color: string; textColor: string; icon: React.ElementType; detailType?: "Ingreso" | "Gasto" | "Retiro"; detalleClientes?: "canceladas" | "ventas"; maxOverride?: number }[] = [
@@ -1440,7 +1440,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                   const maxValue = Math.max(...items.map(i => i.value), 1)
                   
                   return (
-                    <div className="space-y-0.5">
+                    <div>
                       {items.map((item) => {
                         const barMax = item.maxOverride ?? maxValue
                         const barPercent = barMax > 0 ? Math.min((item.value / barMax) * 100, 100) : 0
