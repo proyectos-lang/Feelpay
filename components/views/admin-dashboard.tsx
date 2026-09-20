@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { Bandera } from "@/components/bandera"
+import { formatearMoneda } from "@/lib/monedas"
 import { getResumenDiaRutas } from "@/lib/resumen-dia"
 import { todayColombia } from "@/lib/gestion-core"
 import { Card, CardContent } from "@/components/ui/card"
@@ -17,7 +19,7 @@ import {
   Receipt, ArrowDownCircle, Clock,
 } from "lucide-react"
 
-type RutaInfo = { id: number; nombre: string; ciudad: string | null }
+type RutaInfo = { id: number; nombre: string; ciudad: string | null; pais?: string | null; moneda?: string | null }
 
 type ResumenRow = {
   ruta: number
@@ -33,6 +35,8 @@ type ResumenRow = {
   valor_retiros: number
   valor_ingresos: number
   hora_ultimo_movimiento: string | null
+  pais?: string | null
+  moneda?: string | null
 }
 
 interface AdminDashboardProps {
@@ -40,6 +44,27 @@ interface AdminDashboardProps {
 }
 
 const fmt = (n: number) => `$${Math.round(n).toLocaleString("es-CO")}`
+
+/**
+ * El pais de una ruta, escrito para leerse.
+ *
+ * Dos cosas: en `rutas` conviven "ARGENTINA" y "Argentina", y la 204 tiene
+ * `pais` y `ciudad` al reves. Lo segundo se resuelve igual que en el resumen
+ * y en `lib/monedas.ts`: si el "pais" resulta ser una ciudad conocida, se usa
+ * la otra columna.
+ */
+function capitalizarPais(pais?: string | null, ciudad?: string | null): string {
+  const p = (pais ?? "").trim()
+  const c = (ciudad ?? "").trim()
+  const pareceCiudad = /buenos aires|la plata|chaco|cuenca|quito|asunci|cali|ibarra|rioamba/i.test(p)
+  const bueno = pareceCiudad ? c : p
+  return bueno
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((x) => x[0].toUpperCase() + x.slice(1))
+    .join(" ")
+}
 const pctFmt = (val: number, meta: number) =>
   meta > 0 ? `${Math.round((val / meta) * 100)}%` : "—"
 
@@ -72,7 +97,7 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
         if (currentUserId) {
           const { data } = await supabase
             .from("usuario_rutas")
-            .select("rutas:ruta_id(id, nombre, ciudad)")
+            .select("rutas:ruta_id(id, nombre, ciudad, pais, moneda)")
             .eq("usuario_id", currentUserId)
           const rutas = (data ?? [])
             .map((r: any) => r.rutas)
@@ -82,7 +107,7 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
         } else {
           const { data } = await supabase
             .from("rutas")
-            .select("id, nombre, ciudad")
+            .select("id, nombre, ciudad, pais, moneda")
             .order("id", { ascending: true })
           setRutasDisponibles((data ?? []) as RutaInfo[])
         }
@@ -135,6 +160,8 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
             valor_retiros: d.valor_retiros ?? 0,
             valor_ingresos: d.valor_ingresos ?? 0,
             hora_ultimo_movimiento: d.hora_ultimo_movimiento ?? null,
+            pais: info?.pais ?? null,
+            moneda: info?.moneda ?? null,
           }
         }),
       )
@@ -179,6 +206,37 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
       cantidad_no_pagos: 0, cantidad_canceladas: 0, valor_gastos: 0,
       valor_retiros: 0, valor_ingresos: 0 },
   )
+
+  // ── EL RESUMEN POR PAIS ────────────────────────────────────────────────────
+  //
+  // LOS TOTALES DE ARRIBA SUMAN PESOS ARGENTINOS CON DOLARES Y GUARANIES.
+  // Eso no es un detalle de presentacion: 511.975 ARS + 1.280 USD no da
+  // nada que signifique algo, y el numero resultante se lee como plata.
+  //
+  // Aca la plata se agrupa POR MONEDA y se muestra cada una por su lado, con
+  // su propia meta. Es lo que se pidio en el mockup —"Montos por pais, no se
+  // suman entre si"— y es la unica forma correcta de mirarlo mientras no haya
+  // una conversion a dolares de por medio.
+  const porPais = (() => {
+    const m = new Map<string, {
+      pais: string
+      moneda: string
+      recaudo: number
+      meta: number
+      rutas: number
+    }>()
+    for (const r of filteredRows) {
+      const moneda = (r.moneda ?? "").trim().toUpperCase() || "—"
+      const pais = capitalizarPais(r.pais, r.ciudad) || moneda
+      const clave = moneda
+      const acc = m.get(clave) ?? { pais, moneda, recaudo: 0, meta: 0, rutas: 0 }
+      acc.recaudo += r.valor_pago
+      acc.meta += r.meta_pagos
+      acc.rutas += 1
+      m.set(clave, acc)
+    }
+    return [...m.values()].sort((a, b) => a.pais.localeCompare(b.pais))
+  })()
 
   // ── Tarjetas de resumen ────────────────────────────────────────────────────
   const cards = [
@@ -258,7 +316,81 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
         </CardContent>
       </Card>
 
+      {/* ── Resumen multimoneda ──────────────────────────────────────────────
+          Una tarjeta por pais con SU plata y SU meta. Solo aparece cuando hay
+          mas de una moneda en juego: con una sola, seria repetir el total de
+          abajo con mas adornos. */}
+      {porPais.length > 1 && (
+        <Card className="bg-card shadow-sm border-0">
+          <CardContent className="px-3 py-2">
+            <div className="mb-2">
+              <p className="text-sm font-bold text-foreground">Resumen multimoneda</p>
+              <p className="text-[11px] leading-tight text-muted-foreground">
+                Montos por país — no se suman entre sí
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+              {porPais.map((p) => {
+                const pct = p.meta > 0 ? Math.round((p.recaudo / p.meta) * 100) : null
+                const tono =
+                  pct === null ? "bg-muted-foreground"
+                    : pct >= 90 ? "bg-success"
+                      : pct >= 60 ? "bg-warning"
+                        : "bg-destructive"
+                return (
+                  <div
+                    key={p.moneda}
+                    className="rounded-lg border border-border bg-muted/20 px-2 py-1.5"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Bandera moneda={p.moneda} size={30} className="shadow-sm" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-bold leading-tight text-foreground">
+                          {p.pais}
+                        </p>
+                        <p className="text-[10px] leading-tight text-muted-foreground">
+                          {p.moneda} · {p.rutas} {p.rutas === 1 ? "unidad" : "unidades"}
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-sm font-bold tabular-nums text-foreground">
+                        {formatearMoneda(p.recaudo, p.moneda)}
+                      </p>
+                    </div>
+
+                    {/* La barra y el porcentaje son CONTRA SU PROPIA META, no
+                        contra las otras: comparar el recaudo argentino con el
+                        paraguayo en bruto no dice nada. */}
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className={`h-full rounded-full ${tono}`}
+                          style={{ width: `${Math.min(pct ?? 0, 100)}%` }}
+                        />
+                      </div>
+                      <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                        {pct === null ? "sin meta" : `${pct}% de su meta`}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* ── Tarjetas de resumen ──────────────────────────────────────────────── */}
+      {porPais.length > 1 && (
+        <div className="flex items-start gap-1.5 rounded-md border border-dashed border-amber-400 bg-amber-50/60 px-2 py-1.5 dark:bg-amber-950/20">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+          <p className="text-[11px] leading-snug text-amber-700 dark:text-amber-400">
+            Las cifras de plata de abajo <strong>suman monedas distintas</strong> y
+            no representan un valor real. Los conteos (pagos, no pagos,
+            canceladas) sí son comparables. Mirá el resumen por país de arriba.
+          </p>
+        </div>
+      )}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5 md:gap-2">
         {cards.map(({ label, value, icon: Icon, iconBg, iconColor, textColor }) => (
           <Card key={label} className="bg-card shadow-sm border-0">
