@@ -230,3 +230,54 @@ export function fmtDolares(valor: number | null | undefined): string {
     maximumFractionDigits: 2,
   })}`
 }
+
+// ── Banderas ────────────────────────────────────────────────────────────────
+
+/**
+ * LA BANDERA DE CADA MONEDA, COMO EMOJI.
+ *
+ * Emoji y no imágenes: el teléfono ya las trae dibujadas —iOS y Android las
+ * pintan a todo color— así que no hay que servir 18 PNG ni esperar a que
+ * carguen, y se ven nítidas en cualquier pantalla.
+ *
+ * OJO EN WINDOWS: el Chrome de escritorio en Windows las dibuja como dos
+ * letras ("AR") en vez de la bandera, porque el sistema no trae la fuente de
+ * emoji con banderas. No es un error: en el teléfono, que es donde se usa
+ * esta pantalla, se ven bien.
+ *
+ * El dólar lleva la de Estados Unidos porque es la moneda de referencia; el
+ * balboa panameño y las otras que usan dólar llevan la suya propia.
+ */
+const BANDERA: Record<string, string> = {
+  USD: "🇺🇸",
+  ARS: "🇦🇷",
+  BOB: "🇧🇴",
+  BRL: "🇧🇷",
+  CLP: "🇨🇱",
+  COP: "🇨🇴",
+  CRC: "🇨🇷",
+  CUP: "🇨🇺",
+  DOP: "🇩🇴",
+  GTQ: "🇬🇹",
+  HNL: "🇭🇳",
+  MXN: "🇲🇽",
+  NIO: "🇳🇮",
+  PAB: "🇵🇦",
+  PEN: "🇵🇪",
+  PYG: "🇵🇾",
+  UYU: "🇺🇾",
+  VES: "🇻🇪",
+}
+
+/** La bandera de una moneda. Cadena vacía si no se conoce. */
+export function banderaDeMoneda(codigo: string | null | undefined): string {
+  return BANDERA[(codigo ?? "").trim().toUpperCase()] ?? ""
+}
+
+/** La bandera de un país, pasando por su moneda. */
+export function banderaDePais(
+  pais: string | null | undefined,
+  ciudad?: string | null,
+): string {
+  return banderaDeMoneda(monedaPorPais(pais, ciudad))
+}

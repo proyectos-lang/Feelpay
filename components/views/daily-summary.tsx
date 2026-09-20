@@ -15,6 +15,7 @@ import { getResumenDia } from "@/lib/resumen-dia"
 import { todayColombia, bandaCartera, etiquetaFrecuencia, fmtMonedaCien } from "@/lib/gestion-core"
 import { getRutaUmbrales } from "@/lib/ruta-umbrales"
 import { aDolares, formatearMoneda } from "@/lib/monedas"
+import { Bandera } from "@/components/bandera"
 import { DetalleClientesDialog } from "@/components/detalle-clientes-dialog"
 import { PagosDelDiaDialog, type FuentePagos } from "@/components/pagos-del-dia-dialog"
 import type { ModoDia } from "@/lib/pagos-del-dia"
@@ -120,6 +121,10 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
    * hoy el dolar este al doble. Ver scripts/119.
    */
   const [monedaRuta, setMonedaRuta] = useState<string | null>(null)
+  /** Para el saludo: de donde es la ruta y como se llama quien la lleva. */
+  const [nombreUsuario, setNombreUsuario] = useState<string>("")
+  const [paisRuta, setPaisRuta] = useState<string>("")
+  const [ciudadRuta, setCiudadRuta] = useState<string>("")
   const [tasaDelDia, setTasaDelDia] = useState<number | null>(null)
   const [cargandoTasa, setCargandoTasa] = useState(false)
   const [metaAmount, setMetaAmount] = useState(0)
@@ -287,12 +292,23 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
       setCargandoTasa(true)
       try {
         const supabase = createClient()
-        const rRuta = await supabase.from("rutas").select("moneda").eq("id", rutaId).maybeSingle()
+        const rRuta = await supabase.from("rutas").select("moneda, pais, ciudad").eq("id", rutaId).maybeSingle()
         // Sin el script 118 la columna no existe: se calla y no se muestra la
         // tarjeta, en vez de tumbar el resumen entero.
-        const moneda = (rRuta.data as { moneda?: string | null } | null)?.moneda ?? null
+        const fr = rRuta.data as
+          | { moneda?: string | null; pais?: string | null; ciudad?: string | null }
+          | null
+        const moneda = fr?.moneda ?? null
         if (cancelado) return
         setMonedaRuta(moneda)
+        // La 204 tiene pais y ciudad al reves, asi que si el "pais" resulta
+        // ser una ciudad conocida se usa la otra columna. Misma regla que
+        // `monedaPorPais`.
+        const p = (fr?.pais ?? "").trim()
+        const c = (fr?.ciudad ?? "").trim()
+        const pareceCiudad = /buenos aires|la plata|chaco|cuenca|quito|asunci|cali|ibarra/i.test(p)
+        setPaisRuta(pareceCiudad ? c : p)
+        setCiudadRuta(pareceCiudad ? p : c)
 
         if (!moneda || moneda === "USD") {
           setTasaDelDia(moneda === "USD" ? 1 : null)
@@ -333,6 +349,15 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
     void cargar()
     return () => { cancelado = true }
   }, [rutaId, diaDelResumen])
+
+  // El nombre sale de localStorage, asi que se lee en el cliente y una sola
+  // vez: en el render del servidor no existe.
+  useEffect(() => {
+    const n = (getUsuarioSesion().nombre ?? "").trim()
+    // Solo el primer nombre: "Eilyn", no "Eilyn Margarita Rodriguez", que no
+    // cabe al lado de la insignia de estado.
+    setNombreUsuario(n ? n.split(/\s+/)[0] : "")
+  }, [])
 
   const handleIniciarRuta = async () => {
     if (processingRuta) return
@@ -988,7 +1013,38 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                   <span className="whitespace-nowrap">{currentTime}</span>
                 </div>
               </div>
-              <Badge className="bg-white text-foreground border-0 ml-auto text-xs">
+              {/* ── EL SALUDO, con la bandera del pais en un circulo ──────
+                  Va DENTRO del encabezado que ya existe y no en una tarjeta
+                  aparte: la regla de esta pantalla es que todo quepa sin
+                  bajar con el dedo, y una tarjeta nueva costaba ~90px que no
+                  sobran. Aca aprovecha la fila de la fecha, que tenia sitio
+                  libre.
+
+                  La bandera es un emoji: el telefono ya las trae dibujadas,
+                  asi que no hay que servir imagenes ni esperar a que
+                  carguen. (En Chrome de Windows salen como dos letras —el
+                  sistema no trae la fuente— pero en el telefono se ven.) */}
+              {nombreUsuario && (
+                <div className="ml-auto flex items-center gap-1.5 min-w-0">
+                  <Bandera
+                    moneda={monedaRuta}
+                    size={26}
+                    className="shadow-sm ring-1 ring-white/70"
+                  />
+                  <div className="min-w-0 leading-tight">
+                    <p className="truncate text-[11px] font-bold">
+                      ¡Hola, {nombreUsuario}!
+                    </p>
+                    <p className="truncate text-[10px] text-brand-foreground/80">
+                      {[paisRuta, ciudadRuta].filter(Boolean).join(" · ") || "Cobrador"}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-1 flex items-center">
+              <Badge className="bg-white text-foreground border-0 text-xs">
                 Estado:{" "}
                 {rutaDiariaEstado === "abierta" ? (
                   <span className="text-success ml-1 font-semibold">Abierta</span>
@@ -1006,7 +1062,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
               hasta que entre en un teléfono sin bajar con el dedo. `overflow-auto`
               se queda como red de seguridad para pantallas muy chicas o con el
               texto del sistema agrandado, no como la forma normal de usarlo. */}
-          <div className="flex-1 px-2.5 py-1.5 space-y-1 overflow-auto">
+          <div className="flex-1 px-2.5 py-1 space-y-0.5 overflow-auto">
             {/* EL DÍA DEL QUE HABLAN ESTOS NÚMEROS.
                 Sin esto, el resumen de una jornada atrasada se lee como si
                 fuera el de hoy — y es justo al revés de lo que pasaba antes,
@@ -1275,19 +1331,28 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                 una tarjeta ausente se lee como que la funcion no existe. */}
             {monedaRuta && monedaRuta !== "USD" && (
               <Card className="border-0 bg-gradient-to-br from-sky-50 to-blue-50 shadow-sm dark:from-sky-950/40 dark:to-blue-950/40">
-                <CardContent className="px-2.5 py-2">
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white">
+                <CardContent className="px-2.5 py-1">
+                  {/* Titulo y tasa EN EL MISMO RENGLON. El subtitulo salio
+                      —decia lo mismo que el titulo con mas palabras— y la
+                      tasa subio aca: en una tarjeta que solo muestra dos
+                      numeros, dos renglones sueltos costaban los ~30px que
+                      faltaban para que "Retiros" entrara en pantalla. */}
+                  <div className="flex items-center gap-1.5">
+                    <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-[11px] font-bold leading-none text-white">
                       $
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold leading-tight text-foreground">
-                        Equivalente en dólares
+                    <p className="text-[11px] font-semibold leading-tight text-foreground">
+                      Equivalente en dólares
+                    </p>
+                    {tasaDelDia ? (
+                      <p className="ml-auto truncate text-[10px] leading-tight text-muted-foreground">
+                        1 USD ={" "}
+                        <span className="font-semibold text-foreground tabular-nums">
+                          {Number(tasaDelDia).toLocaleString("es-CO", { maximumFractionDigits: 6 })}
+                        </span>{" "}
+                        {monedaRuta}
                       </p>
-                      <p className="text-[10px] leading-tight text-muted-foreground">
-                        Conocé el valor de tu recaudación en USD
-                      </p>
-                    </div>
+                    ) : null}
                   </div>
 
                   {cargandoTasa ? (
@@ -1295,13 +1360,18 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                       Buscando la tasa…
                     </p>
                   ) : tasaDelDia ? (
-                    <div className="mt-1.5 space-y-1">
+                    <div className="mt-1 space-y-0.5">
                       {/* Los dos montos, mitad y mitad. El bloque de la tasa
                           iba antes a la derecha y le robaba el ancho: en un
                           telefono de 390 el "US$ 1.431,28" salia cortado como
                           "US$ …" y la pagina se iba de lado. Ahora va debajo,
                           que es donde cabe entero. */}
-                      <div className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1">
+                      <div
+                        className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1"
+                        title={`Convertido con la tasa del ${fmtFecha(diaDelResumen)}`}
+                      >
+                        {/* Cada lado con su bandera, como en el mockup. */}
+                        <Bandera moneda={monedaRuta} size={22} />
                         <div className="min-w-0 flex-1">
                           <p className="text-[10px] font-semibold text-muted-foreground">
                             {monedaRuta}
@@ -1311,6 +1381,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                           </p>
                         </div>
                         <div className="h-6 w-px shrink-0 bg-border" />
+                        <Bandera moneda="USD" size={22} />
                         <div className="min-w-0 flex-1">
                           <p className="text-[10px] font-semibold text-muted-foreground">
                             USD (aprox.)
@@ -1320,17 +1391,6 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                           </p>
                         </div>
                       </div>
-
-                      {/* La fecha es la de la TASA, no la de ahora: poner
-                          "actualizado hoy" en un cierre viejo haria creer que
-                          se convirtio con el dolar de hoy. */}
-                      <p className="text-[10px] leading-tight text-muted-foreground">
-                        1 USD ={" "}
-                        <span className="font-semibold text-foreground tabular-nums">
-                          {Number(tasaDelDia).toLocaleString("es-CO", { maximumFractionDigits: 6 })}
-                        </span>{" "}
-                        {monedaRuta} · tasa del {fmtFecha(diaDelResumen)}
-                      </p>
                     </div>
                   ) : (
                     <div className="mt-1.5 rounded-md border border-dashed border-amber-400 bg-amber-50/60 px-2 py-1.5 dark:bg-amber-950/20">
