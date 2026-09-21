@@ -327,18 +327,38 @@ export function AdminDashboard({ currentUserId, onVerResumenRutas }: AdminDashbo
   }
 
   // ── Tarjetas de resumen ────────────────────────────────────────────────────
-  const cards = [
+  /**
+   * LAS TARJETAS DE ABAJO.
+   *
+   * CON VARIAS MONEDAS SOLO QUEDAN LOS CONTEOS. Las de plata —Efectivo,
+   * Recaudado, Meta, Gastos...— sumaban pesos argentinos con dolares y
+   * guaranies: "Meta $384" no es una meta de nada, y "% Meta" calculado con
+   * esa mezcla tampoco significa nada. Un numero creible pero falso es peor
+   * que no mostrarlo, porque nadie va a dudar de el.
+   *
+   * La plata por pais esta arriba, en el Resumen multimoneda, y el total
+   * convertido en la Equivalencia global en USD. Con UNA sola moneda estas
+   * tarjetas si dicen la verdad y se muestran completas.
+   */
+  const cardsPlata = [
     { label: "Efectivo",    value: fmt(totals.efectivo),               icon: Wallet,        iconBg: "bg-warning-light",   iconColor: "text-icon-wallet",    textColor: "text-warning"     },
     { label: "Recaudado",   value: fmt(totals.valor_pago),             icon: DollarSign,    iconBg: "bg-success-light",   iconColor: "text-icon-cash",      textColor: "text-success"     },
     { label: "Meta",        value: fmt(totals.meta_pagos),             icon: Target,        iconBg: "bg-info-light",      iconColor: "text-icon-target",    textColor: "text-info"        },
     { label: "% Meta",      value: pctFmt(totals.valor_pago, totals.meta_pagos), icon: TrendingUp, iconBg: "bg-info-light", iconColor: "text-icon-payment", textColor: pctColorClass(totals.valor_pago, totals.meta_pagos) },
-    { label: "Pagos",       value: String(totals.cantidad_pagos),      icon: CheckCircle,   iconBg: "bg-success-light",   iconColor: "text-icon-check",     textColor: "text-success"     },
-    { label: "No Pagos",    value: String(totals.cantidad_no_pagos),   icon: XCircle,       iconBg: "bg-destructive/10",  iconColor: "text-destructive",    textColor: "text-destructive" },
-    { label: "Canceladas",  value: String(totals.cantidad_canceladas), icon: MinusCircle,   iconBg: "bg-warning-light",   iconColor: "text-icon-wallet",    textColor: "text-warning"     },
     { label: "Gastos",      value: fmt(totals.valor_gastos),           icon: Receipt,       iconBg: "bg-destructive/10",  iconColor: "text-icon-expense",   textColor: "text-destructive" },
     { label: "Retiros",     value: fmt(totals.valor_retiros),          icon: ArrowDownCircle, iconBg: "bg-info-light",   iconColor: "text-icon-withdrawal", textColor: "text-icon-withdrawal" },
     { label: "Ingresos",    value: fmt(totals.valor_ingresos),         icon: TrendingUp,    iconBg: "bg-success-light",   iconColor: "text-icon-income",    textColor: "text-success"     },
   ]
+
+  const cardsConteo = [
+    { label: "Pagos",       value: String(totals.cantidad_pagos),      icon: CheckCircle,   iconBg: "bg-success-light",   iconColor: "text-icon-check",     textColor: "text-success"     },
+    { label: "No Pagos",    value: String(totals.cantidad_no_pagos),   icon: XCircle,       iconBg: "bg-destructive/10",  iconColor: "text-destructive",    textColor: "text-destructive" },
+    { label: "Canceladas",  value: String(totals.cantidad_canceladas), icon: MinusCircle,   iconBg: "bg-warning-light",   iconColor: "text-icon-wallet",    textColor: "text-warning"     },
+  ]
+
+  // Con una sola moneda la suma es legitima y se muestra todo.
+  const cards = porPais.length > 1 ? cardsConteo : [...cardsPlata, ...cardsConteo]
+
 
   return (
     <div className="flex flex-col gap-3 md:gap-4">
@@ -565,15 +585,13 @@ export function AdminDashboard({ currentUserId, onVerResumenRutas }: AdminDashbo
       </Card>
 
       {/* ── Tarjetas de resumen ──────────────────────────────────────────────── */}
+      {/* El aviso ya no dice "las cifras de abajo estan mal": ahora esas
+          cifras NO se muestran. Dice donde esta la plata. */}
       {porPais.length > 1 && (
-        <div className="flex items-start gap-1.5 rounded-md border border-dashed border-amber-400 bg-amber-50/60 px-2 py-1.5 dark:bg-amber-950/20">
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
-          <p className="text-[11px] leading-snug text-amber-700 dark:text-amber-400">
-            Las cifras de plata de abajo <strong>suman monedas distintas</strong> y
-            no representan un valor real. Los conteos (pagos, no pagos,
-            canceladas) sí son comparables. Mirá el resumen por país de arriba.
-          </p>
-        </div>
+        <p className="px-1 text-[10px] leading-snug text-muted-foreground">
+          Abajo van solo los <strong>conteos</strong>, que sí se pueden sumar
+          entre países. La plata está arriba, cada una en su moneda.
+        </p>
       )}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5 md:gap-2">
         {cards.map(({ label, value, icon: Icon, iconBg, iconColor, textColor }) => (
