@@ -8,15 +8,12 @@ import { getResumenDiaRutas } from "@/lib/resumen-dia"
 import { todayColombia } from "@/lib/gestion-core"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import {
   Loader2, RefreshCw, AlertCircle,
-  Wallet, DollarSign, Target, TrendingUp,
-  CheckCircle, XCircle, MinusCircle,
-  Receipt, ArrowDownCircle, Clock, Coins, Bike, ChevronRight,
+  TrendingUp,
+  CheckCircle, XCircle,
+  Clock, Coins, Bike, ChevronRight,
 } from "lucide-react"
 
 type RutaInfo = { id: number; nombre: string; ciudad: string | null; pais?: string | null; moneda?: string | null }
@@ -70,21 +67,12 @@ function capitalizarPais(pais?: string | null, ciudad?: string | null): string {
 const pctFmt = (val: number, meta: number) =>
   meta > 0 ? `${Math.round((val / meta) * 100)}%` : "—"
 
-const pctColorClass = (val: number, meta: number) => {
-  if (meta <= 0) return "text-muted-foreground"
-  const p = (val / meta) * 100
-  if (p >= 90) return "text-success font-bold"
-  if (p >= 60) return "text-warning font-semibold"
-  return "text-destructive font-semibold"
-}
 
 // La fecha de hoy en Colombia sale de `todayColombia()` (@/lib/gestion-core):
 // una sola definicion para toda la app.
 
 export function AdminDashboard({ currentUserId, onVerResumenRutas }: AdminDashboardProps) {
   const [fecha, setFecha] = useState(todayColombia)
-  const [rutaFilter, setRutaFilter] = useState("all")
-  const [ciudadFilter, setCiudadFilter] = useState("all")
 
   const [rutasDisponibles, setRutasDisponibles] = useState<RutaInfo[]>([])
   const [rows, setRows] = useState<ResumenRow[]>([])
@@ -94,6 +82,20 @@ export function AdminDashboard({ currentUserId, onVerResumenRutas }: AdminDashbo
   const [tasas, setTasas] = useState<Map<string, number>>(new Map())
   /** Cuantas unidades abrieron y cuantas cerraron ese dia. */
   const [estadosDia, setEstadosDia] = useState<{ abiertas: number; cerradas: number }>({ abiertas: 0, cerradas: 0 })
+  /** Solo el primer nombre, para el saludo. */
+  const [nombreUsuario, setNombreUsuario] = useState("")
+
+  // Sale de localStorage, asi que se lee en el cliente: en el render del
+  // servidor no existe.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("currentUser")
+      const n = raw ? String((JSON.parse(raw) as { nombre?: string }).nombre ?? "").trim() : ""
+      setNombreUsuario(n ? n.split(/\s+/)[0] : "")
+    } catch {
+      /* sesion ilegible: se queda con el saludo generico */
+    }
+  }, [])
 
   // ── Cargar rutas accesibles ────────────────────────────────────────────────
   useEffect(() => {
@@ -234,15 +236,10 @@ export function AdminDashboard({ currentUserId, onVerResumenRutas }: AdminDashbo
   }, [fetchData])
 
   // ── Filtrado local ─────────────────────────────────────────────────────────
-  const filteredRows = rows.filter((r) => {
-    if (rutaFilter !== "all" && r.ruta !== Number(rutaFilter)) return false
-    if (ciudadFilter !== "all" && r.ciudad !== ciudadFilter) return false
-    return true
-  })
+  // Ya no hay filtros de ruta ni de ciudad en pantalla: el tablero se lee
+  // por pais. Se conserva el nombre para no tocar todo lo que lo usa.
+  const filteredRows = rows
 
-  const ciudades = Array.from(
-    new Set(rutasDisponibles.map((r) => r.ciudad).filter(Boolean)),
-  ) as string[]
 
   // ── Totales ────────────────────────────────────────────────────────────────
   const totals = filteredRows.reduce(
@@ -327,102 +324,48 @@ export function AdminDashboard({ currentUserId, onVerResumenRutas }: AdminDashbo
   }
 
   // ── Tarjetas de resumen ────────────────────────────────────────────────────
-  /**
-   * LAS TARJETAS DE ABAJO.
-   *
-   * CON VARIAS MONEDAS SOLO QUEDAN LOS CONTEOS. Las de plata —Efectivo,
-   * Recaudado, Meta, Gastos...— sumaban pesos argentinos con dolares y
-   * guaranies: "Meta $384" no es una meta de nada, y "% Meta" calculado con
-   * esa mezcla tampoco significa nada. Un numero creible pero falso es peor
-   * que no mostrarlo, porque nadie va a dudar de el.
-   *
-   * La plata por pais esta arriba, en el Resumen multimoneda, y el total
-   * convertido en la Equivalencia global en USD. Con UNA sola moneda estas
-   * tarjetas si dicen la verdad y se muestran completas.
-   */
-  const cardsPlata = [
-    { label: "Efectivo",    value: fmt(totals.efectivo),               icon: Wallet,        iconBg: "bg-warning-light",   iconColor: "text-icon-wallet",    textColor: "text-warning"     },
-    { label: "Recaudado",   value: fmt(totals.valor_pago),             icon: DollarSign,    iconBg: "bg-success-light",   iconColor: "text-icon-cash",      textColor: "text-success"     },
-    { label: "Meta",        value: fmt(totals.meta_pagos),             icon: Target,        iconBg: "bg-info-light",      iconColor: "text-icon-target",    textColor: "text-info"        },
-    { label: "% Meta",      value: pctFmt(totals.valor_pago, totals.meta_pagos), icon: TrendingUp, iconBg: "bg-info-light", iconColor: "text-icon-payment", textColor: pctColorClass(totals.valor_pago, totals.meta_pagos) },
-    { label: "Gastos",      value: fmt(totals.valor_gastos),           icon: Receipt,       iconBg: "bg-destructive/10",  iconColor: "text-icon-expense",   textColor: "text-destructive" },
-    { label: "Retiros",     value: fmt(totals.valor_retiros),          icon: ArrowDownCircle, iconBg: "bg-info-light",   iconColor: "text-icon-withdrawal", textColor: "text-icon-withdrawal" },
-    { label: "Ingresos",    value: fmt(totals.valor_ingresos),         icon: TrendingUp,    iconBg: "bg-success-light",   iconColor: "text-icon-income",    textColor: "text-success"     },
-  ]
-
-  const cardsConteo = [
-    { label: "Pagos",       value: String(totals.cantidad_pagos),      icon: CheckCircle,   iconBg: "bg-success-light",   iconColor: "text-icon-check",     textColor: "text-success"     },
-    { label: "No Pagos",    value: String(totals.cantidad_no_pagos),   icon: XCircle,       iconBg: "bg-destructive/10",  iconColor: "text-destructive",    textColor: "text-destructive" },
-    { label: "Canceladas",  value: String(totals.cantidad_canceladas), icon: MinusCircle,   iconBg: "bg-warning-light",   iconColor: "text-icon-wallet",    textColor: "text-warning"     },
-  ]
-
-  // Con una sola moneda la suma es legitima y se muestra todo.
-  const cards = porPais.length > 1 ? cardsConteo : [...cardsPlata, ...cardsConteo]
 
 
   return (
     <div className="flex flex-col gap-3 md:gap-4">
 
-      {/* ── Filtros ─────────────────────────────────────────────────────────── */}
-      <Card className="bg-card shadow-sm border-0">
-        <CardContent className="px-3 py-2">
-          <div className="flex flex-wrap gap-3 items-end">
-            <div className="flex flex-col gap-1">
-              <Label className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Fecha</Label>
-              <Input
-                type="date"
-                value={fecha}
-                onChange={(e) => setFecha(e.target.value)}
-                className="h-8 w-36 text-xs bg-background border-border"
-              />
-            </div>
+      {/* ── El saludo ────────────────────────────────────────────────────────
+          Como el mockup: quien entro, su perfil y la fecha. La fecha sigue
+          siendo EDITABLE —es el filtro que manda sobre todo lo de abajo— pero
+          va aca, junto al saludo, en vez de en una tarjeta de filtros aparte.
 
-            <div className="flex flex-col gap-1">
-              <Label className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Ruta</Label>
-              <Select value={rutaFilter} onValueChange={setRutaFilter}>
-                <SelectTrigger className="h-8 w-44 text-xs bg-background border-border">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todas las rutas</SelectItem>
-                  {rutasDisponibles.map((r) => (
-                    <SelectItem key={r.id} value={String(r.id)} className="text-xs">
-                      {r.nombre || `Ruta ${r.id}`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {ciudades.length > 0 && (
-              <div className="flex flex-col gap-1">
-                <Label className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Ciudad</Label>
-                <Select value={ciudadFilter} onValueChange={setCiudadFilter}>
-                  <SelectTrigger className="h-8 w-36 text-xs bg-background border-border">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todas</SelectItem>
-                    {ciudades.map((c) => (
-                      <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={fetchData}
-              className="h-8 gap-1.5 text-xs border-border"
-            >
-              <RefreshCw className="h-3 w-3" />
-              Actualizar
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+          Los filtros de ruta y ciudad salieron: el tablero ahora se lee POR
+          PAIS, y filtrar por una sola ruta dejaba el resumen multimoneda con
+          una sola tarjeta, que es justo lo que este tablero no quiere ser.
+          Para mirar una unidad esta el Resumen de Rutas. */}
+      <div className="flex items-center gap-2 px-1">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-base font-bold leading-tight text-foreground">
+            Hola {nombreUsuario || "Administrador"}
+          </p>
+          <p className="truncate text-[11px] leading-tight text-muted-foreground">
+            Perfil: Administrador
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Input
+            type="date"
+            value={fecha}
+            onChange={(e) => setFecha(e.target.value)}
+            className="h-8 w-[136px] border-border bg-background text-xs"
+          />
+          <Button
+            size="icon"
+            variant="outline"
+            onClick={fetchData}
+            disabled={loading}
+            title="Actualizar"
+            className="h-8 w-8 shrink-0"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+          </Button>
+        </div>
+      </div>
 
       {/* ── Resumen multimoneda ──────────────────────────────────────────────
           Una tarjeta por pais con SU plata y SU meta. Solo aparece cuando hay
@@ -584,150 +527,6 @@ export function AdminDashboard({ currentUserId, onVerResumenRutas }: AdminDashbo
         </CardContent>
       </Card>
 
-      {/* ── Tarjetas de resumen ──────────────────────────────────────────────── */}
-      {/* El aviso ya no dice "las cifras de abajo estan mal": ahora esas
-          cifras NO se muestran. Dice donde esta la plata. */}
-      {porPais.length > 1 && (
-        <p className="px-1 text-[10px] leading-snug text-muted-foreground">
-          Abajo van solo los <strong>conteos</strong>, que sí se pueden sumar
-          entre países. La plata está arriba, cada una en su moneda.
-        </p>
-      )}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5 md:gap-2">
-        {cards.map(({ label, value, icon: Icon, iconBg, iconColor, textColor }) => (
-          <Card key={label} className="bg-card shadow-sm border-0">
-            <CardContent className="px-2 py-1.5 flex items-center gap-1.5">
-              <div className={`h-7 w-7 rounded ${iconBg} flex items-center justify-center shrink-0`}>
-                <Icon className={`h-3.5 w-3.5 ${iconColor}`} />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[9px] md:text-[10px] text-muted-foreground font-medium leading-none truncate">{label}</p>
-                <p className={`text-sm md:text-base font-bold leading-tight ${textColor}`}>{value}</p>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* ── Tabla ───────────────────────────────────────────────────────────── */}
-      <Card className="bg-card shadow-sm border-0">
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="flex justify-center items-center py-14">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            </div>
-          ) : error ? (
-            <div className="flex flex-col items-center gap-2 py-10 text-center px-4">
-              <AlertCircle className="h-5 w-5 text-destructive" />
-              <p className="text-xs text-destructive">{error}</p>
-              <Button size="sm" variant="outline" onClick={fetchData} className="text-xs h-7">Reintentar</Button>
-            </div>
-          ) : filteredRows.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-10 text-center">
-              <p className="text-xs text-muted-foreground">Sin datos para los filtros seleccionados.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-muted/40 hover:bg-muted/40">
-                    {[
-                      "Ruta", "Ciudad",
-                      "Efectivo", "Recaudado", "Meta", "% Meta",
-                      "Pagos", "No Pago", "Cancel.",
-                      "Gastos", "Retiros", "Ingresos",
-                      "Últ. Mov.",
-                    ].map((h, i) => (
-                      <TableHead
-                        key={h}
-                        className={`text-[9px] md:text-[10px] font-bold uppercase tracking-wide text-muted-foreground px-2 py-2 whitespace-nowrap ${i >= 2 ? "text-right" : ""} ${[6,7,8,12].includes(i) ? "text-center" : ""}`}
-                      >
-                        {h}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredRows.map((row) => {
-                    const horaFmt = row.hora_ultimo_movimiento
-                      ? row.hora_ultimo_movimiento.includes("T")
-                        ? new Date(row.hora_ultimo_movimiento).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })
-                        : row.hora_ultimo_movimiento.slice(0, 5)
-                      : "—"
-
-                    return (
-                      <TableRow key={row.ruta} className="hover:bg-muted/20 border-b border-border/50">
-                        <TableCell className="text-[10px] md:text-xs px-2 py-1.5 font-semibold text-foreground whitespace-nowrap">
-                          {row.ruta_nombre}
-                        </TableCell>
-                        <TableCell className="text-[10px] md:text-xs px-2 py-1.5 text-muted-foreground whitespace-nowrap">
-                          {row.ciudad ?? "—"}
-                        </TableCell>
-                        <TableCell className="text-[10px] md:text-xs px-2 py-1.5 text-right font-medium text-warning whitespace-nowrap">
-                          {fmt(row.efectivo)}
-                        </TableCell>
-                        <TableCell className="text-[10px] md:text-xs px-2 py-1.5 text-right font-medium text-success whitespace-nowrap">
-                          {fmt(row.valor_pago)}
-                        </TableCell>
-                        <TableCell className="text-[10px] md:text-xs px-2 py-1.5 text-right text-muted-foreground whitespace-nowrap">
-                          {fmt(row.meta_pagos)}
-                        </TableCell>
-                        <TableCell className={`text-[10px] md:text-xs px-2 py-1.5 text-center whitespace-nowrap ${pctColorClass(row.valor_pago, row.meta_pagos)}`}>
-                          {pctFmt(row.valor_pago, row.meta_pagos)}
-                        </TableCell>
-                        <TableCell className="text-[10px] md:text-xs px-2 py-1.5 text-center font-semibold text-success">
-                          {row.cantidad_pagos}
-                        </TableCell>
-                        <TableCell className="text-[10px] md:text-xs px-2 py-1.5 text-center font-semibold text-destructive">
-                          {row.cantidad_no_pagos}
-                        </TableCell>
-                        <TableCell className="text-[10px] md:text-xs px-2 py-1.5 text-center font-semibold text-warning">
-                          {row.cantidad_canceladas}
-                        </TableCell>
-                        <TableCell className="text-[10px] md:text-xs px-2 py-1.5 text-right text-destructive whitespace-nowrap">
-                          {fmt(row.valor_gastos)}
-                        </TableCell>
-                        <TableCell className="text-[10px] md:text-xs px-2 py-1.5 text-right text-icon-withdrawal whitespace-nowrap">
-                          {fmt(row.valor_retiros)}
-                        </TableCell>
-                        <TableCell className="text-[10px] md:text-xs px-2 py-1.5 text-right text-icon-income whitespace-nowrap">
-                          {fmt(row.valor_ingresos)}
-                        </TableCell>
-                        <TableCell className="text-[10px] md:text-xs px-2 py-1.5 text-center text-muted-foreground whitespace-nowrap">
-                          <span className="inline-flex items-center gap-1">
-                            <Clock className="h-2.5 w-2.5" />
-                            {horaFmt}
-                          </span>
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-
-                  {/* Fila de totales */}
-                  {filteredRows.length > 1 && (
-                    <TableRow className="bg-muted/50 border-t-2 border-border font-bold">
-                      <TableCell className="text-[10px] md:text-xs px-2 py-2 font-bold text-foreground" colSpan={2}>
-                        Total — {filteredRows.length} rutas
-                      </TableCell>
-                      <TableCell className="text-[10px] md:text-xs px-2 py-2 text-right font-bold text-warning whitespace-nowrap">{fmt(totals.efectivo)}</TableCell>
-                      <TableCell className="text-[10px] md:text-xs px-2 py-2 text-right font-bold text-success whitespace-nowrap">{fmt(totals.valor_pago)}</TableCell>
-                      <TableCell className="text-[10px] md:text-xs px-2 py-2 text-right text-muted-foreground whitespace-nowrap">{fmt(totals.meta_pagos)}</TableCell>
-                      <TableCell className={`text-[10px] md:text-xs px-2 py-2 text-center whitespace-nowrap ${pctColorClass(totals.valor_pago, totals.meta_pagos)}`}>{pctFmt(totals.valor_pago, totals.meta_pagos)}</TableCell>
-                      <TableCell className="text-[10px] md:text-xs px-2 py-2 text-center font-bold text-success">{totals.cantidad_pagos}</TableCell>
-                      <TableCell className="text-[10px] md:text-xs px-2 py-2 text-center font-bold text-destructive">{totals.cantidad_no_pagos}</TableCell>
-                      <TableCell className="text-[10px] md:text-xs px-2 py-2 text-center font-bold text-warning">{totals.cantidad_canceladas}</TableCell>
-                      <TableCell className="text-[10px] md:text-xs px-2 py-2 text-right font-bold text-destructive whitespace-nowrap">{fmt(totals.valor_gastos)}</TableCell>
-                      <TableCell className="text-[10px] md:text-xs px-2 py-2 text-right font-bold text-icon-withdrawal whitespace-nowrap">{fmt(totals.valor_retiros)}</TableCell>
-                      <TableCell className="text-[10px] md:text-xs px-2 py-2 text-right font-bold text-icon-income whitespace-nowrap">{fmt(totals.valor_ingresos)}</TableCell>
-                      <TableCell className="text-[10px] md:text-xs px-2 py-2" />
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
   )
 }
