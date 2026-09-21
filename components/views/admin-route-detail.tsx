@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent } from "@/components/ui/card"
+import { DetalleRutaEncabezado } from "@/components/views/detalle-ruta-encabezado"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -61,6 +62,8 @@ type Tab = "pagos" | "no_pagos" | "ventas" | "gastos" | "ingresos" | "retiros"
 
 interface AdminRouteDetailProps {
   currentUserId?: number | string | null
+  /** Ruta con la que abrir, cuando se llega desde el Resumen de Rutas. */
+  rutaInicial?: number | null
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -79,9 +82,9 @@ const COLUMNAS_ACTIVIDAD =
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
+export function AdminRouteDetail({ currentUserId, rutaInicial }: AdminRouteDetailProps) {
   const [fecha, setFecha] = useState(todayColombia)
-  const [rutaFilter, setRutaFilter] = useState("all")
+  const [rutaFilter, setRutaFilter] = useState(rutaInicial ? String(rutaInicial) : "all")
   const [ciudadFilter, setCiudadFilter] = useState("all")
   const [activeTab, setActiveTab] = useState<Tab>("pagos")
 
@@ -350,6 +353,13 @@ export function AdminRouteDetail({ currentUserId }: AdminRouteDetailProps) {
           </div>
         </CardContent>
       </Card>
+
+      {/* ── El encabezado de la unidad ──────────────────────────────────────
+          Solo con UNA ruta elegida. Con "Todas" no habria una moto, un
+          cobrador ni un porcentaje que mostrar: serian catorce. */}
+      {rutaFilter !== "all" && (
+        <DetalleRutaEncabezado rutaId={Number(rutaFilter)} fecha={fecha} />
+      )}
 
       {/* ── Tabs ────────────────────────────────────────────────────────────── */}
       <Card className="bg-card shadow-sm border-0">

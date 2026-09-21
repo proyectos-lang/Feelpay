@@ -148,6 +148,8 @@ type RutaActivaCache = {
 export default function Page() {
   const { toast } = useToast()
   const [currentView, setCurrentView] = useState("register-payment")
+  // Que ruta abrir en el Detalle de Ruta cuando se llega desde el Resumen.
+  const [rutaDetalle, setRutaDetalle] = useState<number | null>(null)
   const [viewData, setViewData] = useState<any>(null)
   // Por qué se cerró la sesión. Sin esto, que la app te devuelva al login sin
   // decir nada se lee como una falla, no como una regla.
@@ -1419,7 +1421,7 @@ export default function Page() {
         return (
           <ResumenRutas
             currentUserId={currentUser?.id}
-            onVerRuta={() => setCurrentView("admin-route-detail")}
+            onVerRuta={(id) => { setRutaDetalle(id); setCurrentView("admin-route-detail") }}
           />
         )
       case "configure-route":
@@ -1475,7 +1477,7 @@ export default function Page() {
           />
         )
       case "admin-route-detail":
-        return <AdminRouteDetail currentUserId={currentUser?.id} />
+        return <AdminRouteDetail currentUserId={currentUser?.id} rutaInicial={rutaDetalle} />
       case "payment-control":
         return <PaymentControl currentRutaId={rutaId} rutaPais={rutaPais} />
       case "sale-editor":
