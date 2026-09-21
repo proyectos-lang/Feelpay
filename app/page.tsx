@@ -42,6 +42,7 @@ import { ReporteAdministrador } from "@/components/views/reporte-administrador"
 import { ReporteGerencial } from "@/components/views/reporte-gerencial"
 import { DescargarInforme } from "@/components/views/descargar-informe"
 import { TasasCambio } from "@/components/views/tasas-cambio"
+import { ResumenRutas } from "@/components/views/resumen-rutas"
 import { CierreCaja } from "@/components/views/cierre-caja"
 import { AdminRouteMonitor } from "@/components/views/admin-route-monitor"
 import { AdminDashboard } from "@/components/views/admin-dashboard"
@@ -1414,6 +1415,13 @@ export default function Page() {
         return <DescargarInforme />
       case "tasas-cambio":
         return <TasasCambio />
+      case "resumen-rutas":
+        return (
+          <ResumenRutas
+            currentUserId={currentUser?.id}
+            onVerRuta={() => setCurrentView("admin-route-detail")}
+          />
+        )
       case "configure-route":
         return <ConfigureRoute currentRutaId={rutaId} />
       case "register-payment":
@@ -1460,7 +1468,12 @@ export default function Page() {
       case "admin-route-monitor":
         return <AdminRouteMonitor currentUser={currentUser} />
       case "admin-dashboard":
-        return <AdminDashboard currentUserId={currentUser?.id} />
+        return (
+          <AdminDashboard
+            currentUserId={currentUser?.id}
+            onVerResumenRutas={() => setCurrentView("resumen-rutas")}
+          />
+        )
       case "admin-route-detail":
         return <AdminRouteDetail currentUserId={currentUser?.id} />
       case "payment-control":

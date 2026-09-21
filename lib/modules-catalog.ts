@@ -163,6 +163,16 @@ export const ALL_MODULES: ModuleDefinition[] = [
     group: "Secretaria",
   },
   {
+    viewId: "resumen-rutas",
+    label: "Resumen de Rutas",
+    mobileLabel: "Resumen",
+    description: "Todas las unidades en una lista: moto, cobrador, cuanto debia y cuanto lleva",
+    defaultRoles: ["admin", "administrador", "secretaria", "secretario", "gerencia", "gerente"],
+    defaultMobileNavRoles: [],
+    iconName: "LayoutList",
+    group: "Administrador",
+  },
+  {
     viewId: "descargar-informe",
     label: "Descargar Informe",
     mobileLabel: "Informe",

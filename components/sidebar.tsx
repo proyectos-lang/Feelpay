@@ -32,6 +32,7 @@ import {
   ScanSearch,
   FileSpreadsheet,
   ArrowRightLeft,
+  LayoutList,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -68,6 +69,7 @@ const navGroups: NavGroup[] = [
     items: [
       { id: "admin-dashboard",        label: "Dashboard",          icon: LayoutDashboard, colorClass: "sidebar-item-summary"  },
       { id: "admin-route-detail",     label: "Detalle Rutas",      icon: ClipboardList,   colorClass: "sidebar-item-clients"  },
+      { id: "resumen-rutas",          label: "Resumen Rutas",      icon: LayoutList,      colorClass: "sidebar-item-clients"  },
       { id: "pending-authorizations", label: "Autor. Admin",       icon: CheckCircle,     colorClass: "sidebar-item-auth"     },
       // Duplicado a proposito en los dos grupos: el admin y la secretaria
       // entran los dos a esta bandeja. (La razon vieja —que el menu se armaba

@@ -16,7 +16,7 @@ import {
   Loader2, RefreshCw, AlertCircle,
   Wallet, DollarSign, Target, TrendingUp,
   CheckCircle, XCircle, MinusCircle,
-  Receipt, ArrowDownCircle, Clock, Coins, Bike,
+  Receipt, ArrowDownCircle, Clock, Coins, Bike, ChevronRight,
 } from "lucide-react"
 
 type RutaInfo = { id: number; nombre: string; ciudad: string | null; pais?: string | null; moneda?: string | null }
@@ -41,6 +41,8 @@ type ResumenRow = {
 
 interface AdminDashboardProps {
   currentUserId?: number | string | null
+  /** Para el botón que abre el resumen de todas las rutas. */
+  onVerResumenRutas?: () => void
 }
 
 const fmt = (n: number) => `$${Math.round(n).toLocaleString("es-CO")}`
@@ -79,7 +81,7 @@ const pctColorClass = (val: number, meta: number) => {
 // La fecha de hoy en Colombia sale de `todayColombia()` (@/lib/gestion-core):
 // una sola definicion para toda la app.
 
-export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
+export function AdminDashboard({ currentUserId, onVerResumenRutas }: AdminDashboardProps) {
   const [fecha, setFecha] = useState(todayColombia)
   const [rutaFilter, setRutaFilter] = useState("all")
   const [ciudadFilter, setCiudadFilter] = useState("all")
@@ -504,7 +506,7 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
         <CardContent className="px-3 py-2">
           <div className="mb-1.5 flex items-center gap-1.5">
             <Bike className="h-4 w-4 shrink-0 text-brand" />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-xs font-bold leading-tight text-foreground">
                 Unidades operativas
               </p>
@@ -512,6 +514,20 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
                 Estado de las unidades de recaudo
               </p>
             </div>
+            {/* Va AQUI y no suelto arriba: es el detalle de este mismo
+                bloque —las unidades— asi que se toca donde se estan mirando
+                los numeros que resume. */}
+            {onVerResumenRutas && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={onVerResumenRutas}
+                className="h-7 shrink-0 gap-0.5 px-2 text-[11px] text-brand"
+              >
+                Ver todas
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
 
           <div className="grid grid-cols-3 gap-1.5">

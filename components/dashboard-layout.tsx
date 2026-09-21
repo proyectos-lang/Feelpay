@@ -69,6 +69,7 @@ export function DashboardLayout({
       "reporte-gerencial": "Reporte Gerencial",
       "descargar-informe": "Descargar Informe",
       "tasas-cambio": "Tasas de Cambio",
+      "resumen-rutas": "Resumen de Rutas",
       "admin-dashboard": "Dashboard Administrador",
       "admin-route-detail": "Detalle de Rutas",
       "secretary-reports": "Reportes",
