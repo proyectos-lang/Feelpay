@@ -16,7 +16,7 @@ import {
   Loader2, RefreshCw, AlertCircle,
   Wallet, DollarSign, Target, TrendingUp,
   CheckCircle, XCircle, MinusCircle,
-  Receipt, ArrowDownCircle, Clock,
+  Receipt, ArrowDownCircle, Clock, Coins, Bike,
 } from "lucide-react"
 
 type RutaInfo = { id: number; nombre: string; ciudad: string | null; pais?: string | null; moneda?: string | null }
@@ -88,6 +88,10 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
   const [rows, setRows] = useState<ResumenRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  /** Las tasas que regian ESE dia, por moneda. Ver scripts/119. */
+  const [tasas, setTasas] = useState<Map<string, number>>(new Map())
+  /** Cuantas unidades abrieron y cuantas cerraron ese dia. */
+  const [estadosDia, setEstadosDia] = useState<{ abiertas: number; cerradas: number }>({ abiertas: 0, cerradas: 0 })
 
   // ── Cargar rutas accesibles ────────────────────────────────────────────────
   useEffect(() => {
@@ -137,7 +141,56 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
       // si es que nadie trabajo o si algo se habia roto. Ahora todas las rutas
       // aparecen siempre, con su efectivo acumulado y los conteos del dia en
       // cero.
-      const porRuta = await getResumenDiaRutas(supabase, rutaIds, fecha)
+      // ── Las tasas de ESE dia y el estado de cada unidad ────────────────
+      // Las dos consultas van en paralelo con el resumen: ninguna depende de
+      // la otra y esperar en fila alargaria la carga sin motivo.
+      //
+      // La TASA es la del dia del tablero, no la de hoy: mirando el 3 de
+      // agosto hay que convertir con el dolar del 3 de agosto. Misma regla
+      // que `tasa_vigente()` en scripts/119.
+      const [porRuta, resTasas, resEstados] = await Promise.all([
+        getResumenDiaRutas(supabase, rutaIds, fecha),
+        supabase
+          .from("tasas_cambio")
+          .select("moneda, tasa, vigente_desde, vigente_hasta")
+          .lte("vigente_desde", fecha),
+        supabase
+          .from("rutas_diarias")
+          .select("ruta_id, estado")
+          .eq("fecha", fecha)
+          .in("ruta_id", rutaIds),
+      ])
+
+      // Sin el script 119 la tabla no existe: se queda sin tasas y la tarjeta
+      // de dolares no se muestra, en vez de tumbar el tablero entero.
+      const mapaTasas = new Map<string, number>()
+      if (!resTasas.error) {
+        // Se queda la MAS RECIENTE que siga cubriendo la fecha. Quedarse con
+        // la primera que llegue es quedarse con la que el servidor devuelva
+        // primero, que puede ser una vieja: con dos tasas cargadas para la
+        // misma moneda se estaria convirtiendo con la cotizacion equivocada.
+        const desdePorMoneda = new Map<string, string>()
+        for (const t of (resTasas.data ?? []) as unknown as {
+          moneda: string; tasa: number; vigente_desde: string; vigente_hasta: string | null
+        }[]) {
+          // El rango tiene que CONTENER la fecha. Una tasa cerrada antes de
+          // ese dia no sirve: estirarla seria inventar una cotizacion.
+          if (t.vigente_hasta !== null && t.vigente_hasta < fecha) continue
+          const mejor = desdePorMoneda.get(t.moneda)
+          if (mejor === undefined || t.vigente_desde > mejor) {
+            desdePorMoneda.set(t.moneda, t.vigente_desde)
+            mapaTasas.set(t.moneda, Number(t.tasa))
+          }
+        }
+      }
+      setTasas(mapaTasas)
+
+      const est = { abiertas: 0, cerradas: 0 }
+      for (const e of (resEstados.data ?? []) as unknown as { estado: string }[]) {
+        if (e.estado === "abierta") est.abiertas += 1
+        else if (e.estado === "cerrada") est.cerradas += 1
+      }
+      setEstadosDia(est)
       const data = rutaIds.map((id) => {
         const r = porRuta.get(id)
         return { ...(r?.fila ?? {}), ruta: id, sin_movimiento: r?.sinMovimiento ?? true }
@@ -237,6 +290,39 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
     }
     return [...m.values()].sort((a, b) => a.pais.localeCompare(b.pais))
   })()
+
+  // ── La equivalencia global en dolares ──────────────────────────────────────
+  //
+  // ESTA es la unica suma honesta entre paises: cada moneda se pasa a dolares
+  // con la tasa de SU dia y despues se suman los dolares. Sumar los numeros
+  // en bruto —lo que hacen las tarjetas de abajo— junta pesos con guaranies.
+  //
+  // `completa` dice si alcanzo para TODAS las monedas. Si a una le falta la
+  // tasa, el total seria menor de lo real y se veria como una caida del
+  // recaudo: hay que decirlo, no mostrar el numero a secas.
+  const globalUsd = (() => {
+    let total = 0
+    const sinTasa: string[] = []
+    for (const p of porPais) {
+      const tasa = p.moneda === "USD" ? 1 : tasas.get(p.moneda)
+      if (!tasa || tasa <= 0) {
+        if (p.recaudo > 0) sinTasa.push(p.moneda)
+        continue
+      }
+      total += p.recaudo / tasa
+    }
+    return { total, sinTasa, completa: sinTasa.length === 0 }
+  })()
+
+  // ── Las unidades y su estado ───────────────────────────────────────────────
+  // "Sin iniciar" no sale de `rutas_diarias`: una unidad que no arranco NO
+  // tiene fila ese dia. Es el resto, y por eso se calcula restando.
+  const unidades = {
+    total: filteredRows.length,
+    abiertas: estadosDia.abiertas,
+    cerradas: estadosDia.cerradas,
+    sinIniciar: Math.max(filteredRows.length - estadosDia.abiertas - estadosDia.cerradas, 0),
+  }
 
   // ── Tarjetas de resumen ────────────────────────────────────────────────────
   const cards = [
@@ -379,6 +465,88 @@ export function AdminDashboard({ currentUserId }: AdminDashboardProps) {
           </CardContent>
         </Card>
       )}
+
+      {/* ── Equivalencia global en USD ───────────────────────────────────────
+          La unica suma honesta entre paises: cada moneda pasa a dolares con
+          la tasa de SU dia y despues se suman los dolares. */}
+      {porPais.length > 1 && globalUsd.total > 0 && (
+        <Card className="border-0 bg-gradient-to-br from-sky-50 to-blue-50 shadow-sm dark:from-sky-950/40 dark:to-blue-950/40">
+          <CardContent className="flex items-center gap-3 px-3 py-2.5">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-blue-600/10">
+              <Coins className="h-5 w-5 text-blue-600" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold leading-tight text-foreground">
+                Equivalencia global en USD
+              </p>
+              <p className="text-2xl font-bold leading-tight tabular-nums text-blue-700 dark:text-blue-300">
+                USD {globalUsd.total.toLocaleString("es-CO", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              </p>
+              <p className="text-[10px] leading-tight text-muted-foreground">
+                Valor equivalente de todo lo recaudado · tasas del{" "}
+                {fecha.split("-").reverse().join("/")}
+              </p>
+              {/* Si a una moneda le falta tasa, el total sale CORTO y parece
+                  una caida del recaudo. Se dice cual falta. */}
+              {!globalUsd.completa && (
+                <p className="mt-0.5 text-[10px] font-semibold leading-tight text-amber-600">
+                  No incluye {globalUsd.sinTasa.join(", ")}: sin tasa para ese día.
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Unidades operativas ──────────────────────────────────────────────
+          Cuantas unidades hay y en que estado arrancaron el dia. */}
+      <Card className="bg-card shadow-sm border-0">
+        <CardContent className="px-3 py-2">
+          <div className="mb-1.5 flex items-center gap-1.5">
+            <Bike className="h-4 w-4 shrink-0 text-brand" />
+            <div className="min-w-0">
+              <p className="text-xs font-bold leading-tight text-foreground">
+                Unidades operativas
+              </p>
+              <p className="text-[10px] leading-tight text-muted-foreground">
+                Estado de las unidades de recaudo
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-1.5">
+            {[
+              { label: "Total de unidades", valor: unidades.total, icono: Bike, tono: "text-info", fondo: "bg-info-light" },
+              { label: "Unidades abiertas", valor: unidades.abiertas, icono: CheckCircle, tono: "text-success", fondo: "bg-success-light" },
+              // Las que no arrancaron se muestran aparte y NO se cuentan como
+              // cerradas: son cosas distintas —una cerro su caja, la otra
+              // todavia no empezo— y juntarlas taparia justo lo que el admin
+              // necesita ver.
+              { label: unidades.sinIniciar > 0 ? "Sin iniciar" : "Unidades cerradas",
+                valor: unidades.sinIniciar > 0 ? unidades.sinIniciar : unidades.cerradas,
+                icono: unidades.sinIniciar > 0 ? Clock : XCircle,
+                tono: unidades.sinIniciar > 0 ? "text-warning" : "text-destructive",
+                fondo: unidades.sinIniciar > 0 ? "bg-warning-light" : "bg-destructive/10" },
+            ].map((c) => (
+              <div key={c.label} className="rounded-lg border border-border bg-muted/20 px-2 py-1.5 text-center">
+                <div className={`mx-auto mb-0.5 grid h-7 w-7 place-items-center rounded-full ${c.fondo}`}>
+                  <c.icono className={`h-4 w-4 ${c.tono}`} />
+                </div>
+                <p className="text-[10px] leading-tight text-muted-foreground">{c.label}</p>
+                <p className={`text-lg font-bold leading-tight tabular-nums ${c.tono}`}>{c.valor}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Cuando hay de las dos, la tercera caja muestra "sin iniciar" y
+              las cerradas quedarian invisibles. Se dicen aparte. */}
+          {unidades.sinIniciar > 0 && unidades.cerradas > 0 && (
+            <p className="mt-1 text-center text-[10px] text-muted-foreground">
+              {unidades.cerradas} {unidades.cerradas === 1 ? "unidad ya cerró" : "unidades ya cerraron"} su caja.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ── Tarjetas de resumen ──────────────────────────────────────────────── */}
       {porPais.length > 1 && (
