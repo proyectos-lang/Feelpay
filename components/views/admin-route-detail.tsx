@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import {
   todayColombia, horaColombia, fmtMoneda, etiquetaFrecuencia, colapsarPorCliente,
+  montoEfectivo,
   type TipoGestion,
 } from "@/lib/gestion-core"
 
@@ -58,7 +59,17 @@ type TransaccionRow = {
   observacion: string | null; estadoadmin: string | null
 }
 
-type Tab = "pagos" | "no_pagos" | "ventas" | "gastos" | "ingresos" | "retiros"
+type Tab = "clientes" | "pagos" | "no_pagos" | "ventas" | "gastos" | "ingresos" | "retiros"
+
+/** Un cliente con cuota ese dia, y como le fue. */
+interface ClienteDia {
+  loanId: string
+  nombre: string
+  direccion: string
+  cuota: number
+  estado: "pago" | "no_pago" | "pendiente"
+  abonado: number
+}
 
 interface AdminRouteDetailProps {
   currentUserId?: number | string | null
@@ -86,7 +97,10 @@ export function AdminRouteDetail({ currentUserId, rutaInicial }: AdminRouteDetai
   const [fecha, setFecha] = useState(todayColombia)
   const [rutaFilter, setRutaFilter] = useState(rutaInicial ? String(rutaInicial) : "all")
   const [ciudadFilter, setCiudadFilter] = useState("all")
-  const [activeTab, setActiveTab] = useState<Tab>("pagos")
+  // Con una ruta elegida se abre en Clientes —es lo que se quiere ver al
+  // entrar al detalle de UNA unidad—; con "Todas" esa pestaña no existe, asi
+  // que se abre en Pagos.
+  const [activeTab, setActiveTab] = useState<Tab>(rutaInicial ? "clientes" : "pagos")
 
   const [rutasDisponibles, setRutasDisponibles] = useState<RutaInfo[]>([])
   const [pagos, setPagos] = useState<GestionRow[]>([])
@@ -95,6 +109,8 @@ export function AdminRouteDetail({ currentUserId, rutaInicial }: AdminRouteDetai
   const [gastos, setGastos] = useState<TransaccionRow[]>([])
   const [ingresos, setIngresos] = useState<TransaccionRow[]>([])
   const [retiros, setRetiros] = useState<TransaccionRow[]>([])
+  /** A quien le tocaba pagar ese dia y si pago. Ver `cargarClientes`. */
+  const [clientesDia, setClientesDia] = useState<ClienteDia[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -247,6 +263,89 @@ export function AdminRouteDetail({ currentUserId, rutaInicial }: AdminRouteDetai
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
+  // La pestaña Clientes solo existe con UNA ruta. Si se vuelve a "Todas"
+  // estando en ella, hay que salir: si no, la pestaña desaparece de la barra
+  // pero su tabla se queda pintada y vacia, que es lo que se vio al probar.
+  useEffect(() => {
+    if (rutaFilter === "all" && activeTab === "clientes") setActiveTab("pagos")
+  }, [rutaFilter, activeTab])
+
+  // ── A QUIEN LE TOCABA PAGAR ESE DIA ────────────────────────────────────────
+  //
+  // Sale del CRONOGRAMA (`payment_plan`), no de los pagos: la pregunta es "a
+  // quien habia que cobrarle", y los que no pagaron tienen que aparecer —son
+  // justo los que interesan—.
+  //
+  // El estado se cruza con `gestiones` de ese dia:
+  //   pago      -> hubo un pago aplicado
+  //   no_pago   -> se le visito y no pago
+  //   pendiente -> no se le visito todavia
+  //
+  // Solo con UNA ruta elegida: con "Todas" serian cientos de filas de catorce
+  // unidades mezcladas, que no es lo que esta pantalla responde.
+  useEffect(() => {
+    if (rutaFilter === "all") { setClientesDia([]); return }
+    let cancelado = false
+    const cargarClientes = async () => {
+      try {
+        const supabase = createClient()
+        const rutaId = Number(rutaFilter)
+
+        const [resPlan, resGest] = await Promise.all([
+          supabase
+            .from("payment_plan")
+            .select("loan_id, valor_cuota, loans!inner(id, ruta, estado, clients(nombre_completo, direccion))")
+            .eq("fecha_pago", fecha)
+            .eq("loans.ruta", rutaId)
+            .neq("loans.estado", "anulado"),
+          supabase
+            .from("gestiones")
+            .select("loan_id, tipo, monto")
+            .eq("ruta", rutaId)
+            .eq("fecha_gestion", fecha)
+            .eq("estado", "aplicada")
+            .neq("origen", "homologacion"),
+        ])
+        if (cancelado) return
+        if (resPlan.error) throw resPlan.error
+
+        // Lo que entro por cada credito ese dia, y si se le visito.
+        const pagado = new Map<string, number>()
+        const visitado = new Set<string>()
+        for (const g of (resGest.data ?? []) as unknown as { loan_id: string; tipo: string; monto: number | null }[]) {
+          if (!g.loan_id) continue
+          visitado.add(g.loan_id)
+          if (montoEfectivo(g as never) !== 0) {
+            pagado.set(g.loan_id, (pagado.get(g.loan_id) ?? 0) + montoEfectivo(g as never))
+          }
+        }
+
+        const filas: ClienteDia[] = []
+        for (const r of (resPlan.data ?? []) as unknown as {
+          loan_id: string
+          valor_cuota: number | null
+          loans?: { clients?: { nombre_completo?: string | null; direccion?: string | null } | null } | null
+        }[]) {
+          const abonado = pagado.get(r.loan_id) ?? 0
+          filas.push({
+            loanId: r.loan_id,
+            nombre: r.loans?.clients?.nombre_completo ?? "—",
+            direccion: r.loans?.clients?.direccion ?? "",
+            cuota: Number(r.valor_cuota) || 0,
+            estado: abonado > 0 ? "pago" : visitado.has(r.loan_id) ? "no_pago" : "pendiente",
+            abonado,
+          })
+        }
+        setClientesDia(filas.sort((a, b) => a.nombre.localeCompare(b.nombre)))
+      } catch (err) {
+        console.error("[v0] Clientes del dia en el detalle de ruta:", err)
+        if (!cancelado) setClientesDia([])
+      }
+    }
+    void cargarClientes()
+    return () => { cancelado = true }
+  }, [rutaFilter, fecha])
+
   // ── Filtrado local ─────────────────────────────────────────────────────────
   const applyFilter = <T extends { ruta: number }>(rows: T[]) =>
     rows.filter((r) => {
@@ -272,6 +371,10 @@ export function AdminRouteDetail({ currentUserId, rutaInicial }: AdminRouteDetai
 
   // ── Tabs config ────────────────────────────────────────────────────────────
   const tabs: { id: Tab; label: string; count: number; icon: React.ElementType; iconColor: string; badgeClass: string }[] = [
+    // Solo con UNA ruta: con "Todas" serian cientos de filas mezcladas.
+    ...(rutaFilter !== "all"
+      ? [{ id: "clientes" as Tab, label: "Clientes", count: clientesDia.length, icon: User, iconColor: "text-icon-clients", badgeClass: "bg-info text-info-foreground" }]
+      : []),
     { id: "pagos",     label: "Pagos",      count: fPagos.length,    icon: CheckCircle2,    iconColor: "text-icon-cash",       badgeClass: "bg-success text-success-foreground"      },
     { id: "no_pagos",  label: "No Pagos",   count: fNoPagos.length,  icon: XCircle,         iconColor: "text-destructive",     badgeClass: "bg-destructive text-destructive-foreground" },
     { id: "ventas",    label: "Ventas",     count: fVentas.length,   icon: ShoppingCart,    iconColor: "text-icon-sales",      badgeClass: "bg-info text-info-foreground"            },
@@ -395,6 +498,19 @@ export function AdminRouteDetail({ currentUserId, rutaInicial }: AdminRouteDetai
 
           {/* Resumen de la sección */}
           <div className="px-3 py-2 border-b border-border/50 flex flex-wrap gap-4 items-center">
+            {activeTab === "clientes" && (
+              <>
+                <span className="text-xs text-muted-foreground">
+                  {clientesDia.length} {clientesDia.length === 1 ? "cliente" : "clientes"} con cuota
+                </span>
+                <span className="text-xs font-bold text-success">
+                  {clientesDia.filter((c) => c.estado === "pago").length} pagaron
+                </span>
+                <span className="text-xs font-bold text-muted-foreground">
+                  {clientesDia.filter((c) => c.estado === "pendiente").length} sin visitar
+                </span>
+              </>
+            )}
             {activeTab === "pagos" && (
               <>
                 <span className="text-xs text-muted-foreground">{fPagos.length} registros</span>
@@ -444,6 +560,56 @@ export function AdminRouteDetail({ currentUserId, rutaInicial }: AdminRouteDetai
             <div className="overflow-x-auto">
 
               {/* PAGOS */}
+              {activeTab === "clientes" && (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/40 hover:bg-muted/40">
+                      <TH>#</TH>
+                      <TH>Cliente</TH>
+                      <TH right>Cuota</TH>
+                      <TH center>Estado</TH>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {clientesDia.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="py-8 text-center text-xs text-muted-foreground">
+                          Nadie tenía cuota ese día en esta unidad.
+                        </TableCell>
+                      </TableRow>
+                    ) : clientesDia.map((c, i) => (
+                      <TableRow key={c.loanId} className="hover:bg-muted/20 border-b border-border/50">
+                        <TD className="text-muted-foreground">{i + 1}</TD>
+                        {/* La direccion va DEBAJO del nombre y no en su propia
+                            columna: con cuatro columnas en un telefono de
+                            390px, Cuota y Estado se salian de pantalla y habia
+                            que arrastrar de lado para ver si el cliente pago,
+                            que es justo lo que se viene a mirar. */}
+                        <TD className="whitespace-normal">
+                          <span className="block font-semibold leading-tight text-foreground">
+                            {c.nombre}
+                          </span>
+                          {c.direccion && (
+                            <span className="block text-[10px] leading-tight text-muted-foreground">
+                              {c.direccion}
+                            </span>
+                          )}
+                        </TD>
+                        <TD right className="font-bold tabular-nums">{fmtMoneda(c.cuota)}</TD>
+                        <TD center>
+                          <Badge className={`border-0 text-[10px] ${
+                            c.estado === "pago" ? "bg-success-light text-success"
+                              : c.estado === "no_pago" ? "bg-destructive/10 text-destructive"
+                                : "bg-muted text-muted-foreground"
+                          }`}>
+                            {c.estado === "pago" ? "Pagó" : c.estado === "no_pago" ? "No pagó" : "Pendiente"}
+                          </Badge>
+                        </TD>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
               {activeTab === "pagos" && (
                 fPagos.length === 0 ? <EmptyState /> : (
                   <Table>
