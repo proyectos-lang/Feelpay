@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion"
-import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info, MessageSquare, BarChart2, Gauge, Upload, AlertCircle } from "lucide-react"
+import { Loader2, Plus, Pencil, Trash2, Users, Route as RouteIcon, Link2, Eye, EyeOff, MapPin, Globe2, CheckCircle2, Shield, Smartphone, RotateCcw, Save, Info, MessageSquare, BarChart2, Gauge, Upload, Bike, AlertCircle } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { MONEDAS, getMoneda, monedaPorPais } from "@/lib/monedas"
 import { ALL_MODULES, MODULE_GROUPS, getDefaultModulesForRole, isDefaultMobileNav } from "@/lib/modules-catalog"
@@ -483,6 +483,10 @@ type RutaConfigRow = {
   cierre_atrasado_minutos: number | null
   /** Logo propio de la unidad: va en el encabezado de sus recibos. */
   logo_url: string | null
+  /** La moto de la unidad. Las tres en NULL = no tiene (ver scripts/120). */
+  moto_placa: string | null
+  moto_fecha_compra: string | null
+  moto_foto_url: string | null
 }
 
 /**
@@ -552,6 +556,11 @@ function RutasTab() {
   const [fCierreMinutos, setFCierreMinutos] = useState("15")
   const [fLogoUrl, setFLogoUrl] = useState("")
   const [subiendoLogo, setSubiendoLogo] = useState(false)
+  // La moto de la unidad
+  const [fMotoPlaca, setFMotoPlaca] = useState("")
+  const [fMotoFecha, setFMotoFecha] = useState("")
+  const [fMotoFotoUrl, setFMotoFotoUrl] = useState("")
+  const [subiendoMoto, setSubiendoMoto] = useState(false)
   // Métodos de interés que usa la unidad, y cuál llega preseleccionado en la
   // venta. Antes el formulario ofrecía siempre los dos y ninguno marcado.
   const [fAmortizaciones, setFAmortizaciones] = useState<string[]>(AMORTIZACIONES_DEFAULT)
@@ -631,6 +640,9 @@ function RutasTab() {
     setFCierreLimite(min > 0)
     setFCierreMinutos(min > 0 ? String(min) : "15")
     setFLogoUrl(c?.logo_url ?? "")
+    setFMotoPlaca(c?.moto_placa ?? "")
+    setFMotoFecha(c?.moto_fecha_compra ?? "")
+    setFMotoFotoUrl(c?.moto_foto_url ?? "")
     const amort = c?.amortizaciones_habilitadas
     setFAmortizaciones(amort && amort.length > 0 ? amort : AMORTIZACIONES_DEFAULT)
     setFAmortizacionDefault(c?.amortizacion_default ?? "")
@@ -687,6 +699,56 @@ function RutasTab() {
       })
     } finally {
       setSubiendoLogo(false)
+    }
+  }
+
+  /**
+   * LA FOTO DE LA MOTO.
+   *
+   * Mismo camino que el logo —`/api/upload-photo`, carpeta propia— y las
+   * mismas dos validaciones, que no son de adorno: sin la primera se puede
+   * subir un PDF y la vista previa queda rota, y HEIC/HEIF es lo que sale por
+   * defecto de un iPhone y el navegador NO lo pinta, asi que la foto se veria
+   * en blanco sin que nadie sepa por que.
+   *
+   * No guarda por su cuenta: llena el campo para la vista previa y se
+   * confirma con Guardar, como todo lo demas del formulario.
+   */
+  const handleSubirFotoMoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (!file) return
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Archivo invalido", description: "Selecciona una imagen.", variant: "destructive" })
+      return
+    }
+    if (/heic|heif/i.test(file.type)) {
+      toast({
+        title: "Formato no compatible",
+        description: "Las imagenes HEIC/HEIF no se ven en el navegador. Usa JPG o PNG.",
+        variant: "destructive",
+      })
+      return
+    }
+    setSubiendoMoto(true)
+    try {
+      const fd = new FormData()
+      fd.append("file", file)
+      fd.append("folder", `motos/${fUnidad || "sin-unidad"}`)
+      const res = await fetch("/api/upload-photo", { method: "POST", body: fd })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? "No se pudo subir la imagen")
+      setFMotoFotoUrl(json.url)
+      toast({ title: "Foto cargada", description: "Dale a Guardar para dejarla en la unidad." })
+    } catch (err) {
+      console.error("[v0] Error subiendo la foto de la moto:", err)
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "No se pudo subir la foto",
+        variant: "destructive",
+      })
+    } finally {
+      setSubiendoMoto(false)
     }
   }
 
@@ -832,6 +894,12 @@ function RutasTab() {
           : null,
         // El logo propio de la unidad. Vacio = se usa el de la app.
         logo_url: fLogoUrl.trim() || null,
+        // La placa va en MAYUSCULA y sin espacios: la misma moto entrando
+        // como "abc12d" y "ABC 12D" seria imposible de buscar. El script 120
+        // tiene la misma regla como CHECK, por debajo.
+        moto_placa: fMotoPlaca.replace(/\s+/g, "").toUpperCase() || null,
+        moto_fecha_compra: fMotoFecha || null,
+        moto_foto_url: fMotoFotoUrl.trim() || null,
         // La columna es NOT NULL: si el campo queda vacio se guarda el
         // default en vez de mandar null y romper el upsert.
         geocerca_radio_metros: Number.parseInt(fGeocercaRadio, 10) || 100,
@@ -844,9 +912,30 @@ function RutasTab() {
           : null,
         updated_at: new Date().toISOString(),
       }
-      const { error: configErr } = await supabase
+      let { error: configErr } = await supabase
         .from("ruta_config_umbrales")
         .upsert(configPayload, { onConflict: "ruta_id" })
+
+      // ── SI TODAVIA NO SE CORRIO EL SCRIPT 120 ──────────────────────────
+      // Las tres columnas de la moto son nuevas. Sin ellas el upsert entero
+      // falla con 42703 y NO SE PODRIA GUARDAR NADA de la configuracion —ni
+      // un umbral, ni la geocerca—. Se reintenta sin la moto y se avisa, en
+      // vez de dejar la pantalla rota entre el deploy y el script.
+      if (configErr && ((configErr as { code?: string }).code === "42703" || /moto_/i.test(configErr.message))) {
+        console.warn("[v0] Faltan las columnas de la moto (scripts/120); se guarda el resto")
+        const { moto_placa, moto_fecha_compra, moto_foto_url, ...sinMoto } = configPayload
+        const r = await supabase
+          .from("ruta_config_umbrales")
+          .upsert(sinMoto, { onConflict: "ruta_id" })
+        configErr = r.error
+        if (!configErr && (moto_placa || moto_fecha_compra || moto_foto_url)) {
+          toast({
+            title: "La moto no se guardó",
+            description: "Falta correr scripts/120. El resto de la configuración sí quedó.",
+            variant: "destructive",
+          })
+        }
+      }
       if (configErr) throw configErr
 
       // Solo se guardan los items que el usuario tocó. En una ruta nueva el
@@ -1395,6 +1484,91 @@ function RutasTab() {
               <p className="text-[11px] text-muted-foreground">
                 Va en el encabezado de los recibos de esta unidad. Si se deja vacío se usa el
                 logo de la app. No tiene nada que ver con la foto de perfil del usuario.
+              </p>
+            </div>
+
+            {/* ── La moto de la unidad ──────────────────────────────────── */}
+            {/* Tres datos y ninguno obligatorio: una unidad sin moto es lo
+                normal, no un error. Ver scripts/120. */}
+            <div className="space-y-1.5 border-t pt-3">
+              <Label className="text-sm">Moto de la unidad</Label>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Placa</Label>
+                  {/* Se pasa a MAYUSCULA y se le quitan los espacios mientras
+                      se escribe: la misma moto anotada como "abc12d" y
+                      "ABC 12D" no se podria buscar. Sin `maxLength` corto
+                      porque las placas no miden igual en los cuatro paises
+                      (Argentina AA123BB, Colombia ABC12D). */}
+                  <Input
+                    value={fMotoPlaca}
+                    onChange={(e) =>
+                      setFMotoPlaca(e.target.value.replace(/\s+/g, "").toUpperCase())
+                    }
+                    placeholder="ABC12D"
+                    maxLength={10}
+                    className="h-9 text-sm uppercase tabular-nums"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Fecha de compra</Label>
+                  <Input
+                    type="date"
+                    value={fMotoFecha}
+                    onChange={(e) => setFMotoFecha(e.target.value)}
+                    className="h-9 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* La vista previa primero, igual que con el logo: es lo que
+                    confirma que se subio la foto correcta antes de guardar. */}
+                <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded border bg-white">
+                  {fMotoFotoUrl.trim() ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={fMotoFotoUrl}
+                      alt="Foto de la moto"
+                      className="h-full w-full object-cover"
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden" }}
+                    />
+                  ) : (
+                    <Bike className="h-5 w-5 text-muted-foreground" />
+                  )}
+                </div>
+                <Input
+                  value={fMotoFotoUrl}
+                  onChange={(e) => setFMotoFotoUrl(e.target.value)}
+                  placeholder="Sin foto"
+                  className="h-9 min-w-0 flex-1 text-sm"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-9 shrink-0 gap-1.5 text-xs"
+                  disabled={subiendoMoto}
+                  onClick={() => document.getElementById("moto-foto-file")?.click()}
+                >
+                  {subiendoMoto
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <Upload className="h-3.5 w-3.5" />}
+                  {subiendoMoto ? "Subiendo..." : "Subir"}
+                </Button>
+                <input
+                  id="moto-foto-file"
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleSubirFotoMoto}
+                />
+              </div>
+
+              <p className="text-[11px] text-muted-foreground">
+                Ninguno de los tres es obligatorio. La placa se guarda en
+                mayúscula y sin espacios, y no puede repetirse en otra unidad.
               </p>
             </div>
 
