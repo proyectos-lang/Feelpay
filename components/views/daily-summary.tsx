@@ -825,6 +825,24 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
 
   const collectionPercentage = metaAmount > 0 ? (collectedAmount / metaAmount) * 100 : 0
   const remaining = metaAmount - collectedAmount
+
+  /**
+   * LA JORNADA TODAVIA NO EMPEZO.
+   *
+   * Las DOS condiciones, como se pidio: la ruta sin iniciar Y el recaudo en
+   * cero. No basta con una:
+   *
+   *  · Solo por el estado: una ruta ya CERRADA que recaudo 0 tambien tiene
+   *    `estado != null`, y ahi el rojo si corresponde — se trabajo el dia y
+   *    no se cobro nada.
+   *  · Solo por el recaudo: apenas entra el primer peso el mensaje debe
+   *    volver, aunque sea de madrugada.
+   *
+   * `rutaDiariaEstado === null` es "no hay fila de hoy", o sea que nadie le
+   * dio a Iniciar Ruta. Es el mismo criterio que usa la insignia del
+   * encabezado y el tablero del admin.
+   */
+  const jornadaSinEmpezar = rutaDiariaEstado === null && collectedAmount <= 0
   /**
    * EL INFORME, COMO IMAGEN.
    *
@@ -1166,11 +1184,18 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                 <div className="flex items-center gap-2">
                   {(() => {
                     // Rojo hasta 50%, amarillo hasta 70%, verde por encima.
-                    const gaugeColor = collectionPercentage <= 50
-                      ? "var(--destructive)"
-                      : collectionPercentage <= 70
-                        ? "var(--warning)"
-                        : "var(--success)"
+                    //
+                    // Con la jornada sin empezar va GRIS, por lo mismo que el
+                    // mensaje de abajo: un 0% en rojo antes de que el cobrador
+                    // salga a la calle lo regaña por algo que todavia no pudo
+                    // hacer. El rojo aparece cuando ya hay dia que juzgar.
+                    const gaugeColor = jornadaSinEmpezar
+                      ? "var(--muted-foreground)"
+                      : collectionPercentage <= 50
+                        ? "var(--destructive)"
+                        : collectionPercentage <= 70
+                          ? "var(--warning)"
+                          : "var(--success)"
 
                     return (
                       <svg viewBox="0 0 200 110" className="h-12 w-20 shrink-0">
@@ -1210,10 +1235,17 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                       </span>
                     </div>
 
-                    {/* Tres casos, no dos. Sin meta (`metaAmount === 0`) caía
-                        en la rama de "Faltan" y mostraba un número sin
-                        sentido: no se puede incumplir una meta que no
-                        existe. */}
+                    {/* CUATRO casos, no tres.
+                        · Sin meta (`metaAmount === 0`): no se puede incumplir
+                          una meta que no existe.
+                        · LA JORNADA NO EMPEZO: reclamarle al cobrador que no
+                          cumplio la meta ANTES de que salga a la calle es
+                          regañarlo por algo que todavia no pudo hacer. El
+                          rojo se gana cobrando poco, no abriendo la app.
+                          Mientras no haya arrancado se dice cuanto hay que
+                          cobrar, que es el dato util a esa hora.
+                        · Meta superada.
+                        · Meta no superada, ya con la jornada en curso. */}
                     {metaAmount <= 0 ? (
                       <p className="text-[11px] leading-tight text-muted-foreground">
                         Sin meta para hoy
@@ -1221,6 +1253,10 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                     ) : collectedAmount >= metaAmount ? (
                       <p className="text-[11px] font-bold leading-tight text-success">
                         Superaste la meta del día
+                      </p>
+                    ) : jornadaSinEmpezar ? (
+                      <p className="text-[11px] leading-tight text-muted-foreground">
+                        Por cobrar hoy: {fmtMonedaCien(metaAmount)}
                       </p>
                     ) : (
                       <p className="text-[11px] font-bold leading-tight text-destructive">
