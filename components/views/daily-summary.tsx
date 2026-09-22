@@ -827,22 +827,17 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
   const remaining = metaAmount - collectedAmount
 
   /**
-   * LA JORNADA TODAVIA NO EMPEZO.
+   * EL DIA YA SE CERRO.
    *
-   * Las DOS condiciones, como se pidio: la ruta sin iniciar Y el recaudo en
-   * cero. No basta con una:
+   * Es lo unico que convierte el recaudo en un resultado: hasta que la caja
+   * no se cuadra, la cifra puede seguir subiendo y cualquier veredicto sobre
+   * la meta es prematuro.
    *
-   *  · Solo por el estado: una ruta ya CERRADA que recaudo 0 tambien tiene
-   *    `estado != null`, y ahi el rojo si corresponde — se trabajo el dia y
-   *    no se cobro nada.
-   *  · Solo por el recaudo: apenas entra el primer peso el mensaje debe
-   *    volver, aunque sea de madrugada.
-   *
-   * `rutaDiariaEstado === null` es "no hay fila de hoy", o sea que nadie le
-   * dio a Iniciar Ruta. Es el mismo criterio que usa la insignia del
-   * encabezado y el tablero del admin.
+   * `rutaDiariaEstado` sale de `rutas_diarias`: 'cerrada' es que el cobrador
+   * ya hizo el cierre. NULL es que ni siquiera arranco, y 'abierta' es que
+   * esta en la calle — en los dos casos el dia sigue abierto.
    */
-  const jornadaSinEmpezar = rutaDiariaEstado === null && collectedAmount <= 0
+  const diaCerrado = rutaDiariaEstado === "cerrada"
   /**
    * EL INFORME, COMO IMAGEN.
    *
@@ -1185,12 +1180,14 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                   {(() => {
                     // Rojo hasta 50%, amarillo hasta 70%, verde por encima.
                     //
-                    // Con la jornada sin empezar va GRIS, por lo mismo que el
-                    // mensaje de abajo: un 0% en rojo antes de que el cobrador
-                    // salga a la calle lo regaña por algo que todavia no pudo
-                    // hacer. El rojo aparece cuando ya hay dia que juzgar.
-                    const gaugeColor = jornadaSinEmpezar
-                      ? "var(--muted-foreground)"
+                    // PERO SOLO CON LA CAJA YA CERRADA, igual que el mensaje
+                    // de abajo: un 30% en rojo a media mañana es el mismo
+                    // veredicto prematuro, dicho en color. Mientras el dia
+                    // sigue abierto el arco va en azul cielo —avanza y se
+                    // llena, sin calificar— y el color de juicio aparece
+                    // cuando el numero ya dejo de moverse.
+                    const gaugeColor = !diaCerrado
+                      ? "var(--info)"
                       : collectionPercentage <= 50
                         ? "var(--destructive)"
                         : collectionPercentage <= 70
@@ -1235,28 +1232,33 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                       </span>
                     </div>
 
-                    {/* CUATRO casos, no tres.
-                        · Sin meta (`metaAmount === 0`): no se puede incumplir
-                          una meta que no existe.
-                        · LA JORNADA NO EMPEZO: reclamarle al cobrador que no
-                          cumplio la meta ANTES de que salga a la calle es
-                          regañarlo por algo que todavia no pudo hacer. El
-                          rojo se gana cobrando poco, no abriendo la app.
-                          Mientras no haya arrancado se dice cuanto hay que
-                          cobrar, que es el dato util a esa hora.
-                        · Meta superada.
-                        · Meta no superada, ya con la jornada en curso. */}
+                    {/* EL VEREDICTO SOLO AL CIERRE.
+                        "Superaste la meta" o "Meta no superada" es un juicio
+                        sobre el dia TERMINADO. Mientras la jornada esta en
+                        curso el dia no acabo: a las diez de la mañana faltan
+                        seis horas de cobro, y decir "no superada" ahi es
+                        juzgar un partido en el primer tiempo.
+
+                        Con la caja ya cerrada el numero deja de moverse y el
+                        veredicto si significa algo.
+
+                        Mientras tanto se muestra cuanto falta por cobrar, que
+                        es el dato que sirve para salir a trabajar. Sin meta
+                        (`metaAmount === 0`) no hay nada que juzgar ni nada
+                        que cobrar, y se dice. */}
                     {metaAmount <= 0 ? (
                       <p className="text-[11px] leading-tight text-muted-foreground">
                         Sin meta para hoy
                       </p>
+                    ) : !diaCerrado ? (
+                      <p className="text-[11px] leading-tight text-muted-foreground">
+                        {remaining > 0
+                          ? `Por cobrar hoy: ${fmtMonedaCien(remaining)}`
+                          : "Meta alcanzada — falta cerrar la caja"}
+                      </p>
                     ) : collectedAmount >= metaAmount ? (
                       <p className="text-[11px] font-bold leading-tight text-success">
                         Superaste la meta del día
-                      </p>
-                    ) : jornadaSinEmpezar ? (
-                      <p className="text-[11px] leading-tight text-muted-foreground">
-                        Por cobrar hoy: {fmtMonedaCien(metaAmount)}
                       </p>
                     ) : (
                       <p className="text-[11px] font-bold leading-tight text-destructive">
