@@ -32,12 +32,12 @@ import dynamic from "next/dynamic"
 import {
   Bike, Calendar, Check, ChevronDown, ChevronLeft, ChevronRight, CircleCheckBig,
   ClipboardList, Clock, DollarSign, FileText, Filter, LayoutGrid, MapPin,
-  MessageSquare, MoreVertical, Navigation, Phone, Plus, RefreshCw, Search,
+  MessageSquare, MoreVertical, Navigation, Phone, RefreshCw, Search, X,
   SlidersHorizontal, Smartphone, User, UserCheck, Users,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { getResumenDia } from "@/lib/resumen-dia"
-import { todayColombia, montoEfectivo } from "@/lib/gestion-core"
+import { todayColombia, montoEfectivo, apodoSiAporta, colorMora, etiquetaMora } from "@/lib/gestion-core"
 import { formatearMoneda, monedaPorPais } from "@/lib/monedas"
 import { generarInformeExcel } from "@/lib/informe-excel"
 import { Bandera } from "@/components/bandera"
@@ -85,6 +85,13 @@ interface RutaInfo {
 interface ClienteDia {
   loanId: string
   nombre: string
+  /** Solo si dice algo que el nombre no dice (ver `apodoSiAporta`). */
+  apodo: string | null
+  /** El orden de la ruta: `loans.ordenvisita`, el que se arma en Ordenar Ruta. */
+  orden: number | null
+  /** Cuotas vencidas sin cubrir y su plata, de `v_loan_financiero`. */
+  cuotasMora: number
+  saldoMora: number
   direccion: string
   zona: string
   telefono: string
@@ -100,6 +107,20 @@ interface Movimiento {
   detalle: string
   monto: number
   tono: "ok" | "bad" | "muted"
+}
+
+/** Las seis tarjetas del resumen, que ahora abren su detalle abajo. */
+type KpiId = "pagos" | "noPagos" | "ventas" | "gastos" | "ingresos" | "retiros"
+
+/** Una fila del detalle de una tarjeta. */
+interface FilaKpi {
+  id: string
+  ts: string
+  hora: string
+  titulo: string
+  sub: string | null
+  detalle: string
+  monto: number | null
 }
 
 interface Gasto {
@@ -276,6 +297,11 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
   const [movimientos, setMovimientos] = useState<Movimiento[]>([])
   const [gastos, setGastos] = useState<Gasto[]>([])
   const [puntos, setPuntos] = useState<MapPoint[]>([])
+  /** El detalle de cada tarjeta, armado con LAS MISMAS reglas del contador. */
+  const [filasKpi, setFilasKpi] = useState<Record<KpiId, FilaKpi[]>>({
+    pagos: [], noPagos: [], ventas: [], gastos: [], ingresos: [], retiros: [],
+  })
+  const [detalleKpi, setDetalleKpi] = useState<KpiId | null>(null)
 
   // Modales y acciones
   const [confirmar, setConfirmar] = useState(false)
@@ -387,31 +413,39 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
 
       const dayStart = `${fecha}T00:00:00-05:00`
       const dayEnd = `${fecha}T23:59:59-05:00`
-      const [resResumen, resDia, resClientes, resPlan, resGest, resGastos] = await Promise.all([
+      const [resResumen, resDia, resClientes, resPlan, resGest, resGastos, resVentas] = await Promise.all([
         getResumenDia(sb, rutaId, fecha),
         leerDia(),
         sb.from("clients").select("id", { count: "exact", head: true }).eq("ruta", rutaId),
         // CLIENTES: sale del CRONOGRAMA, no de los pagos. La pregunta es "a
         // quién había que cobrarle", así que los que NO pagaron aparecen.
         sb.from("payment_plan")
-          .select("loan_id, valor_cuota, loans!inner(ruta, estado, clients(nombre_completo, direccion, sector, telefono))")
+          .select("loan_id, valor_cuota, loans!inner(ruta, estado, ordenvisita, clients(nombre_completo, apodo, direccion, sector, telefono))")
           .eq("fecha_pago", fecha)
           .eq("loans.ruta", rutaId)
           .neq("loans.estado", "anulado"),
         sb.from("gestiones")
-          .select("id, loan_id, tipo, monto, fecha_hora, latitud, longitud, loans:loans(clients:clients(nombre_completo))")
+          .select("id, loan_id, tipo, monto, fecha_hora, latitud, longitud, metodo_pago, observacion, loans:loans(clients:clients(nombre_completo, apodo))")
           .eq("ruta", rutaId)
           .eq("fecha_gestion", fecha)
           .eq("estado", "aplicada")
           .neq("origen", "homologacion")
           .order("fecha_hora", { ascending: true }),
         sb.from("gastosregistros")
-          .select("id, tipo, concepto, valor, fechahorasol")
+          .select("id, tipo, concepto, valor, fechahorasol, estadosecre, estadoadmin")
           .eq("ruta", rutaId)
           .gte("fechahorasol", dayStart)
           .lte("fechahorasol", dayEnd)
           .in("tipo", ["Gasto", "Ingreso", "Retiro"])
           .order("fechahorasol", { ascending: true }),
+        // VENTAS: los préstamos creados ese día en la ruta, igual que
+        // `cantidad_ventas` del resumen (incluye homologadas).
+        sb.from("loans")
+          .select("id, valor, origen, estado, fecha_creacion, clients(nombre_completo, apodo)")
+          .eq("ruta", rutaId)
+          .gte("fecha_creacion", dayStart)
+          .lte("fecha_creacion", dayEnd)
+          .order("fecha_creacion", { ascending: true }),
       ])
 
       const dia = (resDia.data ?? null) as unknown as
@@ -474,19 +508,119 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
       }
       movs.sort((a, b) => a.ts.localeCompare(b.ts))
       setMovimientos(movs)
+
+      // ── EL DETALLE DE LAS SEIS TARJETAS ────────────────────────────────
+      // Cada lista sigue la regla exacta de su contador en
+      // `resumen_diario_v2` (scripts 112/114), para que "Pagos 20" abra
+      // veinte filas y no otra cosa.
+      //
+      // PAGOS y NO PAGOS cuentan CLIENTES, no visitas: se agrupa por
+      // préstamo. Neto = pago + cancelación + abono a venta − reversas.
+      // Pagó si el neto es > 0; no pagó si el neto es ≤ 0 y hubo un no_pago.
+      type Gx = {
+        id: string; loan_id: string; tipo: string; monto: number | null; fecha_hora: string
+        metodo_pago?: string | null; observacion?: string | null
+        loans?: { clients?: { nombre_completo?: string | null; apodo?: string | null } | null } | null
+      }
+      const porLoan = new Map<string, { g: Gx[]; neto: number; noPago: boolean; ultima: string }>()
+      for (const g of (resGest.data ?? []) as unknown as Gx[]) {
+        if (!g.loan_id || !["pago", "no_pago", "cancelacion", "abono_venta", "reversa"].includes(g.tipo)) continue
+        const e = porLoan.get(g.loan_id) ?? { g: [], neto: 0, noPago: false, ultima: g.fecha_hora }
+        const monto = Number(g.monto) || 0
+        if (g.tipo === "reversa") e.neto -= monto
+        else if (g.tipo !== "no_pago") e.neto += monto
+        if (g.tipo === "no_pago") e.noPago = true
+        if (g.fecha_hora > e.ultima) e.ultima = g.fecha_hora
+        e.g.push(g)
+        porLoan.set(g.loan_id, e)
+      }
+      const cliente = (g: Gx) => g.loans?.clients?.nombre_completo ?? "—"
+      const apodo = (g: Gx) => apodoSiAporta(g.loans?.clients?.nombre_completo, g.loans?.clients?.apodo)
+      const METODO: Record<string, string> = { efectivo: "Efectivo", transferencia: "Transferencia" }
+      const fPagos: FilaKpi[] = []
+      const fNoPagos: FilaKpi[] = []
+      for (const [loanId, e] of porLoan) {
+        const g0 = e.g[0]
+        const base = { id: loanId, ts: e.ultima, hora: hhmm(e.ultima) || "—", titulo: cliente(g0), sub: apodo(g0) }
+        if (e.neto > 0) {
+          const tipos = [...new Set(e.g.filter((g) => g.tipo !== "no_pago").map((g) => TIPO_GESTION[g.tipo] ?? g.tipo))]
+          const metodos = [...new Set(e.g.map((g) => METODO[(g.metodo_pago ?? "").toLowerCase()] ?? g.metodo_pago).filter(Boolean))]
+          fPagos.push({ ...base, detalle: [tipos.join(", "), metodos.join(", ")].filter(Boolean).join(" · "), monto: e.neto })
+        } else if (e.noPago) {
+          const motivo = e.g.find((g) => g.tipo === "no_pago" && g.observacion)?.observacion
+          fNoPagos.push({ ...base, detalle: motivo || "Sin motivo registrado", monto: null })
+        }
+      }
+
+      // GASTOS, INGRESOS y RETIROS: solo los que el resumen cuenta, o sea
+      // los aprobados por secretaría o los que no necesitaban aprobación.
+      type Cx = { id: number; tipo: string; concepto: string; valor: number; fechahorasol: string; estadosecre?: string | null; estadoadmin?: string | null }
+      const cajaCuenta = ((resGastos.data ?? []) as unknown as Cx[])
+        .filter((g) => g.estadosecre === "aprobado" || g.estadoadmin === "NA")
+      const filaCaja = (g: Cx): FilaKpi => ({
+        id: String(g.id), ts: g.fechahorasol, hora: hhmm(g.fechahorasol) || "—",
+        titulo: g.concepto || g.tipo, sub: null,
+        detalle: g.estadosecre === "aprobado" ? "Aprobado" : "Sin aprobación requerida",
+        monto: Number(g.valor) || 0,
+      })
+
+      type Vx = { id: string; valor: number | null; origen: string | null; estado: string | null; fecha_creacion: string; clients?: { nombre_completo?: string | null; apodo?: string | null } | null }
+      const fVentas: FilaKpi[] = ((resVentas.data ?? []) as unknown as Vx[]).map((v) => ({
+        id: v.id, ts: v.fecha_creacion, hora: hhmm(v.fecha_creacion) || "—",
+        titulo: v.clients?.nombre_completo ?? "—",
+        sub: apodoSiAporta(v.clients?.nombre_completo, v.clients?.apodo),
+        detalle: [
+          (v.origen ?? "normal") === "homologado" ? "Homologada" : "Venta nueva",
+          (v.estado ?? "") === "anulado" ? "Anulada" : null,
+        ].filter(Boolean).join(" · "),
+        monto: Number(v.valor) || 0,
+      }))
+
+      const porHora = (a: FilaKpi, b: FilaKpi) => a.ts.localeCompare(b.ts)
+      setFilasKpi({
+        pagos: fPagos.sort(porHora),
+        noPagos: fNoPagos.sort(porHora),
+        ventas: fVentas.sort(porHora),
+        gastos: cajaCuenta.filter((g) => g.tipo === "Gasto").map(filaCaja),
+        ingresos: cajaCuenta.filter((g) => g.tipo === "Ingreso").map(filaCaja),
+        retiros: cajaCuenta.filter((g) => g.tipo === "Retiro").map(filaCaja),
+      })
       setPuntos(pts)
       setGastos(caja.filter((g) => g.tipo === "Gasto").map((g) => ({
         id: g.id, hora: hhmm(g.fechahorasol) || "—", concepto: g.concepto, valor: Number(g.valor) || 0,
       })))
 
+      const plan = (resPlan.data ?? []) as unknown as {
+        loan_id: string; valor_cuota: number | null
+        loans?: {
+          ordenvisita?: number | null
+          clients?: { nombre_completo?: string | null; apodo?: string | null; direccion?: string | null; sector?: string | null; telefono?: string | null } | null
+        } | null
+      }[]
+
+      // LA MORA sale del estado derivado (`v_loan_financiero`), nunca de
+      // `payment_plan.estado`. Es la mora de HOY: la vista no se puede pedir
+      // "a tal fecha", así que en un día pasado muestra la situación actual.
+      const loanIds = [...new Set(plan.map((p) => p.loan_id))]
+      const mora = new Map<string, { cuotas: number; saldo: number }>()
+      if (loanIds.length) {
+        const { data: fin, error: errFin } = await sb
+          .from("v_loan_financiero").select("loan_id, cuotas_mora, saldo_en_mora").in("loan_id", loanIds)
+        if (errFin) console.error("[v0] Detalle de ruta, mora:", errFin.message)
+        for (const f of (fin ?? []) as unknown as { loan_id: string; cuotas_mora: number | null; saldo_en_mora: number | null }[]) {
+          mora.set(f.loan_id, { cuotas: Number(f.cuotas_mora) || 0, saldo: Number(f.saldo_en_mora) || 0 })
+        }
+      }
+
       setClientesDia(
-        ((resPlan.data ?? []) as unknown as {
-          loan_id: string; valor_cuota: number | null
-          loans?: { clients?: { nombre_completo?: string | null; direccion?: string | null; sector?: string | null; telefono?: string | null } | null } | null
-        }[])
+        plan
           .map((p) => ({
             loanId: p.loan_id,
             nombre: p.loans?.clients?.nombre_completo ?? "—",
+            apodo: apodoSiAporta(p.loans?.clients?.nombre_completo, p.loans?.clients?.apodo),
+            orden: p.loans?.ordenvisita ?? null,
+            cuotasMora: mora.get(p.loan_id)?.cuotas ?? 0,
+            saldoMora: mora.get(p.loan_id)?.saldo ?? 0,
             direccion: p.loans?.clients?.direccion ?? "",
             zona: p.loans?.clients?.sector ?? "",
             telefono: p.loans?.clients?.telefono ?? "",
@@ -495,7 +629,11 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
               ? ("pago" as const)
               : visitado.has(p.loan_id) ? ("no_pago" as const) : ("pendiente" as const),
           }))
-          .sort((a, b) => a.nombre.localeCompare(b.nombre)),
+          // EL ORDEN DE LA RUTA, el mismo que ve el cobrador en la calle
+          // (Ordenar Ruta). Los que no tienen número van al final, por nombre.
+          .sort((a, b) =>
+            (a.orden ?? Number.MAX_SAFE_INTEGER) - (b.orden ?? Number.MAX_SAFE_INTEGER) ||
+            a.nombre.localeCompare(b.nombre)),
       )
     } catch (err) {
       console.error("[v0] Detalle de ruta:", err)
@@ -523,7 +661,7 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
   const clientesFiltrados = useMemo(
     () => clientesDia.filter((c) =>
       (filtro === "todos" || c.estado === filtro) &&
-      (!qCliente || `${c.nombre} ${c.direccion} ${c.zona}`.toLowerCase().includes(qCliente)),
+      (!qCliente || `${c.nombre} ${c.apodo ?? ""} ${c.direccion} ${c.zona}`.toLowerCase().includes(qCliente)),
     ),
     [clientesDia, qCliente, filtro],
   )
@@ -536,14 +674,17 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
     [rutas, qRuta],
   )
 
-  const kpis: { label: string; valor: number; color: string }[] = [
-    { label: "Pagos", valor: cont.pagos, color: "var(--dr-success)" },
-    { label: "No pagos", valor: cont.noPagos, color: "var(--dr-danger)" },
-    { label: "Ventas", valor: cont.ventas, color: "var(--dr-primary)" },
-    { label: "Gastos", valor: cont.gastos, color: "var(--dr-danger)" },
-    { label: "Ingresos", valor: cont.ingresos, color: "var(--dr-teal)" },
-    { label: "Retiros", valor: cont.retiros, color: "var(--dr-purple)" },
+  const kpis: { id: KpiId; label: string; valor: number; color: string }[] = [
+    { id: "pagos", label: "Pagos", valor: cont.pagos, color: "var(--dr-success)" },
+    { id: "noPagos", label: "No pagos", valor: cont.noPagos, color: "var(--dr-danger)" },
+    { id: "ventas", label: "Ventas", valor: cont.ventas, color: "var(--dr-primary)" },
+    { id: "gastos", label: "Gastos", valor: cont.gastos, color: "var(--dr-danger)" },
+    { id: "ingresos", label: "Ingresos", valor: cont.ingresos, color: "var(--dr-teal)" },
+    { id: "retiros", label: "Retiros", valor: cont.retiros, color: "var(--dr-purple)" },
   ]
+  const kpiSel = kpis.find((k) => k.id === detalleKpi) ?? null
+  const filasSel = detalleKpi ? filasKpi[detalleKpi] : []
+  const totalSel = filasSel.reduce((t, f) => t + (f.monto ?? 0), 0)
 
   const cerrada = estado === "cerrada"
   const estadoPill = estado === "abierta"
@@ -558,7 +699,15 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
     setMenu(null)
   }
 
+  /** Tocar una tarjeta abre su detalle abajo; tocarla otra vez lo cierra. */
+  const abrirKpi = (id: KpiId) => {
+    const abrir = detalleKpi !== id
+    setDetalleKpi(abrir ? id : null)
+    if (abrir) tabsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }
+
   const irAlMapa = () => {
+    setDetalleKpi(null)
     setPestana("mapa")
     tabsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
   }
@@ -831,7 +980,7 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
 
             {/* ── Personal ────────────────────────────────────────────────── */}
             <div className="dr-people">
-              <PersonCard icon={Bike} kicker="Unidad / Moto" title={ruta?.nombre ? `Moto ${numeroRuta(ruta.nombre)}` : "Moto"} onClick={() => onNavegar?.("user-route-management")}>
+              <PersonCard icon={Bike} kicker="Unidad / Moto" title={ruta?.nombre ? `Moto ${numeroRuta(ruta.nombre)}` : "Moto"}>
                 <span>
                   {ruta?.placa
                     ? <Pill variant="success" label="Activa" sm />
@@ -839,7 +988,7 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
                 </span>
                 <span className="dr-person-line dr-person-line--muted">Patente: {ruta?.placa ?? "—"}</span>
               </PersonCard>
-              <PersonCard icon={User} kicker="Cobrador" title={ruta?.cobradorNombre ?? "Sin asignar"} onClick={() => onNavegar?.("user-route-management")}>
+              <PersonCard icon={User} kicker="Cobrador" title={ruta?.cobradorNombre ?? "Sin asignar"}>
                 {/* El usuario de login es un correo largo: va entero en el title. */}
                 <span className="dr-person-line" title={ruta?.cobradorUsuario ?? undefined}>{ruta?.cobradorNombre ? "Vendedor" : "—"}</span>
                 {/* TODO: `usuarios` no tiene teléfono todavía. */}
@@ -849,20 +998,11 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
               <PersonCard icon={Smartphone} kicker="Tarjetero" title="Sin asignar">
                 <span className="dr-person-line dr-person-line--muted">—</span>
               </PersonCard>
-              {/* TODO: no existe el rol supervisor. El botón lleva a donde se
-                  asigna la gente a las rutas. */}
-              <div className="dr-card dr-person dr-person--static" style={{ flexDirection: "column", padding: 12, gap: 6 }}>
-                <div style={{ display: "flex", gap: 8, minWidth: 0, width: "100%" }}>
-                  <span className="dr-iconbox"><UserCheck {...IC} /></span>
-                  <span className="dr-person-body">
-                    <span className="dr-kicker">Supervisor</span>
-                    <span className="dr-person-title">Sin asignar</span>
-                  </span>
-                </div>
-                <button type="button" className="dr-ghost dr-person-assign" onClick={() => onNavegar?.("user-route-management")}>
-                  <Plus {...IC} size={16} />Asignar supervisor
-                </button>
-              </div>
+              {/* TODO: no existe el rol supervisor en el sistema. Las cuatro
+                  tarjetas van sin acceso directo por ahora. */}
+              <PersonCard icon={UserCheck} kicker="Supervisor" title="Sin asignar">
+                <span className="dr-person-line dr-person-line--muted">—</span>
+              </PersonCard>
             </div>
 
             {/* ── Resumen de la ruta ──────────────────────────────────────── */}
@@ -888,10 +1028,15 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
               </div>
               <div className="dr-kpis">
                 {kpis.map((k) => (
-                  <div key={k.label} className="dr-box dr-kpi">
+                  <button
+                    key={k.id} type="button" aria-pressed={detalleKpi === k.id}
+                    className={`dr-box dr-kpi dr-kpi--btn${detalleKpi === k.id ? " dr-kpi--on" : ""}`}
+                    style={{ ["--kc" as string]: k.color }}
+                    onClick={() => abrirKpi(k.id)}
+                  >
                     <div className="dr-kpi-lbl"><span className="dr-kpi-dot" style={{ background: k.color }} />{k.label}</div>
                     <div className="dr-kpi-val" style={{ color: k.color }}>{k.valor}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </section>
@@ -901,16 +1046,59 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
               <div className="dr-tabs" role="tablist">
                 {TABS.map((t) => (
                   <button
-                    key={t.id} type="button" role="tab" aria-selected={pestana === t.id}
-                    className={`dr-tab${pestana === t.id ? " dr-tab--active" : ""}`}
-                    onClick={() => setPestana(t.id)}
+                    key={t.id} type="button" role="tab" aria-selected={!detalleKpi && pestana === t.id}
+                    className={`dr-tab${!detalleKpi && pestana === t.id ? " dr-tab--active" : ""}`}
+                    onClick={() => { setDetalleKpi(null); setPestana(t.id) }}
                   >
                     {t.label}
                   </button>
                 ))}
               </div>
 
-              {pestana === "clientes" && (
+              {kpiSel && (
+                <div className="dr-tab-panel">
+                  <div className="dr-tab-head">
+                    <span className="dr-kpi-dot" style={{ background: kpiSel.color, width: 12, height: 12 }} />
+                    <h3 className="dr-h">{kpiSel.label} del día ({filasSel.length})</h3>
+                    <button type="button" className="dr-btn" onClick={() => setDetalleKpi(null)}>
+                      <X {...IC} size={16} />Cerrar
+                    </button>
+                  </div>
+                  <div className="dr-box dr-table">
+                    <div className="dr-krow dr-thead">
+                      <span>#</span><span>Hora</span>
+                      <span>{["gastos", "ingresos", "retiros"].includes(kpiSel.id) ? "Concepto" : "Cliente"}</span>
+                      <span>{kpiSel.id === "noPagos" ? "Motivo" : "Detalle"}</span>
+                      <span className="dr-right">{kpiSel.id === "noPagos" ? "" : "Monto"}</span>
+                    </div>
+                    {filasSel.map((f, i) => (
+                      <div key={f.id} className="dr-krow dr-trow--body">
+                        <span className="dr-muted">{i + 1}</span>
+                        <span className="dr-nowrap">{f.hora}</span>
+                        <span className="dr-td-name" title={f.sub ? `${f.titulo} · ${f.sub}` : f.titulo}>
+                          {f.titulo}
+                          {f.sub && <small className="dr-td-apodo">{f.sub}</small>}
+                        </span>
+                        <span className="dr-td-detalle" title={f.detalle}>{f.detalle}</span>
+                        <span className="dr-right dr-nowrap" style={{ color: kpiSel.color }}>
+                          {f.monto == null ? "" : money(f.monto)}
+                        </span>
+                      </div>
+                    ))}
+                    {filasSel.length === 0 && (
+                      <div className="dr-empty">Sin {kpiSel.label.toLowerCase()} registrados ese día.</div>
+                    )}
+                    {filasSel.length > 0 && kpiSel.id !== "noPagos" && (
+                      <div className="dr-krow dr-ktotal">
+                        <span /><span /><span>Total</span><span />
+                        <span className="dr-right dr-nowrap" style={{ color: kpiSel.color }}>{money(totalSel)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {!detalleKpi && pestana === "clientes" && (
                 <div className="dr-tab-panel">
                   <div className="dr-tab-head">
                     <h3 className="dr-h">Clientes de la ruta ({clientesFiltrados.length})</h3>
@@ -935,20 +1123,20 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
                   <div className="dr-table-scroll">
                     <div className="dr-box dr-table">
                       <div className="dr-trow dr-thead">
-                        <span>#</span><span>Cliente</span><span className="dr-td-addr">Dirección / Zona</span><span>Cuota del día</span><span>Estado</span><span className="dr-td-actions">Acciones</span>
+                        <span>#</span><span>Cliente</span><span>Mora</span><span>Cuota del día</span><span>Estado</span><span className="dr-td-actions">Acciones</span>
                       </div>
                       {clientesFiltrados.map((c, i) => (
                         <div key={c.loanId} className="dr-trow dr-trow--body" onClick={() => setClienteAbierto(c)}>
-                          <span className="dr-muted">{i + 1}</span>
-                          <span className="dr-td-name" title={c.nombre}>
+                          {/* El número es el de la ruta, no la posición en la lista:
+                              con un filtro puesto sigue diciendo cuál es en la ruta. */}
+                          <span className="dr-muted">{c.orden ?? i + 1}</span>
+                          <span className="dr-td-name" title={c.apodo ? `${c.nombre} · ${c.apodo}` : c.nombre}>
                             {c.nombre}
-                            {/* En teléfono la dirección va aquí debajo: con columna
-                                propia la cuota y el estado se salían de pantalla. */}
-                            <small className="dr-td-sub">{[c.direccion, c.zona && capitalizar(c.zona)].filter(Boolean).join(" · ") || "—"}</small>
+                            {c.apodo && <small className="dr-td-apodo">{c.apodo}</small>}
                           </span>
-                          <span className="dr-td-addr" title={[c.direccion, c.zona].filter(Boolean).join(" · ")}>
-                            {c.direccion || "—"}
-                            {c.zona && <small>{capitalizar(c.zona)}</small>}
+                          <span className={`dr-td-mora dr-td-mora--${c.cuotasMora > 0 ? colorMora(c.cuotasMora) : "ok"}`}>
+                            {c.cuotasMora > 0 ? etiquetaMora(c.cuotasMora) : "Al día"}
+                            {c.saldoMora > 0 && <small>{money(c.saldoMora)}</small>}
                           </span>
                           <span className="dr-nowrap">{money(c.cuota)}</span>
                           <span>
@@ -978,7 +1166,7 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
                 </div>
               )}
 
-              {pestana === "mapa" && (
+              {!detalleKpi && pestana === "mapa" && (
                 <div className="dr-tab-panel--map">
                   <div className="dr-box dr-map">
                     {puntos.length === 0 ? (
@@ -992,7 +1180,7 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
                 </div>
               )}
 
-              {pestana === "movimientos" && (
+              {!detalleKpi && pestana === "movimientos" && (
                 <div className="dr-tab-panel--list">
                   {movimientos.length === 0 ? (
                     <div className="dr-empty dr-empty--tall">Sin movimientos ese día.</div>
@@ -1009,7 +1197,7 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
                 </div>
               )}
 
-              {pestana === "gastos" && (
+              {!detalleKpi && pestana === "gastos" && (
                 gastos.length === 0 ? (
                   <div className="dr-empty dr-empty--tall">Sin gastos registrados en esta ruta.</div>
                 ) : (
@@ -1024,7 +1212,7 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
                 )
               )}
 
-              {pestana === "notas" && (
+              {!detalleKpi && pestana === "notas" && (
                 <div className="dr-notes">
                   <textarea
                     rows={6}
@@ -1111,6 +1299,9 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
           <div className="dr-modal-grid">
             <span>Dirección</span><b>{clienteAbierto.direccion || "—"}</b>
             <span>Zona</span><b>{clienteAbierto.zona ? capitalizar(clienteAbierto.zona) : "—"}</b>
+            <span>Apodo</span><b>{clienteAbierto.apodo ?? "—"}</b>
+            <span>Mora</span>
+            <b>{clienteAbierto.cuotasMora > 0 ? `${etiquetaMora(clienteAbierto.cuotasMora)} · ${money(clienteAbierto.saldoMora)}` : "Al día"}</b>
             <span>Teléfono</span><b className="dr-nowrap">{clienteAbierto.telefono || "—"}</b>
             <span>Cuota del día</span><b>{money(clienteAbierto.cuota)}</b>
             <span>Estado</span>

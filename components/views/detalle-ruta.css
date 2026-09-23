@@ -335,6 +335,21 @@
 .dr-kpi-lbl { display: flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
 .dr-kpi-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .dr-kpi-val { font-weight: 800; font-size: 22px; padding-left: 14px; line-height: 1.2; }
+/* Las tarjetas son botones: abren su detalle en la tabla de abajo. */
+.dr-kpi--btn { text-align: left; cursor: pointer; background: transparent; transition: background-color .15s, border-color .15s, box-shadow .15s; }
+.dr-kpi--btn:hover { background: var(--dr-p100); }
+.dr-kpi--on { border-color: var(--kc); box-shadow: 0 0 0 1px var(--kc) inset; background: var(--dr-n100); }
+
+/* La tabla del detalle de una tarjeta. */
+.dr-krow {
+  display: grid; grid-template-columns: 28px 52px 1.6fr 1.4fr 110px; gap: 8px;
+  padding: 10px 12px; align-items: center; border-bottom: 1px solid var(--dr-divider);
+}
+.dr-krow:last-child { border-bottom: 0; }
+.dr-krow.dr-trow--body { cursor: default; }
+.dr-td-detalle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dr-right { text-align: right; }
+.dr-ktotal { position: sticky; bottom: 0; background: var(--dr-n100); font-weight: 800; color: #000; }
 
 /* Pestañas */
 .dr-tabs-card { overflow: hidden; }
@@ -373,13 +388,24 @@
 .dr-trow:last-child { border-bottom: 0; }
 .dr-trow--body { cursor: pointer; }
 .dr-trow--body:hover { background: var(--dr-p100); }
+.dr-trow--body .dr-muted { color: #000; }
 .dr-td-sub { display: none; }
 .dr-thead {
   position: sticky; top: 0; z-index: 1;
   padding: 9px 12px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
   color: var(--dr-muted); background: var(--dr-n100);
 }
-.dr-td-name { font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* El texto de la tabla en negro intenso y negrita: se lee mejor que el gris. */
+.dr-trow--body { color: #000; font-weight: 700; }
+.dr-td-name { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dr-td-apodo { display: block; font-size: 11px; font-weight: 600; color: var(--dr-muted); overflow: hidden; text-overflow: ellipsis; }
+/* La mora con los colores de la lista de cobro (colorMora): hasta 4 cuotas
+   verde, hasta 8 ámbar, más rojo. */
+.dr-td-mora { white-space: nowrap; }
+.dr-td-mora small { display: block; font-size: 11px; font-weight: 600; color: var(--dr-muted); }
+.dr-td-mora--ok, .dr-td-mora--verde { color: var(--dr-success-text); }
+.dr-td-mora--amarillo { color: #b45309; }
+.dr-td-mora--rojo { color: var(--dr-danger-text); }
 .dr-td-addr { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dr-td-addr small { display: block; font-size: 11px; color: var(--dr-muted); }
 .dr-td-actions { display: flex; align-items: center; gap: 2px; }
