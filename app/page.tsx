@@ -1477,7 +1477,17 @@ export default function Page() {
           />
         )
       case "admin-route-detail":
-        return <DetalleRuta currentUserId={currentUser?.id} rutaInicial={rutaDetalle} />
+        return (
+          <DetalleRuta
+            currentUserId={currentUser?.id}
+            currentUserNombre={currentUser?.nombre ?? null}
+            rutaInicial={rutaDetalle}
+            // Volver lleva a donde se entró: el Resumen de Rutas si se llegó
+            // desde ahí (trae ruta elegida), si no el dashboard del admin.
+            onVolver={() => handleViewChange(rutaDetalle != null ? "resumen-rutas" : "admin-dashboard")}
+            onNavegar={(view) => handleViewChange(view)}
+          />
+        )
       case "payment-control":
         return <PaymentControl currentRutaId={rutaId} rutaPais={rutaPais} />
       case "sale-editor":
