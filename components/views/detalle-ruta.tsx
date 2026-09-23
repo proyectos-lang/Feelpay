@@ -429,8 +429,12 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
         <>
           {/* ── Identidad de la unidad ───────────────────────────────────── */}
           <Card className="border-0 bg-card shadow-sm">
-            <CardContent className="px-3 py-2.5">
-              <div className="flex items-start gap-2.5">
+            <CardContent className="px-3 py-2">
+              {/* En pantalla ancha va TODO en una fila —moto, identidad,
+                  clientes y jornada— como el diseño. En telefono se apila,
+                  que es lo unico que cabe en 390px. */}
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="flex flex-1 items-start gap-2.5">
                 {motoFoto ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -474,7 +478,7 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
               </div>
 
               {/* Clientes y horario */}
-              <div className="mt-2 grid grid-cols-2 gap-1.5">
+              <div className="grid shrink-0 grid-cols-2 gap-1.5 sm:w-[300px]">
                 <div className="rounded-lg border bg-muted/20 px-2 py-1.5">
                   <p className="flex items-center gap-1 text-[10px] text-muted-foreground">
                     <Users className="h-3 w-3 shrink-0" />
@@ -499,6 +503,7 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
                   </p>
                 </div>
               </div>
+              </div>
             </CardContent>
           </Card>
 
@@ -506,7 +511,7 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
           {/* Tarjetero y Supervisor van como "Sin asignar": en este sistema no
               existen esos roles todavia. El hueco queda a la vista, listo para
               llenarse el dia que se definan. */}
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
             {[
               { label: "Unidad / Moto", valor: motoPlaca, extra: motoPlaca ? "Activa" : null, icono: Bike, color: "text-info" },
               { label: "Cobrador", valor: cobrador, extra: null, icono: User, color: "text-brand" },
@@ -514,7 +519,7 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
               { label: "Supervisor", valor: null, extra: null, icono: ShieldCheck, color: "text-muted-foreground" },
             ].map((c) => (
               <Card key={c.label} className="border-0 bg-card shadow-sm">
-                <CardContent className="flex items-center gap-2 px-2 py-1.5">
+                <CardContent className="flex items-center gap-2 px-2 py-1">
                   <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-muted/50">
                     <c.icono className={`h-4 w-4 ${c.color}`} />
                   </div>
@@ -549,34 +554,38 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
               <p className="mb-1.5 text-xs font-bold text-foreground">
                 Resumen de la ruta{moneda ? ` (${moneda})` : ""}
               </p>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="min-w-0">
+              {/* Las tres cajas en fila, como el diseño: cada dato en su
+                  recuadro y el avance ocupando el doble. */}
+              <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
+                <div className="min-w-0 rounded-lg border bg-muted/20 px-2 py-1.5">
                   <p className="text-[10px] leading-tight text-muted-foreground">Debido cobrar</p>
                   <p className="truncate text-base font-bold leading-tight tabular-nums text-foreground">
                     {formatearMoneda(debido, moneda)}
                   </p>
                 </div>
-                <div className="min-w-0">
+                <div className="min-w-0 rounded-lg border bg-muted/20 px-2 py-1.5">
                   <p className="text-[10px] leading-tight text-muted-foreground">Cobrado</p>
                   <p className="truncate text-base font-bold leading-tight tabular-nums text-success">
                     {formatearMoneda(cobrado, moneda)}
                   </p>
                 </div>
-              </div>
-              <div className="mt-1.5 flex items-center gap-2">
-                <span className="shrink-0 text-[10px] text-muted-foreground">Avance</span>
-                <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
-                  <div className={`h-full rounded-full ${tono}`} style={{ width: `${Math.min(pct ?? 0, 100)}%` }} />
+                <div className="col-span-2 min-w-0 rounded-lg border bg-muted/20 px-2 py-1.5">
+                  <p className="text-[10px] leading-tight text-muted-foreground">Avance</p>
+                  <div className="flex items-center gap-2">
+                    <span className="shrink-0 text-base font-bold tabular-nums text-foreground">
+                      {pct === null ? "sin meta" : `${pct}%`}
+                    </span>
+                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                      <div className={`h-full rounded-full ${tono}`} style={{ width: `${Math.min(pct ?? 0, 100)}%` }} />
+                    </div>
+                  </div>
                 </div>
-                <span className="shrink-0 text-sm font-bold tabular-nums text-foreground">
-                  {pct === null ? "sin meta" : `${pct}%`}
-                </span>
               </div>
             </CardContent>
           </Card>
 
           {/* ── Los seis contadores ──────────────────────────────────────── */}
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-3 gap-1.5 md:grid-cols-6">
             {contadores.map((c) => (
               <Card key={c.label} className="border-0 bg-card shadow-sm">
                 <CardContent className="px-2 py-1.5 text-center">
@@ -591,21 +600,25 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
           {/* ── Las pestañas ─────────────────────────────────────────────── */}
           <Card className="border-0 bg-card shadow-sm">
             <CardContent className="p-0">
-              <div className="flex gap-1 border-b px-2 py-1.5">
+              {/* Subrayadas y repartidas, como el diseño. El borde de abajo
+                  marca cual esta activa en vez de una pastilla de color. */}
+              <div className="flex border-b">
                 {pestanas.map((p) => (
                   <button
                     key={p.id}
                     type="button"
                     onClick={() => setPestana(p.id)}
-                    className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors ${
+                    className={`flex flex-1 items-center justify-center gap-1 border-b-2 px-2 py-2 text-[11px] font-semibold transition-colors ${
                       pestana === p.id
-                        ? "bg-brand/10 text-brand"
-                        : "text-muted-foreground hover:bg-muted/50"
+                        ? "border-brand text-brand"
+                        : "border-transparent text-muted-foreground hover:bg-muted/40"
                     }`}
                   >
                     <p.icono className="h-3.5 w-3.5 shrink-0" />
                     {p.label}
-                    <span className="rounded-full bg-muted px-1 text-[9px] tabular-nums">{p.n}</span>
+                    <span className={`rounded-full px-1 text-[9px] tabular-nums ${
+                      pestana === p.id ? "bg-brand/10" : "bg-muted"
+                    }`}>{p.n}</span>
                   </button>
                 ))}
               </div>
