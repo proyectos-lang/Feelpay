@@ -46,7 +46,7 @@ import { ResumenRutas } from "@/components/views/resumen-rutas"
 import { CierreCaja } from "@/components/views/cierre-caja"
 import { AdminRouteMonitor } from "@/components/views/admin-route-monitor"
 import { AdminDashboard } from "@/components/views/admin-dashboard"
-import { AdminRouteDetail } from "@/components/views/admin-route-detail"
+import { DetalleRuta } from "@/components/views/detalle-ruta"
 import { RouteSelector, type SelectedRuta } from "@/components/route-selector"
 import { RutaNoIniciada } from "@/components/views/ruta-no-iniciada"
 import { AvisoVersionNueva } from "@/components/actualizar-app"
@@ -1477,7 +1477,7 @@ export default function Page() {
           />
         )
       case "admin-route-detail":
-        return <AdminRouteDetail currentUserId={currentUser?.id} rutaInicial={rutaDetalle} />
+        return <DetalleRuta currentUserId={currentUser?.id} rutaInicial={rutaDetalle} />
       case "payment-control":
         return <PaymentControl currentRutaId={rutaId} rutaPais={rutaPais} />
       case "sale-editor":
