@@ -838,6 +838,17 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
    * esta en la calle — en los dos casos el dia sigue abierto.
    */
   const diaCerrado = rutaDiariaEstado === "cerrada"
+
+  /**
+   * TODAVIA NO HA ENTRADO UN PESO, y el dia sigue abierto.
+   *
+   * EL `!diaCerrado` NO SOBRA. Una ruta ya CERRADA con recaudo en cero no es
+   * "todavia no empieza": es un dia trabajado en el que no se cobro nada, y
+   * ahi el veredicto rojo si corresponde. Decirle "comienza tu jornada" a
+   * alguien que ya cerro la caja seria mandarlo a empezar un dia que acaba de
+   * terminar.
+   */
+  const sinRecaudo = collectedAmount <= 0 && !diaCerrado
   /**
    * EL INFORME, COMO IMAGEN.
    *
@@ -1250,6 +1261,23 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                       <p className="text-[11px] leading-tight text-muted-foreground">
                         Sin meta para hoy
                       </p>
+                    ) : sinRecaudo ? (
+                      /* TODAVIA NO HA ENTRADO UN PESO.
+                         Va antes que "Por cobrar hoy" porque con el recaudo en
+                         cero ese mensaje seria repetir la meta que ya esta
+                         justo arriba. Acá lo que hay que decir es que la
+                         jornada no ha empezado a moverse. */
+                      <div className="flex items-start gap-1.5">
+                        <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-info" />
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-bold leading-tight text-info">
+                            Aún sin recaudo registrado
+                          </p>
+                          <p className="text-[10px] leading-tight text-muted-foreground">
+                            Comienza tu jornada para ver el avance
+                          </p>
+                        </div>
+                      </div>
                     ) : !diaCerrado ? (
                       <p className="text-[11px] leading-tight text-muted-foreground">
                         {remaining > 0
