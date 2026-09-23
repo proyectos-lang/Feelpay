@@ -986,7 +986,7 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
                         Sin ubicaciones registradas ese día. El recorrido se dibuja con el GPS de cada gestión.
                       </div>
                     ) : (
-                      <MapaRuta points={puntos} />
+                      <div className="dr-map-inner"><MapaRuta points={puntos} /></div>
                     )}
                   </div>
                 </div>

@@ -72,7 +72,40 @@
 .dr-root button { font: inherit; color: inherit; }
 .dr-root svg { flex: none; }
 
-.dr-frame { width: 100%; max-width: 810px; margin: 0 auto; }
+.dr-root { container: dr / inline-size; }
+
+/* ── LA ESCALA ─────────────────────────────────────────────────────────────
+   El armado del diseño (810px) se conserva tal cual en pantallas más
+   angostas: en vez de apilarlo, se dibuja a su ancho lógico y se reduce con
+   `zoom`, así se ve igual que el ejemplo pero más chico. `--k` es ese factor
+   y sale del ancho REAL de la vista (container query), no del de la ventana,
+   porque la barra lateral le quita espacio.
+
+   A todo ancho ya va en .92: la letra del diseño, un poco más chica.
+   Solo por debajo de 520px (teléfono vertical) se apila, porque escalado a
+   esa medida el texto quedaría ilegible. */
+.dr-frame {
+  --k: .92;
+  zoom: var(--k);
+  width: 100%;
+  max-width: calc(810px / var(--k));
+  margin: 0 auto;
+}
+@container dr (max-width: 809px) { .dr-frame { --k: .92; } }
+@container dr (max-width: 779px) { .dr-frame { --k: .92; } }
+@container dr (max-width: 749px) { .dr-frame { --k: 0.889; } }
+@container dr (max-width: 719px) { .dr-frame { --k: 0.852; } }
+@container dr (max-width: 689px) { .dr-frame { --k: 0.815; } }
+@container dr (max-width: 659px) { .dr-frame { --k: 0.778; } }
+@container dr (max-width: 629px) { .dr-frame { --k: 0.741; } }
+@container dr (max-width: 599px) { .dr-frame { --k: 0.704; } }
+@container dr (max-width: 569px) { .dr-frame { --k: 0.667; } }
+@container dr (max-width: 539px) { .dr-frame { --k: 0.642; } }
+/* Teléfono vertical: armado apilado, con la letra del diseño en .92. */
+@container dr (max-width: 519px) { .dr-frame { --k: .92; } }
+/* El modal no va dentro de .dr-frame: se le aplica la misma letra chica. */
+.dr-modal { zoom: .92; }
+
 
 /* ── Piezas base ──────────────────────────────────────────────────────── */
 .dr-card {
@@ -322,8 +355,12 @@
 .dr-sqbtn--on { background: var(--dr-p100); border-color: var(--dr-p300); color: var(--dr-p800); }
 
 /* Tabla de clientes */
-.dr-table-scroll { overflow-x: auto; }
-.dr-table { font-size: 13px; overflow: hidden; min-width: 620px; }
+/* LA TABLA NO CRECE AL INFINITO: con muchos clientes empujaba las acciones
+   hasta el fondo. Tiene alto máximo (unas 9 filas) y scroll propio, con el
+   encabezado fijo arriba. El scroll va en la misma caja que dibuja el borde
+   para que el sticky del encabezado funcione. */
+.dr-table-scroll { }
+.dr-table { font-size: 13px; max-height: 480px; overflow-y: auto; overscroll-behavior: contain; }
 .dr-trow {
   display: grid; grid-template-columns: 28px 1.7fr 1.2fr 1fr 90px 76px; gap: 8px;
   padding: 10px 12px; align-items: center; border-bottom: 1px solid var(--dr-divider);
@@ -334,6 +371,7 @@
 .dr-trow--body:hover { background: var(--dr-p100); }
 .dr-td-sub { display: none; }
 .dr-thead {
+  position: sticky; top: 0; z-index: 1;
   padding: 9px 12px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
   color: var(--dr-muted); background: var(--dr-n100);
 }
@@ -362,6 +400,9 @@
 
 /* Mapa */
 .dr-map { height: 290px; overflow: hidden; }
+/* Leaflet calcula mal dónde está el mouse dentro de un `zoom`: el mapa se
+   dibuja sin escala (zoom inverso) y con su alto ya reducido. */
+.dr-map-inner { zoom: calc(1 / var(--k)); height: 100%; }
 .dr-map .leaflet-container { height: 100%; width: 100%; }
 .dr-map-loading, .dr-map-empty { height: 100%; display: grid; place-items: center; color: var(--dr-muted); font-size: 13px; padding: 16px; text-align: center; }
 
@@ -424,8 +465,8 @@
 .dr-loading { padding: 60px 20px; text-align: center; color: var(--dr-muted); }
 .dr-busy { opacity: .6; pointer-events: none; }
 
-/* ── Teléfono (< 640px): lo mismo, apilado ────────────────────────────── */
-@media (max-width: 639px) {
+/* ── Teléfono (< 520px de vista): lo mismo, apilado ────────────────────────────── */
+@container dr (max-width: 519px) {
   .dr-header-in { padding: 8px 16px 12px; gap: 10px; }
   .dr-brand-text, .dr-vdivider { display: none; }
   .dr-title h1 { font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
