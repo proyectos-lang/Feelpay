@@ -26,7 +26,8 @@ interface Props {
   /**
    * El país, cuando se conoce. Hace falta porque la moneda sola no alcanza:
    * Ecuador usa dólar, y sin esto sus rutas mostraban la bandera de Estados
-   * Unidos. Opcional: donde no se pasa, todo sigue igual que antes.
+   * Unidos. Toda bandera de una RUTA lo recibe; la unica que va sin pais es
+   * la del dolar como moneda (equivalencia en USD del Resumen del Dia).
    */
   pais?: string | null
   /** Lado del círculo, en píxeles. */

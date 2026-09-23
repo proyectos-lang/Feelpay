@@ -977,6 +977,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
               {/* La bandera, grande y redonda */}
               <Bandera
                 moneda={monedaRuta}
+                pais={paisRuta}
                 size={48}
                 className="shadow-md ring-2 ring-white/70"
               />
@@ -1456,7 +1457,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                         title={`Convertido con la tasa del ${fmtFecha(diaDelResumen)}`}
                       >
                         {/* Cada lado con su bandera, como en el mockup. */}
-                        <Bandera moneda={monedaRuta} size={18} />
+                        <Bandera moneda={monedaRuta} pais={paisRuta} size={18} />
                         <div className="min-w-0 flex-1">
                           <p className="text-[10px] font-semibold text-muted-foreground">
                             {monedaRuta}

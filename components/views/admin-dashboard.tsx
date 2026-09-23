@@ -395,7 +395,7 @@ export function AdminDashboard({ currentUserId, onVerResumenRutas }: AdminDashbo
                     className="rounded-lg border border-border bg-muted/20 px-2 py-1.5"
                   >
                     <div className="flex items-center gap-2">
-                      <Bandera moneda={p.moneda} size={30} className="shadow-sm" />
+                      <Bandera moneda={p.moneda} pais={p.pais} size={30} className="shadow-sm" />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-xs font-bold leading-tight text-foreground">
                           {p.pais}

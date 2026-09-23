@@ -297,7 +297,7 @@ export function ResumenRutas({ currentUserId, onVerRuta }: Props) {
               <CardContent className="px-3 py-2">
                 {/* Identidad: bandera, nombre, país y ciudad */}
                 <div className="flex items-start gap-2">
-                  <Bandera moneda={f.moneda} size={38} className="mt-0.5 shadow-sm" />
+                  <Bandera moneda={f.moneda} pais={f.pais} size={38} className="mt-0.5 shadow-sm" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-bold leading-tight text-foreground">
                       {f.nombre}
