@@ -55,7 +55,19 @@ import {
   Users,
   XCircle,
 } from "lucide-react"
+import dynamic from "next/dynamic"
 import { createClient } from "@/lib/supabase/client"
+import type { MapPoint } from "./admin-route-monitor-map"
+
+/** El mismo mapa del Monitoreo de Rutas, que ya dibuja el recorrido en orden. */
+const MapaRuta = dynamic(() => import("./admin-route-monitor-map"), {
+  ssr: false,
+  loading: () => (
+    <div className="grid h-[300px] w-full place-items-center bg-muted/30">
+      <span className="text-xs text-muted-foreground">Cargando mapa…</span>
+    </div>
+  ),
+})
 import { getResumenDia } from "@/lib/resumen-dia"
 import {
   todayColombia,
@@ -66,7 +78,7 @@ import {
 import { Bandera } from "@/components/bandera"
 import { formatearMoneda, monedaPorPais } from "@/lib/monedas"
 
-type Pestana = "clientes" | "movimientos" | "gastos"
+type Pestana = "clientes" | "mapa" | "movimientos"
 
 interface Props {
   currentUserId?: number | string | null
@@ -128,14 +140,6 @@ function paisYCiudad(pais: string | null, ciudad: string | null) {
   }
 }
 
-/** "2026-09-20" → "20 de septiembre de 2026". */
-function fechaLarga(iso: string): string {
-  const [a, m, d] = iso.split("-").map(Number)
-  const meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
-    "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
-  return `${d} de ${meses[m - 1]} de ${a}`
-}
-
 export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
   const [fecha, setFecha] = useState(todayColombia)
   const [rutaId, setRutaId] = useState<number | null>(rutaInicial ?? null)
@@ -166,6 +170,8 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
   const [clientesDia, setClientesDia] = useState<ClienteDia[]>([])
   const [movimientos, setMovimientos] = useState<MovimientoRow[]>([])
   const [gastos, setGastos] = useState<GastoRow[]>([])
+  /** Los puntos del recorrido: donde se registro cada gestion del dia. */
+  const [puntos, setPuntos] = useState<MapPoint[]>([])
 
   // ── Las rutas que este usuario puede ver ───────────────────────────────────
   useEffect(() => {
@@ -271,7 +277,7 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
           .eq("loans.ruta", rutaId)
           .neq("loans.estado", "anulado"),
         sb.from("gestiones")
-          .select("id, loan_id, tipo, monto, fecha_hora, loans:loans(clients:clients(nombre_completo))")
+          .select("id, loan_id, tipo, monto, fecha_hora, latitud, longitud, loans:loans(clients:clients(nombre_completo))")
           .eq("ruta", rutaId)
           .eq("fecha_gestion", fecha)
           .eq("estado", "aplicada")
@@ -289,8 +295,10 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
       const pagado = new Map<string, number>()
       const visitado = new Set<string>()
       const movs: MovimientoRow[] = []
+      const pts: MapPoint[] = []
       for (const g of (resGest.data ?? []) as unknown as {
         id: string; loan_id: string; tipo: string; monto: number | null; fecha_hora: string
+        latitud: number | null; longitud: number | null
         loans?: { clients?: { nombre_completo?: string | null } | null } | null
       }[]) {
         const m = montoEfectivo(g as never)
@@ -305,8 +313,26 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
           tipo: g.tipo,
           monto: m,
         })
+
+        // EL RECORRIDO SALE DE DONDE SE REGISTRO CADA GESTION, no de la
+        // direccion del cliente: es por donde paso el cobrador de verdad. Una
+        // gestion sin coordenadas —capturada sin GPS— simplemente no pinta
+        // punto, en vez de inventarle una.
+        if (g.latitud != null && g.longitud != null) {
+          pts.push({
+            id: g.id,
+            lat: Number(g.latitud),
+            lng: Number(g.longitud),
+            estado: m > 0 ? "pagado" : "no_pago",
+            cliente: g.loans?.clients?.nombre_completo ?? "—",
+            monto: m,
+            hora: horaColombia(g.fecha_hora) || "—",
+            orden: pts.length + 1,
+          })
+        }
       }
       setMovimientos(movs)
+      setPuntos(pts)
 
       setClientesDia(
         ((resPlan.data ?? []) as unknown as {
@@ -381,23 +407,23 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
 
   const pestanas: { id: Pestana; label: string; icono: React.ElementType; n: number }[] = [
     { id: "clientes", label: "Clientes", icono: Users, n: clientesDia.length },
-    { id: "movimientos", label: "Movimientos", icono: CreditCard, n: movimientos.length },
-    { id: "gastos", label: "Gastos", icono: Receipt, n: gastos.length },
+    { id: "mapa", label: "Mapa", icono: MapPin, n: puntos.length },
+    { id: "movimientos", label: "Movimientos", icono: CreditCard, n: movimientos.length + gastos.length },
   ]
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1">
       {/* ── Fecha, ruta y buscador ─────────────────────────────────────────── */}
       <Card className="border-0 bg-card shadow-sm">
-        <CardContent className="flex flex-wrap items-center gap-1.5 px-2.5 py-2">
+        <CardContent className="flex flex-wrap items-center gap-1 p-1.5">
           <Input
             type="date"
             value={fecha}
             onChange={(e) => setFecha(e.target.value)}
-            className="h-8 w-[136px] text-xs"
+            className="h-7 w-[124px] text-xs"
           />
           <Select value={rutaId != null ? String(rutaId) : ""} onValueChange={(v) => setRutaId(Number(v))}>
-            <SelectTrigger className="h-8 w-[142px] text-xs">
+            <SelectTrigger className="h-7 w-[128px] text-xs">
               <SelectValue placeholder="Unidad" />
             </SelectTrigger>
             <SelectContent>
@@ -414,10 +440,10 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
               placeholder="Buscar cliente…"
-              className="h-8 pl-7 text-xs"
+              className="h-7 pl-7 text-xs"
             />
           </div>
-          <Button size="icon" variant="outline" onClick={() => void cargar()} className="h-8 w-8 shrink-0">
+          <Button size="icon" variant="outline" onClick={() => void cargar()} className="h-7 w-7 shrink-0">
             <RefreshCw className={`h-3.5 w-3.5 ${cargando ? "animate-spin" : ""}`} />
           </Button>
         </CardContent>
@@ -434,18 +460,18 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
                   clientes y jornada— como el diseño. En telefono se apila,
                   que es lo unico que cabe en 390px. */}
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="flex flex-1 items-start gap-2.5">
+              <div className="flex flex-1 items-center gap-2">
                 {motoFoto ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={motoFoto}
                     alt={`Moto de ${nombre}`}
-                    className="h-16 w-20 shrink-0 rounded-lg border object-cover"
+                    className="h-12 w-14 shrink-0 rounded-md border object-cover"
                     onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none" }}
                   />
                 ) : (
-                  <div className="grid h-16 w-20 shrink-0 place-items-center rounded-lg border bg-muted/40">
-                    <Bike className="h-7 w-7 text-muted-foreground" />
+                  <div className="grid h-12 w-14 shrink-0 place-items-center rounded-md border bg-muted/40">
+                    <Bike className="h-5 w-5 text-muted-foreground" />
                   </div>
                 )}
 
@@ -470,24 +496,20 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
                     <span className="truncate font-semibold text-foreground">{pais}</span>
                     {ciudad && <span className="truncate">· {ciudad}</span>}
                   </p>
-                  <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                    <MapPin className="h-3 w-3 shrink-0" />
-                    {fechaLarga(fecha)}
-                  </p>
                 </div>
               </div>
 
               {/* Clientes y horario */}
               <div className="grid shrink-0 grid-cols-2 gap-1.5 sm:w-[300px]">
-                <div className="rounded-lg border bg-muted/20 px-2 py-1.5">
-                  <p className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <div className="rounded-md border bg-muted/20 px-1.5 py-1">
+                  <p className="flex items-center gap-1 text-[9px] leading-none text-muted-foreground">
                     <Users className="h-3 w-3 shrink-0" />
                     Clientes asignados
                   </p>
                   <p className="text-base font-bold leading-tight tabular-nums text-foreground">{clientes}</p>
                 </div>
-                <div className="rounded-lg border bg-muted/20 px-2 py-1.5">
-                  <p className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <div className="rounded-md border bg-muted/20 px-1.5 py-1">
+                  <p className="flex items-center gap-1 text-[9px] leading-none text-muted-foreground">
                     <Clock className="h-3 w-3 shrink-0" />
                     Jornada
                   </p>
@@ -507,95 +529,82 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
             </CardContent>
           </Card>
 
-          {/* ── La gente a cargo ─────────────────────────────────────────── */}
-          {/* Tarjetero y Supervisor van como "Sin asignar": en este sistema no
-              existen esos roles todavia. El hueco queda a la vista, listo para
-              llenarse el dia que se definan. */}
-          <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
-            {[
-              { label: "Unidad / Moto", valor: motoPlaca, extra: motoPlaca ? "Activa" : null, icono: Bike, color: "text-info" },
-              { label: "Cobrador", valor: cobrador, extra: null, icono: User, color: "text-brand" },
-              { label: "Tarjetero", valor: null, extra: null, icono: CreditCard, color: "text-muted-foreground" },
-              { label: "Supervisor", valor: null, extra: null, icono: ShieldCheck, color: "text-muted-foreground" },
-            ].map((c) => (
-              <Card key={c.label} className="border-0 bg-card shadow-sm">
-                <CardContent className="flex items-center gap-2 px-2 py-1">
-                  <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-muted/50">
-                    <c.icono className={`h-4 w-4 ${c.color}`} />
-                  </div>
+          {/* ── La gente a cargo ─────────────────────────────────────────
+              UNA sola tarjeta con los cuatro en fila, separados por una raya
+              —no cuatro tarjetas sueltas—, como el diseño.
+
+              Tarjetero y Supervisor van como "Sin asignar": en este sistema
+              no existen esos roles todavia. */}
+          <Card className="border-0 bg-card shadow-sm">
+            <CardContent className="grid grid-cols-2 gap-x-2 gap-y-1 p-1.5 md:grid-cols-4 md:divide-x md:divide-border">
+              {[
+                { label: "Unidad / Moto", valor: motoPlaca, activa: !!motoPlaca, icono: Bike, color: "text-info" },
+                { label: "Cobrador", valor: cobrador, activa: false, icono: User, color: "text-brand" },
+                { label: "Tarjetero", valor: null, activa: false, icono: CreditCard, color: "text-muted-foreground" },
+                { label: "Supervisor", valor: null, activa: false, icono: ShieldCheck, color: "text-muted-foreground" },
+              ].map((c, i) => (
+                <div key={c.label} className={`flex items-center gap-1.5 ${i > 0 ? "md:pl-2" : ""}`}>
+                  <c.icono className={`h-4 w-4 shrink-0 ${c.color}`} />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[10px] leading-tight text-muted-foreground">{c.label}</p>
-                    <p className={`truncate text-xs font-bold leading-tight ${
+                    <p className="truncate text-[9px] leading-none text-muted-foreground">{c.label}</p>
+                    <p className={`truncate text-[11px] font-bold leading-tight ${
                       c.valor ? "text-foreground" : "text-muted-foreground"
                     }`}>
                       {c.valor ?? "Sin asignar"}
                     </p>
-                    {c.extra && (
-                      <p className="flex items-center gap-1 text-[10px] leading-tight text-success">
-                        <span className="h-1.5 w-1.5 rounded-full bg-success" />
-                        {c.extra}
-                      </p>
-                    )}
-                    {!c.valor && (
-                      <p className="flex items-center gap-0.5 text-[10px] leading-tight text-muted-foreground">
-                        <Plus className="h-2.5 w-2.5" />
-                        Sin registrar
-                      </p>
-                    )}
                   </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                  {c.activa && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
 
-          {/* ── Resumen de la ruta ───────────────────────────────────────── */}
+          {/* ── Resumen de la ruta ─────────────────────────────────────────
+              Los tres datos EN UNA LINEA: debido y cobrado ocupan lo que
+              miden sus cifras —no media pantalla cada uno— y el avance se
+              queda con el resto, que es lo que necesita para que la barra se
+              lea. */}
           <Card className="border-0 bg-card shadow-sm">
-            <CardContent className="px-3 py-2">
-              <p className="mb-1.5 text-xs font-bold text-foreground">
-                Resumen de la ruta{moneda ? ` (${moneda})` : ""}
+            <CardContent className="flex flex-wrap items-center gap-x-3 gap-y-1 p-1.5">
+              <p className="shrink-0 text-[11px] font-bold text-foreground">
+                Resumen{moneda ? ` (${moneda})` : ""}
               </p>
-              {/* Las tres cajas en fila, como el diseño: cada dato en su
-                  recuadro y el avance ocupando el doble. */}
-              <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
-                <div className="min-w-0 rounded-lg border bg-muted/20 px-2 py-1.5">
-                  <p className="text-[10px] leading-tight text-muted-foreground">Debido cobrar</p>
-                  <p className="truncate text-base font-bold leading-tight tabular-nums text-foreground">
-                    {formatearMoneda(debido, moneda)}
-                  </p>
-                </div>
-                <div className="min-w-0 rounded-lg border bg-muted/20 px-2 py-1.5">
-                  <p className="text-[10px] leading-tight text-muted-foreground">Cobrado</p>
-                  <p className="truncate text-base font-bold leading-tight tabular-nums text-success">
-                    {formatearMoneda(cobrado, moneda)}
-                  </p>
-                </div>
-                <div className="col-span-2 min-w-0 rounded-lg border bg-muted/20 px-2 py-1.5">
-                  <p className="text-[10px] leading-tight text-muted-foreground">Avance</p>
-                  <div className="flex items-center gap-2">
-                    <span className="shrink-0 text-base font-bold tabular-nums text-foreground">
-                      {pct === null ? "sin meta" : `${pct}%`}
-                    </span>
-                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
-                      <div className={`h-full rounded-full ${tono}`} style={{ width: `${Math.min(pct ?? 0, 100)}%` }} />
-                    </div>
-                  </div>
+              <div className="shrink-0">
+                <p className="text-[9px] leading-none text-muted-foreground">Debido cobrar</p>
+                <p className="whitespace-nowrap text-sm font-bold leading-tight tabular-nums text-foreground">
+                  {formatearMoneda(debido, moneda)}
+                </p>
+              </div>
+              <div className="shrink-0">
+                <p className="text-[9px] leading-none text-muted-foreground">Cobrado</p>
+                <p className="whitespace-nowrap text-sm font-bold leading-tight tabular-nums text-success">
+                  {formatearMoneda(cobrado, moneda)}
+                </p>
+              </div>
+              <div className="flex min-w-[130px] flex-1 items-center gap-1.5">
+                <span className="shrink-0 text-sm font-bold tabular-nums text-foreground">
+                  {pct === null ? "—" : `${pct}%`}
+                </span>
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                  <div className={`h-full rounded-full ${tono}`} style={{ width: `${Math.min(pct ?? 0, 100)}%` }} />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* ── Los seis contadores ──────────────────────────────────────── */}
-          <div className="grid grid-cols-3 gap-1.5 md:grid-cols-6">
-            {contadores.map((c) => (
-              <Card key={c.label} className="border-0 bg-card shadow-sm">
-                <CardContent className="px-2 py-1.5 text-center">
-                  <c.icono className={`mx-auto h-4 w-4 ${c.color}`} />
-                  <p className="text-[10px] leading-tight text-muted-foreground">{c.label}</p>
-                  <p className={`text-base font-bold leading-tight tabular-nums ${c.color}`}>{c.valor}</p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+          {/* ── Los seis contadores ────────────────────────────────────────
+              UNA tarjeta con los seis en columnas, no seis tarjetas. */}
+          <Card className="border-0 bg-card shadow-sm">
+            <CardContent className="grid grid-cols-6 divide-x divide-border p-1">
+              {contadores.map((c) => (
+                <div key={c.label} className="px-0.5 text-center">
+                  <c.icono className={`mx-auto h-3.5 w-3.5 ${c.color}`} />
+                  <p className="truncate text-[9px] leading-none text-muted-foreground">{c.label}</p>
+                  <p className={`text-sm font-bold leading-tight tabular-nums ${c.color}`}>{c.valor}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
 
           {/* ── Las pestañas ─────────────────────────────────────────────── */}
           <Card className="border-0 bg-card shadow-sm">
@@ -608,7 +617,7 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
                     key={p.id}
                     type="button"
                     onClick={() => setPestana(p.id)}
-                    className={`flex flex-1 items-center justify-center gap-1 border-b-2 px-2 py-2 text-[11px] font-semibold transition-colors ${
+                    className={`flex flex-1 items-center justify-center gap-1 border-b-2 px-2 py-1.5 text-[11px] font-semibold transition-colors ${
                       pestana === p.id
                         ? "border-brand text-brand"
                         : "border-transparent text-muted-foreground hover:bg-muted/40"
@@ -627,10 +636,10 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/40 hover:bg-muted/40">
-                      <TableHead className="px-2 py-2 text-[10px] font-bold uppercase text-muted-foreground">#</TableHead>
-                      <TableHead className="px-2 py-2 text-[10px] font-bold uppercase text-muted-foreground">Cliente</TableHead>
-                      <TableHead className="px-2 py-2 text-right text-[10px] font-bold uppercase text-muted-foreground">Cuota</TableHead>
-                      <TableHead className="px-2 py-2 text-center text-[10px] font-bold uppercase text-muted-foreground">Estado</TableHead>
+                      <TableHead className="px-1.5 py-1 text-[9px] font-bold uppercase text-muted-foreground">#</TableHead>
+                      <TableHead className="px-1.5 py-1 text-[9px] font-bold uppercase text-muted-foreground">Cliente</TableHead>
+                      <TableHead className="px-1.5 py-1 text-right text-[9px] font-bold uppercase text-muted-foreground">Cuota</TableHead>
+                      <TableHead className="px-1.5 py-1 text-center text-[9px] font-bold uppercase text-muted-foreground">Estado</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -642,12 +651,12 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
                       </TableRow>
                     ) : clientesFiltrados.map((c, i) => (
                       <TableRow key={c.loanId} className="border-b border-border/50 hover:bg-muted/20">
-                        <TableCell className="px-2 py-1.5 text-[10px] text-muted-foreground">{i + 1}</TableCell>
+                        <TableCell className="px-1.5 py-1 text-[10px] text-muted-foreground">{i + 1}</TableCell>
                         {/* La direccion y la zona van DEBAJO del nombre: con
                             columna propia, Cuota y Estado se salen de un
                             telefono de 390px y hay que arrastrar de lado para
                             ver si el cliente pago. */}
-                        <TableCell className="px-2 py-1.5">
+                        <TableCell className="px-1.5 py-1">
                           <span className="block text-xs font-semibold leading-tight text-foreground">{c.nombre}</span>
                           {(c.direccion || c.zona) && (
                             <span className="block text-[10px] leading-tight text-muted-foreground">
@@ -655,10 +664,10 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
                             </span>
                           )}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap px-2 py-1.5 text-right text-xs font-bold tabular-nums">
+                        <TableCell className="whitespace-nowrap px-1.5 py-1 text-right text-[11px] font-bold tabular-nums">
                           {fmtMoneda(c.cuota)}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 text-center">
+                        <TableCell className="px-1.5 py-1 text-center">
                           <Badge className={`border-0 text-[10px] ${
                             c.estado === "pago" ? "bg-success-light text-success"
                               : c.estado === "no_pago" ? "bg-destructive/10 text-destructive"
@@ -673,70 +682,68 @@ export function DetalleRuta({ currentUserId, rutaInicial }: Props) {
                 </Table>
               )}
 
+              {pestana === "mapa" && (
+                /* EL RECORRIDO DEL DIA. Reusa el mapa del Monitoreo de Rutas,
+                   que ya numera las paradas en orden y las pinta por estado.
+                   Sin puntos se dice por que, en vez de dejar un cuadro gris
+                   que se lee como que el mapa se rompio. */
+                puntos.length === 0 ? (
+                  <p className="px-2 py-8 text-center text-xs text-muted-foreground">
+                    Sin ubicaciones registradas ese día. El recorrido se dibuja
+                    con el GPS de cada gestión.
+                  </p>
+                ) : (
+                  <div className="h-[300px] w-full overflow-hidden">
+                    <MapaRuta points={puntos} />
+                  </div>
+                )
+              )}
+
               {pestana === "movimientos" && (
+                /* Gestiones Y gastos/ingresos/retiros en una sola lista,
+                   ordenada por hora: es "que paso hoy", y separarlos en dos
+                   pestañas obligaba a saltar entre ellas para reconstruir el
+                   dia. */
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/40 hover:bg-muted/40">
-                      <TableHead className="px-2 py-2 text-[10px] font-bold uppercase text-muted-foreground">Hora</TableHead>
-                      <TableHead className="px-2 py-2 text-[10px] font-bold uppercase text-muted-foreground">Cliente</TableHead>
-                      <TableHead className="px-2 py-2 text-right text-[10px] font-bold uppercase text-muted-foreground">Monto</TableHead>
+                      <TableHead className="px-1.5 py-1 text-[9px] font-bold uppercase text-muted-foreground">Hora</TableHead>
+                      <TableHead className="px-1.5 py-1 text-[9px] font-bold uppercase text-muted-foreground">Detalle</TableHead>
+                      <TableHead className="px-1.5 py-1 text-right text-[9px] font-bold uppercase text-muted-foreground">Monto</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {movsFiltrados.length === 0 ? (
+                    {movsFiltrados.length + gastosFiltrados.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={3} className="py-8 text-center text-xs text-muted-foreground">
+                        <TableCell colSpan={3} className="py-6 text-center text-xs text-muted-foreground">
                           Sin movimientos ese día.
                         </TableCell>
                       </TableRow>
-                    ) : movsFiltrados.map((m) => (
-                      <TableRow key={m.id} className="border-b border-border/50 hover:bg-muted/20">
-                        <TableCell className="whitespace-nowrap px-2 py-1.5 text-[10px] text-muted-foreground">{m.hora}</TableCell>
-                        <TableCell className="px-2 py-1.5">
-                          <span className="block text-xs font-semibold leading-tight text-foreground">{m.cliente}</span>
-                          <span className="block text-[10px] capitalize leading-tight text-muted-foreground">{m.tipo}</span>
-                        </TableCell>
-                        <TableCell className={`whitespace-nowrap px-2 py-1.5 text-right text-xs font-bold tabular-nums ${
-                          m.monto > 0 ? "text-success" : m.monto < 0 ? "text-destructive" : "text-muted-foreground"
-                        }`}>
-                          {m.monto === 0 ? "—" : fmtMoneda(m.monto)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-
-              {pestana === "gastos" && (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-muted/40 hover:bg-muted/40">
-                      <TableHead className="px-2 py-2 text-[10px] font-bold uppercase text-muted-foreground">Hora</TableHead>
-                      <TableHead className="px-2 py-2 text-[10px] font-bold uppercase text-muted-foreground">Concepto</TableHead>
-                      <TableHead className="px-2 py-2 text-right text-[10px] font-bold uppercase text-muted-foreground">Valor</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {gastosFiltrados.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={3} className="py-8 text-center text-xs text-muted-foreground">
-                          Sin gastos, ingresos ni retiros ese día.
-                        </TableCell>
-                      </TableRow>
-                    ) : gastosFiltrados.map((g) => (
-                      <TableRow key={g.id} className="border-b border-border/50 hover:bg-muted/20">
-                        <TableCell className="whitespace-nowrap px-2 py-1.5 text-[10px] text-muted-foreground">{g.hora}</TableCell>
-                        <TableCell className="px-2 py-1.5">
-                          <span className="block text-xs font-semibold leading-tight text-foreground">{g.concepto}</span>
-                          <span className="block text-[10px] leading-tight text-muted-foreground">{g.tipo}</span>
-                        </TableCell>
-                        <TableCell className={`whitespace-nowrap px-2 py-1.5 text-right text-xs font-bold tabular-nums ${
-                          g.tipo === "Ingreso" ? "text-success" : "text-destructive"
-                        }`}>
-                          {fmtMoneda(g.valor)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    ) : [
+                      ...movsFiltrados.map((m) => ({
+                        k: `g-${m.id}`, hora: m.hora, titulo: m.cliente, sub: m.tipo,
+                        monto: m.monto, positivo: m.monto > 0,
+                      })),
+                      ...gastosFiltrados.map((g) => ({
+                        k: `x-${g.id}`, hora: g.hora, titulo: g.concepto, sub: g.tipo,
+                        monto: g.valor, positivo: g.tipo === "Ingreso",
+                      })),
+                    ]
+                      .sort((a, b) => a.hora.localeCompare(b.hora))
+                      .map((r) => (
+                        <TableRow key={r.k} className="border-b border-border/50 hover:bg-muted/20">
+                          <TableCell className="whitespace-nowrap px-1.5 py-1 text-[10px] text-muted-foreground">{r.hora}</TableCell>
+                          <TableCell className="px-1.5 py-1">
+                            <span className="block text-[11px] font-semibold leading-tight text-foreground">{r.titulo}</span>
+                            <span className="block text-[9px] capitalize leading-tight text-muted-foreground">{r.sub}</span>
+                          </TableCell>
+                          <TableCell className={`whitespace-nowrap px-1.5 py-1 text-right text-[11px] font-bold tabular-nums ${
+                            r.monto === 0 ? "text-muted-foreground" : r.positivo ? "text-success" : "text-destructive"
+                          }`}>
+                            {r.monto === 0 ? "—" : fmtMoneda(r.monto)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
                   </TableBody>
                 </Table>
               )}
