@@ -23,12 +23,18 @@ import { useId } from "react"
 interface Props {
   /** Código ISO de la moneda: 'ARS', 'USD', 'COP', 'PYG'… */
   moneda: string | null | undefined
+  /**
+   * El país, cuando se conoce. Hace falta porque la moneda sola no alcanza:
+   * Ecuador usa dólar, y sin esto sus rutas mostraban la bandera de Estados
+   * Unidos. Opcional: donde no se pasa, todo sigue igual que antes.
+   */
+  pais?: string | null
   /** Lado del círculo, en píxeles. */
   size?: number
   className?: string
 }
 
-export function Bandera({ moneda, size = 20, className = "" }: Props) {
+export function Bandera({ moneda, pais, size = 20, className = "" }: Props) {
   const cod = (moneda ?? "").trim().toUpperCase()
   // El id del recorte tiene que ser UNICO por instancia: en esta pantalla hay
   // dos banderas a la vez y con el mismo id las dos usarian el primer
@@ -59,6 +65,22 @@ export function Bandera({ moneda, size = 20, className = "" }: Props) {
           <rect width="24" height="8" fill="#74ACDF" />
           <rect y="16" width="24" height="8" fill="#74ACDF" />
           <circle cx="12" cy="12" r="2.6" fill="#F6B40E" />
+        </g>
+      </svg>
+    )
+  }
+
+  const paisNorm = (pais ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase()
+  if (paisNorm === "ecuador") {
+    return (
+      <svg {...comun} aria-label="Ecuador">
+        <defs>{recorte}</defs>
+        <g clipPath={`url(#${circ})`}>
+          <rect width="24" height="12" fill="#FFDD00" />
+          <rect y="12" width="24" height="6" fill="#034EA2" />
+          <rect y="18" width="24" height="6" fill="#ED1C24" />
+          {/* El escudo, reducido a un óvalo: a este tamaño no se lee más. */}
+          <ellipse cx="12" cy="12" rx="2.6" ry="3.2" fill="#6CACE4" stroke="#8B5A2B" strokeWidth="0.6" />
         </g>
       </svg>
     )

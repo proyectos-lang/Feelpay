@@ -654,7 +654,7 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
             className={`dr-menu-item${r.id === rutaId ? " dr-menu-item--on" : ""}`}
             onClick={() => elegirRuta(r.id)}
           >
-            <Bandera moneda={(r.moneda ?? "").trim().toUpperCase() || monedaPorPais(r.pais, r.ciudad)} size={20} />
+            <Bandera moneda={(r.moneda ?? "").trim().toUpperCase() || monedaPorPais(r.pais, r.ciudad)} pais={paisYCiudad(r.pais, r.ciudad).pais} size={20} />
             <span className="dr-menu-item-text">
               <b>{tituloRuta(r.nombre)}</b>
               <span className="dr-ellipsis">
@@ -799,7 +799,7 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
                   <Pill variant={estadoPill.variant} label={estadoPill.label} />
                 </div>
                 <div className="dr-hero-line">
-                  <Bandera moneda={moneda} size={18} />
+                  <Bandera moneda={moneda} pais={pc.pais} size={18} />
                   <b className="dr-nowrap">{pc.pais || "—"}</b>
                   {pc.ciudad && <span className="dr-muted dr-ellipsis">· {pc.ciudad}</span>}
                 </div>

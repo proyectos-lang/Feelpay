@@ -82,8 +82,8 @@
    porque la barra lateral le quita espacio.
 
    A todo ancho ya va en .92: la letra del diseño, un poco más chica.
-   Solo por debajo de 520px (teléfono vertical) se apila, porque escalado a
-   esa medida el texto quedaría ilegible. */
+   NUNCA SE APILA: el dueño pidió que en un celular angosto se vea igual que
+   en uno un poco más ancho, así que la escala sigue bajando hasta 300px. */
 .dr-frame {
   --k: .92;
   zoom: var(--k);
@@ -101,8 +101,12 @@
 @container dr (max-width: 599px) { .dr-frame { --k: 0.704; } }
 @container dr (max-width: 569px) { .dr-frame { --k: 0.667; } }
 @container dr (max-width: 539px) { .dr-frame { --k: 0.642; } }
-/* Teléfono vertical: armado apilado, con la letra del diseño en .92. */
-@container dr (max-width: 519px) { .dr-frame { --k: .92; } }
+@container dr (max-width: 499px) { .dr-frame { --k: 0.568; } }
+@container dr (max-width: 459px) { .dr-frame { --k: 0.519; } }
+@container dr (max-width: 419px) { .dr-frame { --k: 0.481; } }
+@container dr (max-width: 389px) { .dr-frame { --k: 0.444; } }
+@container dr (max-width: 359px) { .dr-frame { --k: 0.407; } }
+@container dr (max-width: 329px) { .dr-frame { --k: 0.370; } }
 /* El modal no va dentro de .dr-frame: se le aplica la misma letra chica. */
 .dr-modal { zoom: .92; }
 
@@ -464,45 +468,3 @@
 
 .dr-loading { padding: 60px 20px; text-align: center; color: var(--dr-muted); }
 .dr-busy { opacity: .6; pointer-events: none; }
-
-/* ── Teléfono (< 520px de vista): lo mismo, apilado ────────────────────────────── */
-@container dr (max-width: 519px) {
-  .dr-header-in { padding: 8px 16px 12px; gap: 10px; }
-  .dr-brand-text, .dr-vdivider { display: none; }
-  .dr-title h1 { font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .dr-title p { display: none; }
-  /* La fecha ya está en el selector de abajo: en 390px no cabe dos veces. */
-  .dr-datepill { display: none; }
-  .dr-main { padding: 4px 16px 16px; }
-
-  .dr-filters { grid-template-columns: minmax(0, 1fr) auto; }
-  .dr-filters .dr-search { grid-column: 1 / -1; }
-
-  .dr-hero { grid-template-columns: 1fr; gap: 12px; }
-  .dr-hero-photo { min-height: 140px; height: 140px; }
-  .dr-hero-right { grid-template-rows: none; grid-template-columns: 1fr 1fr; border-left: 0; padding-left: 0; border-top: 1px solid var(--dr-divider); padding-top: 12px; }
-
-  .dr-people { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-
-  .dr-metrics { grid-template-columns: 1fr 1fr; }
-  .dr-metric--full { grid-column: 1 / -1; }
-  .dr-metric-val { font-size: 24px; }
-  .dr-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-
-  .dr-tab { font-size: 12px; padding: 12px 4px; }
-  .dr-tab-head { flex-wrap: wrap; }
-  .dr-tab-head h3 { font-size: 18px; flex-basis: 100%; }
-  .dr-tab-head .dr-search { width: auto; flex: 1; }
-  .dr-summary-head h3 { font-size: 18px; white-space: normal; }
-
-  /* La tabla en 4 columnas: # | cliente (con su dirección) | cuota | estado. */
-  .dr-table { min-width: 0; }
-  .dr-trow { grid-template-columns: 20px minmax(0, 1fr) auto auto; gap: 8px; padding: 10px; }
-  .dr-trow .dr-td-addr, .dr-trow .dr-td-actions { display: none; }
-  .dr-td-name { white-space: normal; }
-  .dr-td-sub { display: block; font-size: 11px; font-weight: 400; color: var(--dr-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-  .dr-actions { grid-template-columns: 1fr 1fr; }
-  .dr-actions .dr-action:first-child { grid-column: 1 / -1; }
-  .dr-action { height: 48px; font-size: 15px; }
-}
