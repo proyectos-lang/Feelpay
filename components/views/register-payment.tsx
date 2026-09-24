@@ -1547,6 +1547,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   }, [selectedClient])
 
   const handleSelectClient = (client: DisplayClient) => {
+    // El formulario abre ARRIBA. Si se venía de más abajo en la lista, la
+    // pantalla quedaba corrida y había que buscar el botón de cobrar.
+    document.querySelector("main")?.scrollTo({ top: 0 })
     setSelectedClient(client)
     setNumCuotas(1)
     setIsPartialPayment(false)
@@ -2724,77 +2727,93 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     // puesto desde la vista y no sirve para sacarle la fracción.
     const totalPagadoAhora = Number(finRow?.total_pagado ?? client.abonado) || 0
 
-    const rows: [string, string][] = [
-      ["Fecha venta:", fmtFechaCorta(client.fechaVenta)],
-      ["Total a pagar:", fmt(saldo?.total_con_intereses)],
-      ["Total recaudado:", fmt(saldo?.total_recaudado)],
-      ["Saldo pendiente:", fmt(saldo?.saldo_pendiente ?? client.saldo)],
-      // Sin el sufijo "(+N extra)": el recibo es lo que el cliente se lleva a
-      // la mano y las cuotas extra de extensiones y prorrogas le agregaban un
-      // numero que no sabe leer. El X/Y sigue siendo sobre las cuotas BASE del
-      // plan, que es lo que el cliente pacto.
-      ["Cuotas:", `${cuotasConDecimal(totalPagadoAhora, client.valorCuota, cuotasTotales)} / ${cuotasTotales}`],
-      // LO QUE FALTA PARA CERRAR LA CUOTA EN CURSO.
-      //
-      // El renglon de arriba dice "0.9 / 25": el cliente ve que le falta un
-      // pedazo, pero no CUANTO, que es lo que necesita para saber con que
-      // llegar la proxima vez. Solo aparece si de verdad falta algo: cuando la
-      // cuota cierra exacta no tiene sentido un renglon que diga "$0".
-      ...(faltaParaCerrarCuota(totalPagadoAhora, client.valorCuota) > 0
-        ? ([["Falta para cerrar cuota:", fmt(faltaParaCerrarCuota(totalPagadoAhora, client.valorCuota))]] as [string, string][])
-        : []),
-      ["Frecuencia:", frecuenciaLabel(client.frecuenciaPago)],
-      // Antes esta fila decía "Fallas" pero imprimía la mora, que es otra
-      // cosa (cuotas vencidas sin cubrir, no visitas incumplidas).
-      ["Cuotas en mora:", `${moraActual}`],
-      ["Saldo por sancion:", client.multaPendiente ? fmt(client.multaPendiente.valor) : "$0"],
+    // ── LO QUE DICE EL COMPROBANTE, EN CUATRO BLOQUES ──────────────────────
+    // El formato que pidió el dueño: datos del cliente, el pago que se hizo,
+    // cómo va la cuota en curso y el resumen de la obligación. Cada bloque es
+    // una caja con su título, y lo que el cliente busca —cuánto pagó, cuánto
+    // le falta de la cuota y cuánto debe— va en grande.
+    type FilaRecibo = { label: string; valor: string; fuerte?: boolean; banda?: boolean }
+    const secciones: { titulo: string; filas: FilaRecibo[] }[] = [
+      {
+        titulo: "Datos del cliente",
+        filas: [
+          { label: "Cliente:", valor: nombreCompleto },
+          { label: "Documento:", valor: client.documento || "-" },
+        ],
+      },
     ]
 
-    // El bloque del abono solo aparece si hubo movimiento; un recibo de
+    // El bloque del pago solo aparece si hubo movimiento; un recibo de
     // consulta no lo lleva.
     if (abonoHoy != null && abonoHoy > 0) {
-      /**
-       * CUÁNTAS CUOTAS ABONÓ: SALE DE LA PLATA, no de lo que se marcó.
-       *
-       * Venía de `num_cuotas` del evento, que es el número que el cobrador
-       * dejó puesto en el diálogo — casi siempre 1, porque es el valor por
-       * defecto y con el monto libre nadie lo cambia. Recibo real del
-       * 01/09/2026: "Valor pagado $100.000" y "Cuotas abonadas: 1", sobre una
-       * cuota de $16.800. Eran casi seis.
-       *
-       * Ahora es la misma cuenta que el X/Y de abajo y la misma que pidió el
-       * dueño para todo el sistema (script 084): la plata dividida por el
-       * valor de la cuota.
-       *
-       * Y AHORA CON UN DECIMAL. El piso escondía justo lo que el cliente
-       * quiere ver: quien pagó cinco cuotas y media leía "5", igual que quien
-       * acababa de pagar la quinta.
-       *
-       * Con el decimal ya no hace falta el "Abono parcial": media cuota se
-       * escribe "0.5", que dice más y no mezcla letras con números.
-       */
-      const valorCuotaRef = Number(client.valorCuota) || 0
-      rows.splice(1, 0,
-        ["Fecha del abono:", fmtFechaCorta(fechaAbono)],
-        ["Cuotas abonadas:", cuotasConDecimal(abonoHoy, valorCuotaRef)],
-        ["Valor pagado:", fmt(abonoHoy)],
-      )
+      secciones.push({
+        titulo: "Pago realizado",
+        filas: [
+          { label: "Fecha del abono:", valor: fmtFechaCorta(fechaAbono) },
+          { label: "Valor pagado:", valor: fmt(abonoHoy), fuerte: true },
+        ],
+      })
     }
 
+    // RESTANTE = LO QUE FALTA PARA CERRAR LA CUOTA EN CURSO, y SOLO si falta
+    // algo: quien pagó la cuota completa no necesita un renglón que diga $0.
+    // "Cuotas 0.5 / 4" dice que falta un pedazo; "Restante $70.000" dice
+    // cuánto, que es con lo que el cliente tiene que llegar la próxima vez.
+    //
+    // Sin el sufijo "(+N extra)" en las cuotas: el X/Y es sobre las cuotas
+    // BASE del plan, que es lo que el cliente pactó.
+    const faltante = faltaParaCerrarCuota(totalPagadoAhora, client.valorCuota)
+    secciones.push({
+      titulo: "Cuota actual",
+      filas: [
+        { label: "Cuotas:", valor: `${cuotasConDecimal(totalPagadoAhora, client.valorCuota, cuotasTotales)} / ${cuotasTotales}` },
+        ...(faltante > 0 ? [{ label: "Restante:", valor: fmt(faltante), fuerte: true }] : []),
+        { label: "Frecuencia:", valor: frecuenciaLabel(client.frecuenciaPago) },
+      ],
+    })
+
+    secciones.push({
+      titulo: "Resumen de la obligación",
+      filas: [
+        { label: "Fecha de venta:", valor: fmtFechaCorta(client.fechaVenta) },
+        { label: "Total a pagar:", valor: fmt(saldo?.total_con_intereses) },
+        { label: "Total recaudado:", valor: fmt(saldo?.total_recaudado) },
+        // La multa solo si hay: un "$0" de sanción es un renglón que no dice nada.
+        ...(client.multaPendiente
+          ? [{ label: "Saldo por sanción:", valor: fmt(client.multaPendiente.valor) }]
+          : []),
+        { label: "Saldo pendiente:", valor: fmt(saldo?.saldo_pendiente ?? client.saldo), fuerte: true, banda: true },
+      ],
+    })
+    // `moraActual` ya no se imprime: el formato nuevo no lleva la mora.
+    void moraActual
+
     // -- Dibujo ---------------------------------------------------------
-    // Medidas en puntos logicos (ancho de tirilla 80mm ~ 300pt) y se escala
-    // x3 al pintar para que se vea nitido en la pantalla del celular.
+    // Medidas en puntos lógicos y se escala x3 al pintar para que se vea
+    // nítido en la pantalla del celular y en WhatsApp.
     const ESCALA = 3
-    const W = 300
-    const PAD = 18
-    const ALTO_FILA = 20
-    const ALTO_LOGO = logoImg ? 72 : 0
+    const W = 360
+    const MARGEN = 8           // del borde de la imagen al marco
+    const PAD = 22             // del borde de la imagen al contenido
+    const ALTO_FILA = 26
+    const ALTO_FILA_FUERTE = 30
+    const ALTO_CAB = 28        // la franja con el título de cada bloque
+    const GAP = 10             // entre bloques
+    const ALTO_LOGO = logoImg ? 56 : 0
+
+    const NAVY = "#12284c"
+    const TEXTO = "#1f2937"
+    const BANDA = "#e6ecf4"
+    const BORDE = "#d5dde8"
+    const RAYA = "#e4e9f0"
+
+    const altoSeccion = (sec: { filas: FilaRecibo[] }) =>
+      ALTO_CAB + sec.filas.reduce((s, f) => s + (f.fuerte ? ALTO_FILA_FUERTE : ALTO_FILA), 0)
 
     const H =
-      PAD + ALTO_LOGO + 30 + 20 + 14 +
-      ALTO_FILA * 2 + 14 +
-      ALTO_FILA * rows.length + 14 +
-      26 + PAD
+      MARGEN + 18 + (logoImg ? ALTO_LOGO + 12 : 0) + 12 + 30 + 24 + 12 +
+      secciones.reduce((s, sec) => s + altoSeccion(sec) + GAP, 0) +
+      8 + 26 + 14 + MARGEN
 
     const canvas = document.createElement("canvas")
     canvas.width = W * ESCALA
@@ -2803,75 +2822,142 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     if (!ctx) throw new Error("No se pudo preparar el lienzo del recibo")
     ctx.scale(ESCALA, ESCALA)
 
-    ctx.fillStyle = "#ffffff"
-    ctx.fillRect(0, 0, W, H)
-    ctx.fillStyle = "#000000"
-    ctx.textBaseline = "alphabetic"
-
-    const linea = (yy: number) => {
-      ctx.strokeStyle = "#000000"
+    const FUENTE = "Helvetica, Arial, sans-serif"
+    const caja = (x: number, yy: number, w: number, h: number, r: number) => {
+      ctx.beginPath()
+      ctx.moveTo(x + r, yy)
+      ctx.lineTo(x + w - r, yy)
+      ctx.arcTo(x + w, yy, x + w, yy + r, r)
+      ctx.lineTo(x + w, yy + h - r)
+      ctx.arcTo(x + w, yy + h, x + w - r, yy + h, r)
+      ctx.lineTo(x + r, yy + h)
+      ctx.arcTo(x, yy + h, x, yy + h - r, r)
+      ctx.lineTo(x, yy + r)
+      ctx.arcTo(x, yy, x + r, yy, r)
+      ctx.closePath()
+    }
+    const raya = (x1: number, x2: number, yy: number, color: string) => {
+      ctx.strokeStyle = color
       ctx.lineWidth = 1
       ctx.beginPath()
-      ctx.moveTo(PAD, yy)
-      ctx.lineTo(W - PAD, yy)
+      ctx.moveTo(x1, yy + 0.5)
+      ctx.lineTo(x2, yy + 0.5)
       ctx.stroke()
     }
 
-    const parLabelValor = (label: string, valor: string, yy: number) => {
-      ctx.font = "bold 12.5px Helvetica, Arial, sans-serif"
-      ctx.textAlign = "left"
-      ctx.fillText(label, PAD, yy)
-      // Se mide la etiqueta con SU fuente (negrita, mas ancha) antes de
-      // cambiarla, para saber cuanto espacio queda de verdad.
-      const anchoLibre = W - PAD * 2 - ctx.measureText(label).width - 8
-      ctx.font = "12.5px Helvetica, Arial, sans-serif"
-      ctx.textAlign = "right"
-      // El ancho maximo evita que un nombre largo se monte sobre la etiqueta
-      // o se salga del recibo: el navegador lo condensa para que quepa.
-      ctx.fillText(valor, W - PAD, yy, Math.max(40, anchoLibre))
-      ctx.textAlign = "left"
-    }
+    // Fondo y marco redondeado
+    ctx.fillStyle = "#ffffff"
+    ctx.fillRect(0, 0, W, H)
+    caja(MARGEN, MARGEN, W - MARGEN * 2, H - MARGEN * 2, 14)
+    ctx.strokeStyle = "#c3cddb"
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+    ctx.textBaseline = "alphabetic"
 
-    let y = PAD
+    let y = MARGEN + 18
 
+    // El logo de la ruta, respetando su proporción.
     if (logoImg) {
-      const lado = 64
-      ctx.drawImage(logoImg, W / 2 - lado / 2, y, lado, lado)
-      y += ALTO_LOGO
+      const alto = ALTO_LOGO
+      const ancho = Math.min(220, (logoImg.width / Math.max(1, logoImg.height)) * alto)
+      ctx.drawImage(logoImg, W / 2 - ancho / 2, y, ancho, alto)
+      y += ALTO_LOGO + 12
     }
 
-    ctx.font = "bold 17px Helvetica, Arial, sans-serif"
+    raya(PAD, W - PAD, y, BORDE)
+    y += 12
+
+    ctx.fillStyle = NAVY
+    ctx.font = `bold 20px ${FUENTE}`
     ctx.textAlign = "center"
-    ctx.fillText("COMPROBANTE DE PAGO", W / 2, y + 14)
+    ctx.fillText("COMPROBANTE DE PAGO", W / 2, y + 20)
     y += 30
 
-    ctx.font = "12px Helvetica, Arial, sans-serif"
-    ctx.fillText(`Fecha: ${fechaStr}   Hora: ${horaStr}`, W / 2, y + 10)
-    y += 20
+    // "Fecha: 09/09/2026   |   Hora: 01:12 p. m." con las etiquetas en negrita.
+    const trozos: { t: string; negrita: boolean }[] = [
+      { t: "Fecha: ", negrita: true }, { t: fechaStr, negrita: false },
+      { t: "     |     ", negrita: false },
+      { t: "Hora: ", negrita: true }, { t: horaStr, negrita: false },
+    ]
+    const medir = (p: { t: string; negrita: boolean }) => {
+      ctx.font = `${p.negrita ? "bold " : ""}12.5px ${FUENTE}`
+      return ctx.measureText(p.t).width
+    }
+    let x = W / 2 - trozos.reduce((s, p) => s + medir(p), 0) / 2
+    ctx.textAlign = "left"
+    for (const p of trozos) {
+      ctx.font = `${p.negrita ? "bold " : ""}12.5px ${FUENTE}`
+      ctx.fillStyle = p.negrita ? NAVY : TEXTO
+      ctx.fillText(p.t, x, y + 14)
+      x += ctx.measureText(p.t).width
+    }
+    y += 24 + 12
 
-    linea(y)
-    y += 14
+    // Los bloques
+    const X0 = PAD - 6
+    const X1 = W - PAD + 6
+    for (const sec of secciones) {
+      const alto = altoSeccion(sec)
+      // Caja con borde, y la franja del título recortada a la caja.
+      ctx.save()
+      caja(X0, y, X1 - X0, alto, 8)
+      ctx.clip()
+      ctx.fillStyle = "#ffffff"
+      ctx.fillRect(X0, y, X1 - X0, alto)
+      ctx.fillStyle = BANDA
+      ctx.fillRect(X0, y, X1 - X0, ALTO_CAB)
+      ctx.restore()
 
-    parLabelValor("Cliente:", nombreCompleto, y + 11)
-    y += ALTO_FILA
-    parLabelValor("Documento:", client.documento || "-", y + 11)
-    y += ALTO_FILA
+      ctx.fillStyle = NAVY
+      ctx.font = `bold 13.5px ${FUENTE}`
+      ctx.textAlign = "left"
+      ctx.fillText(sec.titulo, PAD + 2, y + 19)
+      let yy = y + ALTO_CAB
 
-    linea(y)
-    y += 14
+      sec.filas.forEach((f, i) => {
+        const h = f.fuerte ? ALTO_FILA_FUERTE : ALTO_FILA
+        if (f.banda) {
+          // La última fila destacada (el saldo) va sobre la franja de color,
+          // recortada a las esquinas redondeadas de la caja.
+          ctx.save()
+          caja(X0, y, X1 - X0, alto, 8)
+          ctx.clip()
+          ctx.fillStyle = BANDA
+          ctx.fillRect(X0, yy, X1 - X0, h)
+          ctx.restore()
+        } else if (i > 0) {
+          raya(X0, X1, yy, RAYA)
+        }
+        const base = yy + h / 2 + (f.fuerte ? 6 : 4.5)
+        ctx.font = `${f.banda ? "bold " : ""}12.5px ${FUENTE}`
+        ctx.fillStyle = f.banda ? NAVY : TEXTO
+        ctx.textAlign = "left"
+        ctx.fillText(f.label, PAD + 2, base)
+        const anchoLibre = X1 - X0 - 20 - ctx.measureText(f.label).width - 10
+        ctx.font = `${f.fuerte ? "bold 17px" : "12.5px"} ${FUENTE}`
+        ctx.fillStyle = f.fuerte ? NAVY : TEXTO
+        ctx.textAlign = "right"
+        // El ancho máximo evita que un nombre largo se monte sobre la
+        // etiqueta o se salga: el navegador lo condensa para que quepa.
+        ctx.fillText(f.valor, W - PAD - 2, base, Math.max(40, anchoLibre))
+        yy += h
+      })
 
-    for (const [label, val] of rows) {
-      parLabelValor(label, val, y + 11)
-      y += ALTO_FILA
+      caja(X0, y, X1 - X0, alto, 8)
+      ctx.strokeStyle = BORDE
+      ctx.lineWidth = 1
+      ctx.stroke()
+      y += alto + GAP
     }
 
-    linea(y)
-    y += 14
+    y += 8
+    raya(PAD, W - PAD, y, BORDE)
+    y += 12
 
-    ctx.font = "italic 10.5px Helvetica, Arial, sans-serif"
+    ctx.font = `10.5px ${FUENTE}`
     ctx.textAlign = "center"
-    ctx.fillStyle = "#444444"
-    ctx.fillText("Este documento es un comprobante informativo.", W / 2, y + 9)
+    ctx.fillStyle = "#4b5563"
+    ctx.fillText("Este documento es un comprobante informativo.", W / 2, y + 12)
 
     const filename = `comprobante_${client.nombre.replace(/\s+/g, "_")}_${fechaStr.replace(/\//g, "-")}.png`
     const dataUrl = canvas.toDataURL("image/png")
@@ -4684,16 +4770,22 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           </div>{/* fin overflow-hidden */}
         </Card>
       ) : (
-        <Card>
+        // SIN EL RELLENO POR DEFECTO DE LA TARJETA (24px arriba, abajo y
+        // entre título y contenido): en un teléfono chico era casi una fila
+        // entera de aire, y el botón de cobrar quedaba debajo del borde.
+        <Card className="gap-1 py-1.5 md:gap-4 md:py-5">
           {/* EL ENCABEZADO, A LA MITAD.
               Son 24px menos de alto en el teléfono, y ese alto es lo que se
               pelea con el teclado: con el teclado abierto, el botón de
               registrar el pago quedaba justo debajo del borde y había que
               esconderlo para llegar. */}
-          <CardHeader className="px-3 pt-2 pb-1 md:px-6 md:pt-4 md:pb-2">
+          {/* En el teléfono no va: la barra de arriba ya dice "Registrar Pago",
+              y ese renglón es el que faltaba para que el botón de cobrar se
+              vea sin bajar. */}
+          <CardHeader className="hidden px-3 pt-2 pb-1 md:grid md:px-6 md:pt-4 md:pb-2">
             <CardTitle className="text-sm font-bold md:text-lg">Informacion del Pago</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 md:space-y-3 px-3 pb-3 pt-1 md:px-6 md:pb-6 md:pt-2 [&_input]:scroll-mb-24 [&_textarea]:scroll-mb-24">
+          <CardContent className="space-y-1.5 md:space-y-3 px-3 pb-2 pt-1 md:px-6 md:pb-6 md:pt-2 [&_input]:scroll-mb-24 [&_textarea]:scroll-mb-24">
             {renderAvisoGeocerca()}
             {/* Alerta: última cuota programada de préstamo americano */}
             {selectedClient.tipoAmortizacion?.toLowerCase().trim() === "americano" &&
@@ -4816,13 +4908,13 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             {/* Tercera fila: Numero de Cuotas y Metodo de Pago */}
             <div className="grid gap-2 md:gap-3 grid-cols-2">
               <div className="space-y-1 md:space-y-1.5">
-                <Label htmlFor="numCuotas" className="text-xs font-bold md:text-sm">
-                  Nro Cuotas
+                <Label htmlFor="numCuotas" className="whitespace-nowrap text-xs font-bold md:text-sm">
+                  Cuotas
                   {/* CUÁNTAS LE QUEDAN, dicho al lado del selector: sin esto,
                       que la lista llegue hasta 7 y no hasta 10 se lee como un
                       error de la app. */}
                   <span className="ml-1 font-normal text-muted-foreground">
-                    (le quedan {cuotasQueLeQuedan})
+                    (quedan {cuotasQueLeQuedan})
                   </span>
                 </Label>
                 <Select
@@ -4929,11 +5021,14 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                       />
                     </div>
                   </div>
-                  <p className={`text-[11px] md:text-sm font-semibold ${cuadra ? "text-muted-foreground" : "text-destructive"}`}>
-                    {cuadra
-                      ? `Suman $${(ef + tr).toLocaleString("es-CO")}, el monto del pago.`
-                      : `Suman $${(ef + tr).toLocaleString("es-CO")} y el pago es de $${total.toLocaleString("es-CO")}.`}
-                  </p>
+                  {/* Solo se avisa cuando NO suman, que es cuando hace falta:
+                      un renglón fijo de "sí suman" empujaba el botón de cobrar
+                      fuera de la pantalla en un teléfono chico. */}
+                  {!cuadra && (
+                    <p className="text-[11px] md:text-sm font-semibold text-destructive">
+                      Suman ${(ef + tr).toLocaleString("es-CO")} y el pago es de ${total.toLocaleString("es-CO")}.
+                    </p>
+                  )}
                 </div>
               )
             })()}
@@ -4941,7 +5036,8 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
             {/* Cuenta bancaria si transferencia (también con dos formas) */}
             {(paymentMethod === "transferencia" || dosFormas) && (
               <div className="space-y-1 md:space-y-1.5">
-                <Label htmlFor="accountNumber" className="text-xs font-bold md:text-base">Numero de Cuenta</Label>
+                {/* En el teléfono sin título: el selector ya dice "Seleccionar cuenta". */}
+                <Label htmlFor="accountNumber" className="hidden text-xs font-bold md:block md:text-base">Numero de Cuenta</Label>
                 <Select value={accountNumber} onValueChange={setAccountNumber}>
                   <SelectTrigger className="h-7 md:h-10 text-xs md:text-base">
                     <SelectValue placeholder="Seleccionar cuenta..." />
@@ -4955,9 +5051,10 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               </div>
             )}
 
-            {/* Checkboxes y Foto */}
-            <div className="grid gap-2 md:gap-3 grid-cols-2">
-              <div className="flex gap-2 flex-wrap">
+            {/* Checkboxes y Foto: en UNA fila, con la cámara al final. En
+                dos columnas cada casilla ocupaba su propio renglón. */}
+            <div className="flex items-center gap-2 md:gap-3">
+              <div className="flex min-w-0 flex-1 flex-wrap gap-x-3 gap-y-1">
                 <div className="flex items-center space-x-1.5">
                   <Checkbox id="partialPayment" checked={isPartialPayment} onCheckedChange={(c) => handlePartialPaymentChange(c as boolean)} className="h-4 w-4 border-2 border-gray-400 dark:border-gray-500" />
                   <Label htmlFor="partialPayment" className="text-[11px] md:text-sm font-bold cursor-pointer whitespace-nowrap">Pago manual</Label>
@@ -5056,7 +5153,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
                     </div>
                   )}
               </div>
-              <div className="flex justify-end">
+              <div className="flex shrink-0 justify-end">
                 <input type="file" accept="image/*" capture="environment" onChange={handlePhotoCapture} className="hidden" id="payment-photo" />
                 <Label htmlFor="payment-photo" className="cursor-pointer m-0">
                   <Button type="button" size="icon" variant={paymentPhoto ? "default" : "outline"} className={`h-7 w-7 md:h-10 md:w-10 ${paymentPhoto ? "bg-green-600 hover:bg-green-700" : ""}`} asChild>
@@ -5106,9 +5203,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               </div>
             )}
 
+            {/* Las notas, en una línea en el teléfono: son opcionales y casi
+                nunca se usan, y la caja de tres renglones empujaba el botón
+                de cobrar fuera de la pantalla. El título va de pista adentro. */}
             <div className="space-y-1.5 md:space-y-2">
-              <Label htmlFor="notes" className="text-xs md:text-base">Notas (Opcional)</Label>
-              <Textarea id="notes" placeholder="Agregar comentarios sobre el pago..." className="min-h-[60px] md:min-h-[100px] text-xs md:text-sm" />
+              <Label htmlFor="notes" className="hidden text-xs md:block md:text-base">Notas (Opcional)</Label>
+              <Textarea
+                id="notes"
+                rows={1}
+                placeholder="Notas (opcional)…"
+                className="h-8 min-h-8 resize-none py-1.5 text-xs md:h-auto md:min-h-[100px] md:resize-y md:text-sm"
+              />
             </div>
 
             {/* LA BARRA DE COBRAR NO SE ESCONDE DETRÁS DEL TECLADO.
