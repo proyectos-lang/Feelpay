@@ -478,6 +478,8 @@ type RutaConfigRow = {
   amortizaciones_habilitadas: string[] | null
   amortizacion_default: string | null
   cedula_obligatoria: boolean
+  /** ¿Ve el cuadro de Resumen Semanal abajo del Resumen del Día? (scripts/121) */
+  resumen_semanal?: boolean
   /** ¿Puede esta unidad venderle otra vez a quien ya tiene un credito? */
   multiples_prestamos: boolean
   cierre_atrasado_minutos: number | null
@@ -548,6 +550,7 @@ function RutasTab() {
   const [fGeocercaRadio, setFGeocercaRadio] = useState("100")
   // Encendida por defecto: es como se comportó siempre la app.
   const [fCedulaObligatoria, setFCedulaObligatoria] = useState(true)
+  const [fResumenSemanal, setFResumenSemanal] = useState(false)
   const [fMultiplesPrestamos, setFMultiplesPrestamos] = useState(false)
   // El limite de tiempo para cerrar un dia viejo (scripts/113). Se guarda
   // como texto mientras se escribe: un `number` obligaria a decidir que es
@@ -635,6 +638,7 @@ function RutasTab() {
     setFGeocercaHab(c?.geocerca_habilitada ?? false)
     setFGeocercaRadio(c?.geocerca_radio_metros?.toString() ?? "100")
     setFCedulaObligatoria(c?.cedula_obligatoria ?? true)
+    setFResumenSemanal(c?.resumen_semanal ?? false)
     setFMultiplesPrestamos(c?.multiples_prestamos ?? false)
     const min = Number(c?.cierre_atrasado_minutos) || 0
     setFCierreLimite(min > 0)
@@ -886,6 +890,7 @@ function RutasTab() {
         abono_umbral_cuotas: fAbonoUmbralCuotas ? Number.parseInt(fAbonoUmbralCuotas, 10) : null,
         geocerca_habilitada: fGeocercaHab,
         cedula_obligatoria: fCedulaObligatoria,
+        resumen_semanal: fResumenSemanal,
         multiples_prestamos: fMultiplesPrestamos,
         // Apagado = NULL (sin limite), no 0: la columna distingue "no hay
         // regla" de "hay regla de cero minutos", que no tendria sentido.
@@ -921,6 +926,24 @@ function RutasTab() {
       // falla con 42703 y NO SE PODRIA GUARDAR NADA de la configuracion —ni
       // un umbral, ni la geocerca—. Se reintenta sin la moto y se avisa, en
       // vez de dejar la pantalla rota entre el deploy y el script.
+      // ── SI TODAVIA NO SE CORRIO EL SCRIPT 121 ──────────────────────────
+      // Igual que con la moto: sin la columna `resumen_semanal` el upsert
+      // entero falla. Se guarda el resto y se avisa.
+      if (configErr && /resumen_semanal/i.test(configErr.message)) {
+        console.warn("[v0] Falta la columna resumen_semanal (scripts/121); se guarda el resto")
+        const { resumen_semanal, ...sinResumen } = configPayload
+        const r = await supabase
+          .from("ruta_config_umbrales")
+          .upsert(sinResumen, { onConflict: "ruta_id" })
+        configErr = r.error
+        if (!configErr && resumen_semanal) {
+          toast({
+            title: "El Resumen Semanal no se guardó",
+            description: "Falta correr scripts/121. El resto de la configuración sí quedó.",
+            variant: "destructive",
+          })
+        }
+      }
       if (configErr && ((configErr as { code?: string }).code === "42703" || /moto_/i.test(configErr.message))) {
         console.warn("[v0] Faltan las columnas de la moto (scripts/120); se guarda el resto")
         const { moto_placa, moto_fecha_compra, moto_foto_url, ...sinMoto } = configPayload
@@ -1666,6 +1689,25 @@ function RutasTab() {
                     de documento sigue siendo obligatorio y único: dos clientes no pueden tener el
                     mismo, así que un dato inventado bloquea al cliente de verdad cuando llegue.
                   </>
+                )}
+              </p>
+            </div>
+
+            {/* ── Resumen Semanal ───────────────────────────────────────── */}
+            <div className="space-y-1.5 border-t pt-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm">Resumen Semanal en el Resumen del Día</Label>
+                <Switch checked={fResumenSemanal} onCheckedChange={setFResumenSemanal} />
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                {fResumenSemanal ? (
+                  <>
+                    Abajo del Resumen del Día de esta unidad aparece el cuadro con la semana desde el
+                    lunes: recaudado, pagos, no pagos, efectivo, transferencias y cumplimiento de la
+                    meta.
+                  </>
+                ) : (
+                  <>Apagado: el Resumen del Día de esta unidad no muestra el cuadro semanal.</>
                 )}
               </p>
             </div>

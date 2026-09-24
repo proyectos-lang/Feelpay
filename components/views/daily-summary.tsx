@@ -12,6 +12,7 @@ import { fmtFecha } from "@/lib/colombia-date"
 import { Button } from "@/components/ui/button"
  import { createClient } from "@/lib/supabase/client"
 import { getResumenDia } from "@/lib/resumen-dia"
+import { ResumenSemanal } from "@/components/resumen-semanal"
 import { todayColombia, bandaCartera, etiquetaFrecuencia, fmtMonedaCien } from "@/lib/gestion-core"
 import { getRutaUmbrales } from "@/lib/ruta-umbrales"
 import { aDolares, formatearMoneda } from "@/lib/monedas"
@@ -1559,6 +1560,10 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                 })()}
               </CardContent>
             </Card>
+
+            {/* El Resumen Semanal: solo en las rutas que lo tienen encendido
+                en su configuración (scripts/121). En las demás no pinta nada. */}
+            <ResumenSemanal rutaId={rutaId} fecha={diaDelResumen} moneda={monedaRuta} />
 
           </div>
         </div>
