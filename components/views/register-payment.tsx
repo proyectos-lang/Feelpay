@@ -31,7 +31,7 @@ import { useToast } from "@/hooks/use-toast"
   // Supabase: RLS eliminado. `getSupabaseSafe` y `callRpcAtomic` se conservan
   // como atajos delgados sobre `createClient()`.
 import { getSupabaseSafe, getSessionIdentity } from "@/lib/api-helper"
-import { enviarOEncolar } from "@/lib/offline-queue"
+import { enviarOEncolar, encolar } from "@/lib/offline-queue"
 import { SalesTodayList } from "@/components/views/sales-today-list"
 // Helper que centraliza la carga del dashboard: prueba la RPC atomica
 // `obtener_dashboard_pagos` primero (inmune al patron PgBouncer) y si no
@@ -504,6 +504,20 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
   const [isPartialPayment, setIsPartialPayment] = useState(false)
   const [paymentAmount, setPaymentAmount] = useState("")
   const [paymentMethod, setPaymentMethod] = useState("efectivo")
+  /**
+   * DOS FORMAS DE PAGO: parte en efectivo y parte en transferencia.
+   *
+   * En el libro se escribe como DOS eventos de pago, uno por forma: cada
+   * gestión lleva un solo `metodo_pago`, y el resumen ya reparte efectivo y
+   * transferencia evento por evento (scripts/112). Así la caja cuadra sin
+   * tocar el SQL, y la lista de Gestionados lo muestra como "pago mixto".
+   */
+  const [dosFormas, setDosFormas] = useState(false)
+  const [montoEfectivoMixto, setMontoEfectivoMixto] = useState("")
+  const [montoTransfMixto, setMontoTransfMixto] = useState("")
+  /** Cuánto sube la barra de cobrar para no quedar debajo del teclado. */
+  const [subirBarra, setSubirBarra] = useState(0)
+  const barraCobrarRef = useRef<HTMLDivElement | null>(null)
   const [accountNumber, setAccountNumber] = useState("")
   const [isCancelada, setIsCancelada] = useState(false)
   // ── Extension de plazo (solo prestamos "americano" en su ULTIMA cuota) ──
@@ -1499,12 +1513,48 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     fetchData()
   }, [fetchData])
 
+  /**
+   * EL TECLADO DEL TELÉFONO NO TAPA EL BOTÓN DE COBRAR.
+   *
+   * En el celular el teclado se abre ENCIMA de la página: el navegador
+   * achica la parte visible (`visualViewport`) pero no la página, así que lo
+   * que está pegado al fondo queda escondido detrás. Se mide dónde empieza
+   * el teclado y se sube la barra lo justo para quedar encima de él.
+   */
+  useEffect(() => {
+    if (!selectedClient) { setSubirBarra(0); return }
+    const vv = typeof window !== "undefined" ? window.visualViewport : null
+    if (!vv) return
+    const medir = () => {
+      const barra = barraCobrarRef.current
+      if (!barra) return
+      // Sin teclado la parte visible mide casi toda la ventana.
+      const teclado = window.innerHeight - vv.height - vv.offsetTop
+      if (teclado < 80) { setSubirBarra(0); return }
+      const bordeTeclado = vv.offsetTop + vv.height
+      // La posición de la barra SIN el desplazamiento que ya tiene.
+      const actual = Number(barra.style.transform.match(/-?(\d+(?:\.\d+)?)px/)?.[1] ?? 0)
+      const fondoBarra = barra.getBoundingClientRect().bottom + actual
+      setSubirBarra(Math.max(0, Math.ceil(fondoBarra - bordeTeclado + 4)))
+    }
+    medir()
+    vv.addEventListener("resize", medir)
+    vv.addEventListener("scroll", medir)
+    return () => {
+      vv.removeEventListener("resize", medir)
+      vv.removeEventListener("scroll", medir)
+    }
+  }, [selectedClient])
+
   const handleSelectClient = (client: DisplayClient) => {
     setSelectedClient(client)
     setNumCuotas(1)
     setIsPartialPayment(false)
     setPaymentAmount(montoAProponer(client.nextPaymentCuota, client.saldo).toString())
     setPaymentMethod("efectivo")
+    setDosFormas(false)
+    setMontoEfectivoMixto("")
+    setMontoTransfMixto("")
     setAccountNumber("")
     setPaymentPhoto(null)
     setIsCancelada(false)
@@ -1522,6 +1572,9 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     setIsPartialPayment(false)
     setPaymentAmount("")
     setPaymentMethod("efectivo")
+    setDosFormas(false)
+    setMontoEfectivoMixto("")
+    setMontoTransfMixto("")
     setAccountNumber("")
     setPaymentPhoto(null)
     setIsCancelada(false)
@@ -1552,6 +1605,27 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       return
     }
 
+    // Con dos formas, cada una tiene que traer plata y entre las dos sumar
+    // el monto del pago: lo que se registra es exactamente lo que se cobró.
+    const partEfectivo = dosFormas ? Number.parseFloat(montoEfectivoMixto) || 0 : 0
+    const partTransf = dosFormas ? Number.parseFloat(montoTransfMixto) || 0 : 0
+    if (dosFormas && (partEfectivo <= 0 || partTransf <= 0)) {
+      toast({
+        title: "Faltan los valores",
+        description: "Con dos formas de pago escribe cuánto va en efectivo y cuánto en transferencia.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (dosFormas && Math.round(partEfectivo + partTransf) !== Math.round(monto)) {
+      toast({
+        title: "Los valores no suman el pago",
+        description: `Efectivo $${partEfectivo.toLocaleString("es-CO")} + transferencia $${partTransf.toLocaleString("es-CO")} = $${(partEfectivo + partTransf).toLocaleString("es-CO")}, y el pago es de $${monto.toLocaleString("es-CO")}.`,
+        variant: "destructive",
+      })
+      return
+    }
+
     const saldoDisponible = selectedClient.saldo
     if (monto > saldoDisponible) {
       toast({
@@ -1569,6 +1643,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
     const coords = geocerca.coords
 
     const clientSnapshot = selectedClient
+    const dosFormasSnap = dosFormas
     const isCanceladaSnap = isCancelada
     const isPartialSnap = isPartialPayment
     const numCuotasSnap = numCuotas
@@ -1726,16 +1801,84 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       // El evento viaja por la cola: sin señal queda en el teléfono y se
       // sincroniza solo. Su `id` es la llave primaria del libro, así que
       // sincronizar horas después no puede duplicar la plata.
-      const { encolado, resultado } = await enviarOEncolar({
-        tipo: "gestion",
-        id: gestionId,
-        descripcion: `Pago — ${clientSnapshot.nombre} ($${monto.toLocaleString()})`,
-        payload: {
+      // ── PAGO EN DOS FORMAS: dos eventos del libro ────────────────────
+      // Primero va la parte en TRANSFERENCIA como un pago simple; después la
+      // PRINCIPAL (efectivo), que es la que lleva todo lo demás: la multa,
+      // la prórroga, la cuota adicional y, si es el caso, la cancelación.
+      //
+      // El orden importa en la cancelación: el servidor cobra como
+      // cancelación el saldo que QUEDA, así que la otra parte tiene que
+      // haber entrado antes. Por eso, si la primera quedó en la cola por
+      // falta de señal, la segunda va a la cola detrás de ella (la cola se
+      // envía en orden de captura) y no directo.
+      //
+      // Las dos llevan el mismo `num_cuotas`: el umbral de abono del
+      // servidor se evalúa igual que con un pago de una sola forma, y partir
+      // el pago no sirve para esquivarlo.
+      const montoPrincipal = dosFormasSnap ? monto - partTransf : monto
+      const metodoPrincipal = dosFormasSnap ? "efectivo" : paymentMethod
+      let parteEncolada = false
+      let gestionLocalTransf: Gestion | null = null
+      if (dosFormasSnap) {
+        const idTransf = nuevaGestionId()
+        const payloadTransf = {
+          id: idTransf,
+          tipo: "pago",
+          loan_id: clientSnapshot.loanId,
+          client_id: clientSnapshot.clientId,
+          monto: partTransf,
+          num_cuotas: numCuotasEfectivo,
+          fecha_gestion: fechaAplicacion,
+          fecha_hora: fechaPagoReal,
+          latitud,
+          longitud,
+          geocerca_estado: geocerca.geo.estado,
+          geocerca_motivo: geocerca.motivo,
+          generar_cuota_si_debe: false,
+          cuota_objetivo: clientSnapshot.nextPaymentId || null,
+          multa_id: null,
+          metodo_pago: "transferencia",
+          cliente_nombre: clientSnapshot.nombre,
+          extender_cuotas: 0,
+        }
+        const r1 = await enviarOEncolar({
+          tipo: "gestion",
+          id: idTransf,
+          descripcion: `Pago (transferencia) — ${clientSnapshot.nombre} ($${partTransf.toLocaleString()})`,
+          payload: payloadTransf,
+        })
+        parteEncolada = r1.encolado
+        gestionLocalTransf = {
+          id: idTransf,
+          loan_id: clientSnapshot.loanId,
+          client_id: clientSnapshot.clientId,
+          ruta: currentRutaId,
+          user_id: null,
+          tipo: "pago",
+          estado: "aplicada",
+          fecha_gestion: fechaAplicacion,
+          monto: partTransf,
+          cuota_objetivo: clientSnapshot.nextPaymentId || null,
+          num_cuotas: numCuotasEfectivo,
+          fecha_hora: fechaPagoReal,
+          metodo_pago: "transferencia",
+          origen: "campo",
+          referencia_gestion_id: null,
+          observacion: null,
+        }
+        if (parteEncolada) {
+          // Un respiro de milisegundos: la cola ordena por el instante de
+          // captura y las dos partes no pueden empatar.
+          await new Promise((r) => setTimeout(r, 5))
+        }
+      }
+
+      const payloadPrincipal = {
           id: gestionId,
           tipo: isCanceladaSnap ? "cancelacion" : "pago",
           loan_id: clientSnapshot.loanId,
           client_id: clientSnapshot.clientId,
-          monto,
+          monto: montoPrincipal,
           num_cuotas: numCuotasEfectivo,
           fecha_gestion: fechaAplicacion,
           fecha_hora: fechaPagoReal,
@@ -1754,11 +1897,22 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           cuota_objetivo: clientSnapshot.nextPaymentId || null,
           // La multa y la prórroga entran en la misma transacción.
           multa_id: pagarMultaSnap ? clientSnapshot.multaPendiente?.id ?? null : null,
-          metodo_pago: paymentMethod,
+          metodo_pago: metodoPrincipal,
           cliente_nombre: clientSnapshot.nombre,
           extender_cuotas: debeExtender ? cantidadExtenderSnap : 0,
-        },
-      })
+      }
+      const descripcionPrincipal = dosFormasSnap
+        ? `Pago (efectivo) — ${clientSnapshot.nombre} ($${montoPrincipal.toLocaleString()})`
+        : `Pago — ${clientSnapshot.nombre} ($${monto.toLocaleString()})`
+      const { encolado, resultado } = parteEncolada
+        ? await encolar({ tipo: "gestion", id: gestionId, descripcion: descripcionPrincipal, payload: payloadPrincipal })
+            .then(() => ({ encolado: true as const, resultado: undefined }))
+        : await enviarOEncolar({
+            tipo: "gestion",
+            id: gestionId,
+            descripcion: descripcionPrincipal,
+            payload: payloadPrincipal,
+          })
 
       if (encolado) {
         // El cliente sale de Pendientes IGUAL que con señal, y el evento se
@@ -1778,17 +1932,19 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           tipo: isCanceladaSnap ? "cancelacion" : "pago",
           estado: "aplicada",
           fecha_gestion: fechaAplicacion,
-          monto,
+          monto: montoPrincipal,
           cuota_objetivo: clientSnapshot.nextPaymentId || null,
           num_cuotas: numCuotasEfectivo,
           fecha_hora: fechaPagoReal,
-          metodo_pago: paymentMethod,
+          metodo_pago: metodoPrincipal,
           origen: "campo",
           referencia_gestion_id: null,
           observacion: null,
         }
         void parcharCache<DashboardPagosResult>("dashboard-pagos", currentRutaId, (datos) =>
-          inyectarGestionEnCache(datos, gestionLocal),
+          gestionLocalTransf
+            ? inyectarGestionEnCache(inyectarGestionEnCache(datos, gestionLocalTransf), gestionLocal)
+            : inyectarGestionEnCache(datos, gestionLocal),
         )
 
         if (!retroAplicado) {
@@ -1801,7 +1957,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               gestionTipo: "pago",
               // El método que se acaba de elegir en el formulario: la lista lo
               // marca al instante, sin esperar al refetch.
-              metodoPago: paymentMethod === "transferencia" ? "transferencia" : "efectivo",
+              metodoPago: dosFormasSnap ? "mixto" : paymentMethod === "transferencia" ? "transferencia" : "efectivo",
               gestionHora: fechaPagoReal.slice(11, 16),
               gestionInstante: fechaPagoReal,
               valorAbonado: monto,
@@ -1813,6 +1969,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         }
 
         toast({
+          duration: 1000,
           title: "Pago guardado sin conexión",
           description: retroAplicado
             ? `Se registró $${monto.toLocaleString()} con fecha ${fechaAplicacion} en el teléfono. ${clientSnapshot.nombre} sigue disponible para la gestión de hoy.`
@@ -1886,7 +2043,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           ...clientSnapshot,
           // El método que se acaba de elegir: la lista lo marca al instante,
           // sin esperar al refetch.
-          metodoPago: paymentMethod === "transferencia" ? "transferencia" : "efectivo",
+          metodoPago: dosFormasSnap ? "mixto" : paymentMethod === "transferencia" ? "transferencia" : "efectivo",
           saldo: nuevoSaldo,
           cuotasPagadas: Number(rpcResult.cuotas_cubiertas ?? clientSnapshot.cuotasPagadas),
           multaPendiente: multaCobrada ? null : clientSnapshot.multaPendiente,
@@ -1904,6 +2061,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
       if (isCanceladaSnap) {
         toast({
+          duration: 1000,
           title: "Préstamo cancelado",
           description: `Se canceló el préstamo de ${clientSnapshot.nombre} con un pago de $${monto.toLocaleString()}`,
         })
@@ -1912,6 +2070,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
       } else if (debeExtender && rpcResult.extension_aplicada) {
         // La extension corrio dentro de la misma transaccion del pago.
         toast({
+          duration: 1000,
           title: "Pago registrado y préstamo extendido",
           description: `Pago registrado y préstamo extendido exitosamente por ${cantidadExtenderSnap} cuota${cantidadExtenderSnap === 1 ? "" : "s"} más`,
         })
@@ -1927,6 +2086,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
         // cuota adicional en vez de cancelar el prestamo (confirmado por el
         // checkbox "Agregar cuota adicional si aún debe").
         toast({
+          duration: 1000,
           title: "Pago registrado — cuota adicional agregada",
           description: `Se registró el pago para ${clientSnapshot.nombre}. Como aún debe, se agregó una cuota adicional al plan de pagos.`,
         })
@@ -1935,6 +2095,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           ? ` + multa de $${clientSnapshot.multaPendiente.valor.toLocaleString()}`
           : ""
         toast({
+          duration: 1000,
           title: "Pago registrado",
           description: `Se registró el pago por $${monto.toLocaleString()}${multaSuffix} para ${clientSnapshot.nombre}`,
         })
@@ -4532,7 +4693,7 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
           <CardHeader className="px-3 pt-2 pb-1 md:px-6 md:pt-4 md:pb-2">
             <CardTitle className="text-sm font-bold md:text-lg">Informacion del Pago</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 md:space-y-3 px-3 pb-3 pt-1 md:px-6 md:pb-6 md:pt-2">
+          <CardContent className="space-y-2 md:space-y-3 px-3 pb-3 pt-1 md:px-6 md:pb-6 md:pt-2 [&_input]:scroll-mb-24 [&_textarea]:scroll-mb-24">
             {renderAvisoGeocerca()}
             {/* Alerta: última cuota programada de préstamo americano */}
             {selectedClient.tipoAmortizacion?.toLowerCase().trim() === "americano" &&
@@ -4695,21 +4856,90 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
 
               <div className="space-y-1 md:space-y-1.5">
                 <Label htmlFor="paymentMethod" className="text-xs font-bold md:text-base">Metodo de Pago</Label>
-                <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                {/* Tarjeta ya no es una forma de pago. La tercera opción es
+                    pagar con DOS formas: parte en efectivo y parte en
+                    transferencia, cada una con su valor. */}
+                <Select
+                  value={dosFormas ? "dos" : paymentMethod}
+                  onValueChange={(v) => {
+                    if (v === "dos") {
+                      setDosFormas(true)
+                      // Arranca con todo en efectivo: el cobrador escribe la
+                      // parte en transferencia y el efectivo se completa solo.
+                      const total = Number.parseFloat(paymentAmount) || 0
+                      setMontoEfectivoMixto(total > 0 ? String(total) : "")
+                      setMontoTransfMixto("")
+                    } else {
+                      setDosFormas(false)
+                      setPaymentMethod(v)
+                    }
+                  }}
+                >
                   <SelectTrigger className="h-7 md:h-10 text-xs md:text-base">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="efectivo" className="text-xs font-bold md:text-base">Efectivo</SelectItem>
                     <SelectItem value="transferencia" className="text-xs font-bold md:text-base">Transferencia</SelectItem>
-                    <SelectItem value="tarjeta" className="text-xs font-bold md:text-base">Tarjeta</SelectItem>
+                    <SelectItem value="dos" className="text-xs font-bold md:text-base">Efectivo + Transferencia</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
 
-            {/* Cuenta bancaria si transferencia */}
-            {paymentMethod === "transferencia" && (
+            {/* ── Los dos valores cuando se paga con dos formas ─────────────
+                Escribir uno completa el otro con lo que falta para el monto
+                del pago; igual se pueden corregir los dos. Abajo se dice si
+                suman o no, antes de cobrar. */}
+            {dosFormas && (() => {
+              const total = Number.parseFloat(paymentAmount) || 0
+              const ef = Number.parseFloat(montoEfectivoMixto) || 0
+              const tr = Number.parseFloat(montoTransfMixto) || 0
+              const cuadra = Math.round(ef + tr) === Math.round(total)
+              const escribir = (valor: string, cual: "ef" | "tr") => {
+                const crudo = leerMonto(valor)
+                const n = Number.parseFloat(crudo) || 0
+                const resto = total - n > 0 ? String(total - n) : ""
+                if (cual === "ef") { setMontoEfectivoMixto(crudo); setMontoTransfMixto(resto) }
+                else { setMontoTransfMixto(crudo); setMontoEfectivoMixto(resto) }
+              }
+              return (
+                <div className="space-y-1">
+                  <div className="grid grid-cols-2 gap-2 md:gap-3">
+                    <div className="space-y-1 md:space-y-1.5">
+                      <Label htmlFor="montoEfectivoMixto" className="text-xs font-bold md:text-sm">Valor en efectivo</Label>
+                      <Input
+                        id="montoEfectivoMixto"
+                        type="text"
+                        inputMode="numeric"
+                        value={mostrarMonto(montoEfectivoMixto)}
+                        onChange={(e) => escribir(e.target.value, "ef")}
+                        className={`h-7 md:h-10 text-xs md:text-sm font-bold ${CASILLA_ESCRIBIBLE}`}
+                      />
+                    </div>
+                    <div className="space-y-1 md:space-y-1.5">
+                      <Label htmlFor="montoTransfMixto" className="text-xs font-bold md:text-sm">Valor en transferencia</Label>
+                      <Input
+                        id="montoTransfMixto"
+                        type="text"
+                        inputMode="numeric"
+                        value={mostrarMonto(montoTransfMixto)}
+                        onChange={(e) => escribir(e.target.value, "tr")}
+                        className={`h-7 md:h-10 text-xs md:text-sm font-bold ${CASILLA_ESCRIBIBLE}`}
+                      />
+                    </div>
+                  </div>
+                  <p className={`text-[11px] md:text-sm font-semibold ${cuadra ? "text-muted-foreground" : "text-destructive"}`}>
+                    {cuadra
+                      ? `Suman $${(ef + tr).toLocaleString("es-CO")}, el monto del pago.`
+                      : `Suman $${(ef + tr).toLocaleString("es-CO")} y el pago es de $${total.toLocaleString("es-CO")}.`}
+                  </p>
+                </div>
+              )
+            })()}
+
+            {/* Cuenta bancaria si transferencia (también con dos formas) */}
+            {(paymentMethod === "transferencia" || dosFormas) && (
               <div className="space-y-1 md:space-y-1.5">
                 <Label htmlFor="accountNumber" className="text-xs font-bold md:text-base">Numero de Cuenta</Label>
                 <Select value={accountNumber} onValueChange={setAccountNumber}>
@@ -4881,7 +5111,17 @@ export function RegisterPayment({ onViewChange, currentRutaId = 1, rutaPais = ""
               <Textarea id="notes" placeholder="Agregar comentarios sobre el pago..." className="min-h-[60px] md:min-h-[100px] text-xs md:text-sm" />
             </div>
 
-            <div className="flex gap-2 md:gap-4 pt-2 md:pt-4">
+            {/* LA BARRA DE COBRAR NO SE ESCONDE DETRÁS DEL TECLADO.
+                Va pegada al fondo de la pantalla mientras se llena el
+                formulario, y cuando el teclado del teléfono se abre sube lo
+                que haga falta para quedar justo encima (ver `subirBarra`).
+                Antes quedaba al final del formulario y, con el teclado
+                abierto, había que cerrarlo para poder cobrar. */}
+            <div
+              ref={barraCobrarRef}
+              className="sticky bottom-0 z-20 -mx-3 flex gap-2 border-t bg-card px-3 pb-2 pt-2 md:static md:mx-0 md:gap-4 md:border-0 md:px-0 md:pb-0 md:pt-4"
+              style={subirBarra > 0 ? { transform: `translateY(-${subirBarra}px)` } : undefined}
+            >
               <Button variant="outline" className="flex-1 h-8 md:h-10 text-xs md:text-base bg-transparent" onClick={handleBack}>
                 Cancelar
               </Button>
