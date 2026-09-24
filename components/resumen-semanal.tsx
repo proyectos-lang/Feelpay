@@ -24,6 +24,8 @@
  *   Efectivo          Σ pago_efectivo
  *   Transferencias    Σ pago_transferencia
  *   Cumplimiento      Σ valor_pago / Σ meta_pagos
+ *   Total ventas      Σ valor_ventas y Σ cantidad_ventas (homologadas incluidas,
+ *                     igual que la barra de Ventas del Resumen del Día)
  *
  * La meta semanal es la suma de las metas diarias: cada día pone las cuotas
  * que vencen ese día (el atraso solo se suma al día de HOY, scripts/112), así
@@ -32,7 +34,7 @@
 
 import { useEffect, useState } from "react"
 import {
-  ArrowLeftRight, BarChart3, Banknote, CalendarDays, CheckCircle2, ShoppingCart, XCircle,
+  ArrowLeftRight, BarChart3, Banknote, CalendarDays, CheckCircle2, ShoppingBag, ShoppingCart, XCircle,
 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { createClient } from "@/lib/supabase/client"
@@ -54,6 +56,8 @@ interface Semana {
   efectivo: number
   transferencia: number
   meta: number
+  ventas: number
+  cantidadVentas: number
 }
 
 /** El lunes de la semana de `fecha`, sin pasar por la zona horaria local. */
@@ -97,7 +101,7 @@ export function ResumenSemanal({ rutaId, fecha, moneda }: Props) {
 
       const { data, error } = await sb
         .from("resumen_diario_v2")
-        .select("valor_pago, cantidad_pagos, cantidad_no_pagos, pago_efectivo, pago_transferencia, meta_pagos")
+        .select("valor_pago, cantidad_pagos, cantidad_no_pagos, pago_efectivo, pago_transferencia, meta_pagos, valor_ventas, cantidad_ventas")
         .eq("ruta", rutaId)
         .gte("fecha_pago", lunes)
         .lte("fecha_pago", fecha)
@@ -106,7 +110,7 @@ export function ResumenSemanal({ rutaId, fecha, moneda }: Props) {
         return
       }
       const n = (v: unknown) => Number(v) || 0
-      const s: Semana = { recaudado: 0, pagos: 0, noPagos: 0, efectivo: 0, transferencia: 0, meta: 0 }
+      const s: Semana = { recaudado: 0, pagos: 0, noPagos: 0, efectivo: 0, transferencia: 0, meta: 0, ventas: 0, cantidadVentas: 0 }
       for (const f of (data ?? []) as Record<string, unknown>[]) {
         s.recaudado += n(f.valor_pago)
         s.pagos += n(f.cantidad_pagos)
@@ -114,6 +118,8 @@ export function ResumenSemanal({ rutaId, fecha, moneda }: Props) {
         s.efectivo += n(f.pago_efectivo)
         s.transferencia += n(f.pago_transferencia)
         s.meta += n(f.meta_pagos)
+        s.ventas += n(f.valor_ventas)
+        s.cantidadVentas += n(f.cantidad_ventas)
       }
       if (!cancelado) setSemana(s)
     }
@@ -123,7 +129,7 @@ export function ResumenSemanal({ rutaId, fecha, moneda }: Props) {
 
   if (!habilitado) return null
 
-  const s = semana ?? { recaudado: 0, pagos: 0, noPagos: 0, efectivo: 0, transferencia: 0, meta: 0 }
+  const s = semana ?? { recaudado: 0, pagos: 0, noPagos: 0, efectivo: 0, transferencia: 0, meta: 0, ventas: 0, cantidadVentas: 0 }
   const plata = (v: number) => formatearMoneda(v, moneda)
   const cumplimiento = s.meta > 0 ? Math.round((s.recaudado / s.meta) * 100) : 0
 
@@ -141,33 +147,53 @@ export function ResumenSemanal({ rutaId, fecha, moneda }: Props) {
 
   return (
     <Card className="bg-card shadow-sm border-0">
-      <CardContent className="px-3 py-2.5">
+      <CardContent className="px-2 py-2.5">
         {/* Si no cabe todo en una línea, el rango baja al renglón de abajo
             en vez de recortar el nombre de la ruta. */}
         <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <CalendarDays className="h-5 w-5 shrink-0 text-info" />
-          <p className="whitespace-nowrap text-sm font-bold text-foreground">
+          <p className="min-w-0 text-[clamp(12px,3.8vw,14px)] font-bold leading-tight text-foreground">
             Resumen Semanal{nombreRuta ? ` (${nombreRuta})` : ""}
           </p>
           <span className="ml-auto whitespace-nowrap text-xs tabular-nums text-muted-foreground">
             {rango(lunes, domingo)}
           </span>
         </div>
-        <div className="grid grid-cols-3 gap-2">
+        {/* NADA SE SALE DE SU CASILLA. La etiqueta va arriba a todo el ancho
+            y el icono chico junto al monto: con el icono al lado de la
+            etiqueta, "Transferencias" y "Cumplimiento" no cabían en un
+            teléfono y se salían del borde. La letra se ajusta al ancho de la
+            pantalla (clamp): en un teléfono chico se achica en vez de
+            salirse, y en uno grande no pasa del tamaño normal. */}
+        <div className="grid grid-cols-3 gap-1">
           {casillas.map((c) => (
-            // El icono va chico AL LADO DE LA ETIQUETA y el monto abajo, a lo
-            // ancho de la casilla: con el icono grande al costado, en un
-            // teléfono el monto se cortaba ("₲2.4…").
-            <div key={c.label} className="min-w-0 rounded-xl border border-border px-2 py-1.5">
-              <div className="flex items-start gap-1.5">
-                <span className="h-5 w-5 shrink-0">{c.icono}</span>
-                <p className="min-w-0 text-[11px] leading-tight text-foreground">{c.label}</p>
-              </div>
-              <p className="mt-0.5 whitespace-nowrap text-sm font-bold leading-tight tabular-nums text-foreground">
-                {c.valor}
+            <div key={c.label} className="min-w-0 rounded-xl border border-border px-1 py-1.5">
+              <p className="text-[clamp(9px,2.7vw,11px)] font-medium leading-tight text-foreground [overflow-wrap:anywhere]">
+                {c.label}
               </p>
+              <div className="mt-0.5 flex min-w-0 items-center gap-0.5">
+                <span className="h-3.5 w-3.5 shrink-0">{c.icono}</span>
+                <p className="min-w-0 whitespace-nowrap text-[clamp(9px,3.1vw,14px)] font-bold leading-tight tabular-nums text-foreground">
+                  {c.valor}
+                </p>
+              </div>
             </div>
           ))}
+        </div>
+        {/* TOTAL VENTAS, a lo ancho debajo de las seis casillas: una séptima
+            en la rejilla de tres quedaba sola en su renglón. Lleva el monto y
+            cuántas ventas fueron. */}
+        <div className="mt-1 flex min-w-0 items-center gap-1.5 rounded-xl border border-border px-2 py-1.5">
+          <ShoppingBag className="h-4 w-4 shrink-0 text-info" />
+          <p className="min-w-0 flex-1 text-[clamp(10px,3vw,12px)] font-medium leading-tight text-foreground">
+            Total Ventas
+            <span className="ml-1 text-muted-foreground">
+              ({s.cantidadVentas} {s.cantidadVentas === 1 ? "venta" : "ventas"})
+            </span>
+          </p>
+          <p className="shrink-0 whitespace-nowrap text-[clamp(11px,3.4vw,14px)] font-bold leading-tight tabular-nums text-foreground">
+            {plata(s.ventas)}
+          </p>
         </div>
       </CardContent>
     </Card>
