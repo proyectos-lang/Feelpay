@@ -81,34 +81,36 @@
    y sale del ancho REAL de la vista (container query), no del de la ventana,
    porque la barra lateral le quita espacio.
 
-   A todo ancho ya va en .92: la letra del diseño, un poco más chica.
+   A todo ancho va en 1.08, un poco más grande que el diseño (el dueño la pidió subir dos veces).
    NUNCA SE APILA: el dueño pidió que en un celular angosto se vea igual que
    en uno un poco más ancho, así que la escala sigue bajando hasta 300px. */
 .dr-frame {
-  --k: .92;
+  --k: 1.08;
   zoom: var(--k);
   width: 100%;
   max-width: calc(810px / var(--k));
+  /* La escala se calcula contra 700px (no 810) y topa en 1.08: el armado
+     entra entero a 700, y así la letra sale más grande a cualquier ancho.
+     Subida dos veces a pedido del dueño (.92 → 1 → esto). */
   margin: 0 auto;
 }
-@container dr (max-width: 809px) { .dr-frame { --k: .92; } }
-@container dr (max-width: 779px) { .dr-frame { --k: .92; } }
-@container dr (max-width: 749px) { .dr-frame { --k: 0.889; } }
-@container dr (max-width: 719px) { .dr-frame { --k: 0.852; } }
-@container dr (max-width: 689px) { .dr-frame { --k: 0.815; } }
-@container dr (max-width: 659px) { .dr-frame { --k: 0.778; } }
-@container dr (max-width: 629px) { .dr-frame { --k: 0.741; } }
-@container dr (max-width: 599px) { .dr-frame { --k: 0.704; } }
-@container dr (max-width: 569px) { .dr-frame { --k: 0.667; } }
-@container dr (max-width: 539px) { .dr-frame { --k: 0.642; } }
-@container dr (max-width: 499px) { .dr-frame { --k: 0.568; } }
-@container dr (max-width: 459px) { .dr-frame { --k: 0.519; } }
-@container dr (max-width: 419px) { .dr-frame { --k: 0.481; } }
-@container dr (max-width: 389px) { .dr-frame { --k: 0.444; } }
-@container dr (max-width: 359px) { .dr-frame { --k: 0.407; } }
-@container dr (max-width: 329px) { .dr-frame { --k: 0.370; } }
+@container dr (max-width: 779px) { .dr-frame { --k: 1.071; } }
+@container dr (max-width: 749px) { .dr-frame { --k: 1.029; } }
+@container dr (max-width: 719px) { .dr-frame { --k: 0.986; } }
+@container dr (max-width: 689px) { .dr-frame { --k: 0.943; } }
+@container dr (max-width: 659px) { .dr-frame { --k: 0.900; } }
+@container dr (max-width: 629px) { .dr-frame { --k: 0.857; } }
+@container dr (max-width: 599px) { .dr-frame { --k: 0.814; } }
+@container dr (max-width: 569px) { .dr-frame { --k: 0.771; } }
+@container dr (max-width: 539px) { .dr-frame { --k: 0.714; } }
+@container dr (max-width: 499px) { .dr-frame { --k: 0.657; } }
+@container dr (max-width: 459px) { .dr-frame { --k: 0.600; } }
+@container dr (max-width: 419px) { .dr-frame { --k: 0.557; } }
+@container dr (max-width: 389px) { .dr-frame { --k: 0.514; } }
+@container dr (max-width: 359px) { .dr-frame { --k: 0.471; } }
+@container dr (max-width: 329px) { .dr-frame { --k: 0.429; } }
 /* El modal no va dentro de .dr-frame: se le aplica la misma letra chica. */
-.dr-modal { zoom: .92; }
+.dr-modal { zoom: 1.08; }
 
 
 /* ── Piezas base ──────────────────────────────────────────────────────── */
@@ -213,7 +215,8 @@
    Con top:0 el header quedaba 12/24px más abajo y tapaba los filtros. */
 @media (min-width: 768px) { .dr-header { top: -1.5rem; } }
 .dr-header-in { display: flex; align-items: center; gap: 14px; padding: 8px 20px 14px; }
-.dr-brand { display: flex; align-items: center; gap: 10px; }
+.dr-brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex-shrink: 1; }
+.dr-brand-text { min-width: 0; }
 .dr-logo {
   width: 40px; height: 40px; flex: none;
   border-radius: var(--dr-radius-control);
@@ -222,9 +225,11 @@
 }
 .dr-logo img { width: 32px; height: 32px; object-fit: contain; }
 .dr-brand-name { font-weight: 800; font-size: 26px; line-height: 1; color: var(--dr-p800); }
-.dr-brand-sub { font-size: 11px; color: var(--dr-muted); white-space: nowrap; }
+.dr-brand-sub { font-size: 11px; color: var(--dr-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dr-vdivider { width: 1px; height: 40px; background: var(--dr-divider); margin: 0 6px; flex: none; }
-.dr-title { flex: 1; min-width: 0; }
+.dr-title { flex: 1 0 auto; min-width: 0; }
+/* El título en UNA línea: con la letra más grande se partía en dos. */
+.dr-title h1, .dr-title p { white-space: nowrap; }
 .dr-title h1 { font-size: 24px; }
 .dr-title p { font-size: 13px; color: var(--dr-muted); }
 .dr-datepill { font-size: 14px; font-weight: 600; }
@@ -270,7 +275,7 @@
 .dr-menu-empty { padding: 12px; font-size: 13px; color: var(--dr-muted); text-align: center; }
 
 /* Tarjeta de ruta */
-.dr-hero { display: grid; grid-template-columns: 170px minmax(0, 1fr) 210px; gap: 18px; padding: 14px; }
+.dr-hero { display: grid; grid-template-columns: 150px minmax(0, 1fr) 190px; gap: 18px; padding: 14px; }
 .dr-hero-photo {
   width: 100%; min-height: 120px; height: 100%; object-fit: cover;
   border-radius: var(--dr-radius-control); background: var(--dr-p100);
@@ -321,7 +326,9 @@
   background: var(--dr-primary); color: #fff; display: grid; place-items: center;
 }
 .dr-summary-head h3 { flex: 1; font-size: 21px; min-width: 0; }
-.dr-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+/* Debido y Cobrado miden lo que miden sus cifras; el Avance se queda con el
+   resto. Con tres columnas iguales el monto grande se cortaba al escalar. */
+.dr-metrics { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 12px; }
 .dr-metric { padding: 10px 16px; min-width: 0; }
 .dr-metric-lbl { font-size: 13px; color: var(--dr-muted); }
 .dr-metric-val { font-weight: 800; font-size: 32px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -381,7 +388,7 @@
 .dr-table-scroll { }
 .dr-table { font-size: 13px; max-height: 480px; overflow-y: auto; overscroll-behavior: contain; }
 .dr-trow {
-  display: grid; grid-template-columns: 28px 1.7fr 1.2fr 1fr 90px 76px; gap: 8px;
+  display: grid; grid-template-columns: 28px 1.8fr 0.9fr 0.9fr 0.9fr 90px 64px; gap: 8px;
   padding: 10px 12px; align-items: center; border-bottom: 1px solid var(--dr-divider);
   transition: background-color .12s;
 }
@@ -402,6 +409,8 @@
 /* La mora con los colores de la lista de cobro (colorMora): hasta 4 cuotas
    verde, hasta 8 ámbar, más rojo. */
 .dr-td-mora { white-space: nowrap; }
+.dr-td-pagado { white-space: nowrap; color: var(--dr-success-text); }
+.dr-td-pagado--cero { color: var(--dr-muted); }
 .dr-td-mora small { display: block; font-size: 11px; font-weight: 600; color: var(--dr-muted); }
 .dr-td-mora--ok, .dr-td-mora--verde { color: var(--dr-success-text); }
 .dr-td-mora--amarillo { color: #b45309; }

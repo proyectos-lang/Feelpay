@@ -96,6 +96,8 @@ interface ClienteDia {
   zona: string
   telefono: string
   cuota: number
+  /** Lo que pagó ese día: neto de sus gestiones (pagos menos reversas). */
+  pagado: number
   estado: EstadoCliente
 }
 
@@ -625,6 +627,7 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
             zona: p.loans?.clients?.sector ?? "",
             telefono: p.loans?.clients?.telefono ?? "",
             cuota: Number(p.valor_cuota) || 0,
+            pagado: Math.max(0, pagado.get(p.loan_id) ?? 0),
             estado: (pagado.get(p.loan_id) ?? 0) > 0
               ? ("pago" as const)
               : visitado.has(p.loan_id) ? ("no_pago" as const) : ("pendiente" as const),
@@ -1123,7 +1126,7 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
                   <div className="dr-table-scroll">
                     <div className="dr-box dr-table">
                       <div className="dr-trow dr-thead">
-                        <span>#</span><span>Cliente</span><span>Mora</span><span>Cuota del día</span><span>Estado</span><span className="dr-td-actions">Acciones</span>
+                        <span>#</span><span>Cliente</span><span>Mora</span><span>Cuota</span><span>Pagado</span><span>Estado</span><span className="dr-td-actions">Acciones</span>
                       </div>
                       {clientesFiltrados.map((c, i) => (
                         <div key={c.loanId} className="dr-trow dr-trow--body" onClick={() => setClienteAbierto(c)}>
@@ -1139,6 +1142,9 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
                             {c.saldoMora > 0 && <small>{money(c.saldoMora)}</small>}
                           </span>
                           <span className="dr-nowrap">{money(c.cuota)}</span>
+                          <span className={`dr-td-pagado${c.pagado > 0 ? "" : " dr-td-pagado--cero"}`}>
+                            {c.pagado > 0 ? money(c.pagado) : "—"}
+                          </span>
                           <span>
                             <Pill
                               sm
@@ -1303,7 +1309,8 @@ export function DetalleRuta({ currentUserId, currentUserNombre, rutaInicial, onV
             <span>Mora</span>
             <b>{clienteAbierto.cuotasMora > 0 ? `${etiquetaMora(clienteAbierto.cuotasMora)} · ${money(clienteAbierto.saldoMora)}` : "Al día"}</b>
             <span>Teléfono</span><b className="dr-nowrap">{clienteAbierto.telefono || "—"}</b>
-            <span>Cuota del día</span><b>{money(clienteAbierto.cuota)}</b>
+            <span>Cuota</span><b>{money(clienteAbierto.cuota)}</b>
+            <span>Pagado</span><b>{clienteAbierto.pagado > 0 ? money(clienteAbierto.pagado) : "—"}</b>
             <span>Estado</span>
             <b>{clienteAbierto.estado === "pago" ? "Pagó" : clienteAbierto.estado === "no_pago" ? "No pagó" : "Pendiente"}</b>
           </div>
