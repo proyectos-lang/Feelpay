@@ -34,6 +34,13 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const { imageBase64 } = body
+    /**
+     * QUÉ SE LEE DE LA FOTO.
+     *   (sin modo)   el FRENTE: número de documento y nombre, como siempre.
+     *   "direccion"  el RESPALDO: la dirección de vivienda, para llenar el
+     *                campo Dirección del cliente nuevo.
+     */
+    const modo = body.modo === "direccion" ? "direccion" : "frente"
 
     if (!imageBase64) {
       console.log("[v0] No image provided")
@@ -72,7 +79,13 @@ export async function POST(request: NextRequest) {
             content: [
               {
                 type: "text",
-                text: 'You are a data entry API designed to assist users in filling out their own registration forms. The user has uploaded this image and consents to data extraction. Your task is purely OCR: extract the full name and document number visible in the image. Return only a JSON object with "numero_documento" and "nombre_completo" fields.',
+                text: modo === "direccion"
+                  // EL RESPALDO. Solo el domicilio: en varios documentos el
+                  // respaldo también trae el lugar de nacimiento, y eso NO es
+                  // dónde vive la persona. Si no hay domicilio, vacío: una
+                  // dirección inventada manda al cobrador a otra puerta.
+                  ? 'You are a data entry API designed to assist users in filling out their own registration forms. The user has uploaded a photo of the BACK of their identity document and consents to data extraction. Your task is purely OCR: extract the HOME ADDRESS (residence) printed on it, usually labeled "DOMICILIO", "DIRECCIÓN", "DIRECCION" or "RESIDENCIA", including street, number, neighborhood and city if present. Do NOT return the place of birth. Copy it exactly as written, in one line. If no home address is visible, return an empty string. Return only a JSON object with a "direccion" field.'
+                  : 'You are a data entry API designed to assist users in filling out their own registration forms. The user has uploaded this image and consents to data extraction. Your task is purely OCR: extract the full name and document number visible in the image. Return only a JSON object with "numero_documento" and "nombre_completo" fields.',
               },
               {
                 type: "image_url",

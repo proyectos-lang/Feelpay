@@ -339,6 +339,19 @@ export function NewLoan({
   const [apodoElegido, setApodoElegido] = useState<1 | 2>(1)
   const [sector, setSector] = useState("")
   const [procesandoCedula, setProcessandoCedula] = useState(false)
+  /**
+   * LEER LA DIRECCIÓN DEL RESPALDO DE LA CÉDULA.
+   *
+   * Opcional, con un check: al activarlo aparece un segundo botón para
+   * fotografiar el respaldo del documento, se lee el domicilio y se escribe
+   * en el campo Dirección. La dirección sigue siendo editable: lo que lee la
+   * IA es una propuesta, y el domicilio del documento puede no ser donde la
+   * persona vive hoy.
+   *
+   * La foto del respaldo NO se guarda: solo se usa para leer la dirección.
+   */
+  const [leerDireccion, setLeerDireccion] = useState(false)
+  const [procesandoRespaldo, setProcesandoRespaldo] = useState(false)
   const [pagoAdelantado, setPagoAdelantado] = useState(false)
   // Por defecto el plan arranca MAÑANA (regla de negocio de siempre). Con
   // esto marcado arranca HOY, el mismo dia de la venta.
@@ -1048,6 +1061,58 @@ export function NewLoan({
    */
   const ESPERA_CEDULA_MS = 45000
 
+  /** La foto del respaldo: se lee el domicilio y va al campo Dirección. */
+  const handleRespaldoCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (!file) return
+    const control = new AbortController()
+    const reloj = setTimeout(() => control.abort(), ESPERA_CEDULA_MS)
+    try {
+      setProcesandoRespaldo(true)
+      const foto = await comprimirFoto(file)
+      const response = await fetch("/api/escanear-cedula", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: foto, modo: "direccion" }),
+        signal: control.signal,
+      })
+      const texto = await response.text()
+      let datos: { direccion?: string; error?: string; details?: string }
+      try {
+        datos = JSON.parse(texto)
+      } catch {
+        throw new Error(`Respuesta inválida del servidor: ${texto.substring(0, 100)}`)
+      }
+      if (!response.ok) throw new Error(datos.details || datos.error || "Error desconocido")
+
+      const dir = String(datos.direccion ?? "").replace(/\s+/g, " ").trim().toUpperCase()
+      if (!dir) {
+        toast({
+          title: "No se encontró la dirección",
+          description: "Vuelve a tomar la foto del respaldo bien enfocada y sin reflejos, o escribe la dirección a mano.",
+          variant: "destructive",
+        })
+        return
+      }
+      setDireccion(dir)
+      clearFieldError("direccion")
+      toast({ title: "Dirección leída", description: "Revísala en el campo Dirección y corrígela si hace falta." })
+    } catch (error) {
+      const abortado = error instanceof DOMException && error.name === "AbortError"
+      toast({
+        title: abortado ? "La lectura tardó demasiado" : "No se pudo leer la dirección",
+        description: abortado
+          ? "Revisa la señal e intenta de nuevo."
+          : error instanceof Error ? error.message : "Error desconocido",
+        variant: "destructive",
+      })
+    } finally {
+      clearTimeout(reloj)
+      setProcesandoRespaldo(false)
+    }
+  }
+
   const handleCedulaCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     // El input se limpia para que volver a elegir LA MISMA foto dispare el
@@ -1317,6 +1382,7 @@ export function NewLoan({
   }
 
   const resetFormularioVenta = () => {
+    setLeerDireccion(false)
     setValor("")
     setSaldo("")
     setValorAPagar("")
@@ -2318,6 +2384,47 @@ export function NewLoan({
               )}
             </div>
           </Label>
+
+          {/* ── La dirección, del respaldo del documento ───────────────── */}
+          <div className="mt-3 border-t border-blue-200 pt-3">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="leer-direccion"
+                checked={leerDireccion}
+                onCheckedChange={(v) => setLeerDireccion(v === true)}
+                className="h-4 w-4 border-2 border-blue-400"
+              />
+              <Label htmlFor="leer-direccion" className="cursor-pointer text-xs font-semibold text-blue-900 md:text-sm">
+                Leer la dirección del respaldo de la cédula
+              </Label>
+            </div>
+            {leerDireccion && (
+              <div className="mt-2 flex flex-col items-center gap-1">
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleRespaldoCapture}
+                  className="hidden"
+                  id="cedula-respaldo-upload"
+                  disabled={procesandoRespaldo}
+                />
+                <Label htmlFor="cedula-respaldo-upload" className="cursor-pointer">
+                  <span
+                    className={`inline-flex items-center gap-2 rounded-lg border-2 border-blue-400 bg-white px-4 py-2 text-xs font-semibold text-blue-900 shadow-sm md:text-sm ${
+                      procesandoRespaldo ? "cursor-wait opacity-60" : "hover:bg-blue-50"
+                    }`}
+                  >
+                    {procesandoRespaldo ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarCode className="h-4 w-4" />}
+                    {procesandoRespaldo ? "Leyendo la dirección…" : "Fotografiar el respaldo"}
+                  </span>
+                </Label>
+                <p className="text-center text-[10px] text-blue-700 md:text-xs">
+                  La dirección que se lea se escribe en el campo Dirección, y se puede corregir.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
