@@ -187,6 +187,8 @@ export async function generarInformeExcel(
   const LOTE = 120
   const loans = new Map<string, Record<string, unknown>>()
   const clientesPorLoan = new Map<string, string>()
+  /** El nombre completo (de la cédula), aparte del apodo de "Cliente". */
+  const nombresPorLoan = new Map<string, string>()
   for (let i = 0; i < loanIds.length; i += LOTE) {
     const { data } = await sb
       .from("loans")
@@ -199,6 +201,7 @@ export async function generarInformeExcel(
         String(l.id),
         (c?.apodo?.trim() || c?.nombre_completo?.trim() || "").trim(),
       )
+      nombresPorLoan.set(String(l.id), (c?.nombre_completo ?? "").trim())
     }
   }
 
@@ -224,7 +227,9 @@ export async function generarInformeExcel(
 
   // ── Pagos y No Pagos ─────────────────────────────────────────────────────
   const CAB_GESTION = [
-    "Vendedor", "Consecutivo", "Id Venta", "Cliente", "Observaciones",
+    // "Cliente" es el apodo, como en el archivo original (o el nombre si no
+    // tiene apodo). "Nombre Cliente" es el nombre completo, siempre.
+    "Vendedor", "Consecutivo", "Id Venta", "Cliente", "Nombre Cliente", "Observaciones",
     "Pagadas", "Tipo", "Valor", "Fecha", "Hora", "Valor Prod.", "Saldo",
     "Restantes",
   ]
@@ -242,6 +247,7 @@ export async function generarInformeExcel(
       ` ${String(l.id ?? g.loan_id).replace(/-/g, "").slice(0, 14)}`,
       ` ${String(g.id).replace(/-/g, "").slice(0, 14)}`,
       clientesPorLoan.get(g.loan_id) ?? "",
+      nombresPorLoan.get(g.loan_id) ?? "",
       g.observacion || null,
       tipo === "No Pago" ? 0 : pagadas,
       tipo,
@@ -273,7 +279,7 @@ export async function generarInformeExcel(
 
   // ── Ventas ───────────────────────────────────────────────────────────────
   const CAB_VENTAS = [
-    "Vendedor", "Consecutivo", "Frecuencia", "Id Venta", "Cliente",
+    "Vendedor", "Consecutivo", "Frecuencia", "Id Venta", "Cliente", "Nombre Cliente",
     "Valor Producto", "Cuotas", "Intereses", "Valor Cuota", "Fecha Venta",
     "Cuotas Rest.", "Saldo",
   ]
@@ -287,6 +293,7 @@ export async function generarInformeExcel(
       FRECUENCIAS[String(l.frecuencia_pago ?? "daily")] ?? "DIARIO",
       ` ${id.slice(0, 14)}`,
       (c?.apodo?.trim() || c?.nombre_completo?.trim() || "").trim(),
+      (c?.nombre_completo ?? "").trim(),
       money(Number(l.valor) || 0),
       Number(l.numero_cuotas) || 0,
       Number(l.tasa_interes) || 0,
