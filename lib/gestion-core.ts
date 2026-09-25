@@ -27,6 +27,7 @@
  */
 
 import { todayColombia, tsToColombiaDate, fmtFecha, fmtFechaHora } from "@/lib/colombia-date"
+import { getMoneda } from "@/lib/monedas"
 
 export { todayColombia, tsToColombiaDate, fmtFecha, fmtFechaHora }
 
@@ -500,15 +501,26 @@ export function apodoSiAporta(
  * separa monedas en `redondearCuota` (scripts/098): las rutas 1 y 933 trabajan
  * en dolares y sus cifras van en unidades — una meta de $20 redondeada de 100
  * en 100 se mostraria como $0. Bajo ese piso se muestra el valor tal cual.
+ *
+ * CON LA MONEDA, EL PISO NO ALCANZA. La 182 trabaja en dólares y ya maneja
+ * cifras de miles: un ingreso de $1.176 se mostraba como $1.200 y parecía
+ * que la caja estaba mal. Si se pasa la moneda y es de las que llevan
+ * decimales (el dólar), NUNCA se redondea de 100 en 100: se muestra en
+ * unidades.
+ *
+ * Y NUNCA "-0": unos centavos negativos (-0,02) redondeados dan -0, y
+ * `toLocaleString` lo pintaba con el signo. Un cero es cero.
  */
-export function redondearCien(valor: number | null | undefined): number {
+export function redondearCien(valor: number | null | undefined, moneda?: string | null): number {
   const n = Number(valor) || 0
-  if (Math.abs(n) < 1000) return Math.round(n)
-  return Math.round(n / 100) * 100
+  const conDecimales = moneda ? getMoneda(moneda).decimales > 0 : false
+  const r = conDecimales || Math.abs(n) < 1000 ? Math.round(n) : Math.round(n / 100) * 100
+  return r === 0 ? 0 : r
 }
 
 export function fmtMoneda(valor: number | null | undefined): string {
-  return `$${Math.round(Number(valor) || 0).toLocaleString("es-CO")}`
+  const r = Math.round(Number(valor) || 0)
+  return `$${(r === 0 ? 0 : r).toLocaleString("es-CO")}`
 }
 
 /**
@@ -518,8 +530,8 @@ export function fmtMoneda(valor: number | null | undefined): string {
  * del cliente, el extracto, el monto que se teclea—: ahi cambiar un peso seria
  * cambiar lo que se cobro.
  */
-export function fmtMonedaCien(valor: number | null | undefined): string {
-  return `$${redondearCien(valor).toLocaleString("es-CO")}`
+export function fmtMonedaCien(valor: number | null | undefined, moneda?: string | null): string {
+  return `$${redondearCien(valor, moneda).toLocaleString("es-CO")}`
 }
 
 // ── Cuotas con decimal ─────────────────────────────────────────────────────

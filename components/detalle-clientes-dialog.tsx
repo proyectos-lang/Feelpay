@@ -58,6 +58,8 @@ export interface DetalleClientesDialogProps {
    * Se sigue pudiendo buscar por documento aunque no se vea.
    */
   ocultarFicha?: boolean
+  /** La moneda de la ruta: en dólares no se redondea de 100 en 100. */
+  moneda?: string | null
 }
 
 const TONO_MORA: Record<string, string> = {
@@ -76,6 +78,7 @@ export function DetalleClientesDialog({
   etiquetaMarcado = "Pagó",
   mostrarValorVenta = false,
   ocultarFicha = false,
+  moneda = null,
 }: DetalleClientesDialogProps) {
   const [filas, setFilas] = useState<ClienteDetalleRow[]>([])
   const [cargando, setCargando] = useState(false)
@@ -232,7 +235,7 @@ export function DetalleClientesDialog({
                         </>
                       )}
                       {mostrarValorVenta && (
-                        <td className="py-1.5 px-2 text-right font-bold tabular-nums">{fmtMonedaCien(f.valorVenta)}</td>
+                        <td className="py-1.5 px-2 text-right font-bold tabular-nums">{fmtMonedaCien(f.valorVenta, moneda)}</td>
                       )}
                       {!ocultarFicha && (
                         <td className="py-1.5 px-2 text-center text-xs tabular-nums">
@@ -240,7 +243,7 @@ export function DetalleClientesDialog({
                         </td>
                       )}
                       {!ocultarFicha && (
-                        <td className="py-1.5 px-2 text-right font-semibold tabular-nums">{fmtMonedaCien(f.saldo)}</td>
+                        <td className="py-1.5 px-2 text-right font-semibold tabular-nums">{fmtMonedaCien(f.saldo, moneda)}</td>
                       )}
                       {!ocultarFicha && (
                         <td className="py-1.5 px-2 text-xs">{f.ultimoPago ? fmtFecha(f.ultimoPago) : "—"}</td>
@@ -286,14 +289,14 @@ export function DetalleClientesDialog({
                       <div className="text-right shrink-0">
                         {ocultarFicha ? (
                           <>
-                            <p className="text-sm font-bold tabular-nums">{fmtMonedaCien(f.valorVenta)}</p>
+                            <p className="text-sm font-bold tabular-nums">{fmtMonedaCien(f.valorVenta, moneda)}</p>
                             <p className="text-[10px] text-muted-foreground">
                               {etiquetaFrecuencia(f.frecuencia).toLowerCase()}
                             </p>
                           </>
                         ) : (
                           <>
-                            <p className="text-sm font-bold tabular-nums">{fmtMonedaCien(f.saldo)}</p>
+                            <p className="text-sm font-bold tabular-nums">{fmtMonedaCien(f.saldo, moneda)}</p>
                             <p className={`text-[10px] font-medium ${TONO_MORA[colorMora(f.cuotasMora)]}`}>
                               {f.cuotasMora > 0 ? `${etiquetaMora(f.cuotasMora)} en mora` : "al día"}
                             </p>
@@ -323,7 +326,7 @@ export function DetalleClientesDialog({
             </span>
             <span className="font-semibold">
               {totalPorValorVenta ? "Valor total " : "Saldo total "}
-              {fmtMonedaCien(saldoTotal)}
+              {fmtMonedaCien(saldoTotal, moneda)}
             </span>
           </div>
         )}

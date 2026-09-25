@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button"
  import { createClient } from "@/lib/supabase/client"
 import { getResumenDia } from "@/lib/resumen-dia"
 import { ResumenSemanal } from "@/components/resumen-semanal"
-import { todayColombia, bandaCartera, etiquetaFrecuencia, fmtMonedaCien } from "@/lib/gestion-core"
+import { todayColombia, bandaCartera, etiquetaFrecuencia, fmtMonedaCien, redondearCien } from "@/lib/gestion-core"
 import { getRutaUmbrales } from "@/lib/ruta-umbrales"
 import { aDolares, formatearMoneda } from "@/lib/monedas"
 import { Bandera } from "@/components/bandera"
@@ -864,7 +864,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
   const [compartirInforme, setCompartirInforme] = useState(false)
   const construirImagenInforme = async () => {
     const umbrales = await getRutaUmbrales(rutaId).catch(() => null)
-    const money = (n: number) => fmtMonedaCien(n)
+    const money = (n: number) => fmtMonedaCien(n, monedaRuta)
     const ahora = new Date()
     const dia = ahora.toLocaleDateString("es-CO", { timeZone: "America/Bogota" })
     const hora = ahora.toLocaleTimeString("es-CO", {
@@ -1146,15 +1146,15 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
               <Card className="bg-card shadow-sm border-0">
                 <CardContent className="px-2 py-0 flex items-center gap-1">
                   <div className={`h-5 w-5 rounded flex items-center justify-center shrink-0 ${
-                    cajaAnterior < 0 ? "bg-destructive-light" : "bg-success-light"
+                    redondearCien(cajaAnterior, monedaRuta) < 0 ? "bg-destructive-light" : "bg-success-light"
                   }`}>
-                    <Wallet className={`h-3.5 w-3.5 ${cajaAnterior < 0 ? "text-destructive" : "text-icon-wallet"}`} />
+                    <Wallet className={`h-3.5 w-3.5 ${redondearCien(cajaAnterior, monedaRuta) < 0 ? "text-destructive" : "text-icon-wallet"}`} />
                   </div>
                   <div className="min-w-0">
                     <p className="text-[10px] text-muted-foreground font-medium leading-none">Caja Anterior</p>
                     <p className={`text-lg font-bold leading-none ${
-                      cajaAnterior < 0 ? "text-destructive" : "text-success"
-                    }`}>{fmtMonedaCien(cajaAnterior)}</p>
+                      redondearCien(cajaAnterior, monedaRuta) < 0 ? "text-destructive" : "text-success"
+                    }`}>{fmtMonedaCien(cajaAnterior, monedaRuta)}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -1162,15 +1162,15 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
               <Card className="bg-card shadow-sm border-0">
                 <CardContent className="px-2 py-0 flex items-center gap-1">
                   <div className={`h-5 w-5 rounded flex items-center justify-center shrink-0 ${
-                    efectivo < 0 ? "bg-destructive-light" : "bg-success-light"
+                    redondearCien(efectivo, monedaRuta) < 0 ? "bg-destructive-light" : "bg-success-light"
                   }`}>
-                    <Banknote className={`h-3.5 w-3.5 ${efectivo < 0 ? "text-destructive" : "text-icon-cash"}`} />
+                    <Banknote className={`h-3.5 w-3.5 ${redondearCien(efectivo, monedaRuta) < 0 ? "text-destructive" : "text-icon-cash"}`} />
                   </div>
                   <div className="min-w-0">
                     <p className="text-[10px] text-muted-foreground font-medium leading-none">Efectivo</p>
                     <p className={`text-lg font-bold leading-none ${
-                      efectivo < 0 ? "text-destructive" : "text-success"
-                    }`}>{fmtMonedaCien(efectivo)}</p>
+                      redondearCien(efectivo, monedaRuta) < 0 ? "text-destructive" : "text-success"
+                    }`}>{fmtMonedaCien(efectivo, monedaRuta)}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -1235,13 +1235,13 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-xs text-muted-foreground">Recaudo</span>
                       <span className="text-lg font-bold text-foreground tabular-nums leading-tight">
-                        {fmtMonedaCien(collectedAmount)}
+                        {fmtMonedaCien(collectedAmount, monedaRuta)}
                       </span>
                     </div>
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-xs text-muted-foreground">Meta</span>
                       <span className="text-sm font-semibold text-muted-foreground tabular-nums leading-tight">
-                        {fmtMonedaCien(metaAmount)}
+                        {fmtMonedaCien(metaAmount, monedaRuta)}
                       </span>
                     </div>
 
@@ -1292,7 +1292,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                       </p>
                     ) : (
                       <p className="text-[11px] font-bold leading-tight text-destructive">
-                        Meta no superada por {fmtMonedaCien(remaining)}
+                        Meta no superada por {fmtMonedaCien(remaining, monedaRuta)}
                       </p>
                     )}
                   </div>
@@ -1397,7 +1397,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                             </span>
                           </div>
                           <p className="text-sm font-bold text-foreground leading-tight tabular-nums">
-                            {fmtMonedaCien(c.valor)}
+                            {fmtMonedaCien(c.valor, monedaRuta)}
                           </p>
                         </div>
                       ))}
@@ -1550,7 +1550,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                                 desbordarse, y con shrink-0 no la comprime la
                                 barra. */}
                             <span className="text-xs font-bold text-foreground min-w-[62px] text-right tabular-nums whitespace-nowrap shrink-0">
-                              {fmtMonedaCien(item.value)}
+                              {fmtMonedaCien(item.value, monedaRuta)}
                             </span>
                           </div>
                         )
@@ -2073,6 +2073,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
         currentUser={{ id: getUsuarioSesion().id ?? 0, nombre: getUsuarioSesion().nombre }}
         titulo="Compartir el informe"
       />
+        moneda={monedaRuta}
 
       {/* Dialog para detalle de Ingresos/Gastos/Retiros */}
       <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
@@ -2127,7 +2128,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
                           )}
                         </TableCell>
                         <TableCell className="text-xs font-medium text-right">
-                          {fmtMonedaCien(record.valor)}
+                          {fmtMonedaCien(record.valor, monedaRuta)}
                         </TableCell>
                       </TableRow>
                     )
@@ -2142,7 +2143,7 @@ export function DailySummary({ onViewChange, rutaId = 1, onRouteStateChange, fec
               <div className="flex justify-between items-center">
                 <span className="text-sm font-medium">Total:</span>
                 <span className="text-sm font-bold">
-                  {fmtMonedaCien(detailRecords.reduce((sum, r) => sum + r.valor, 0))}
+                  {fmtMonedaCien(detailRecords.reduce((sum, r) => sum + r.valor, 0), monedaRuta)}
                 </span>
               </div>
             </div>
